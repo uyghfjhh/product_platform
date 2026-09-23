@@ -1,0 +1,30 @@
+# 平台联调专用实例，PGDATA 与端口不复用既有回归环境。
+hosts:
+  local:
+    address: 127.0.0.1
+
+postgresql_installations:
+  local_fbase:
+    provider: postgres
+    home: /usr/local/pgsql15.3-mmr
+
+instances:
+  platform_smoke_primary:
+    host: local
+    installation: local_fbase
+    port: 25432
+    data_dir: /home/postgres/fly_dev/product_platform/data/smoke/primary
+  platform_smoke_standby:
+    host: local
+    installation: local_fbase
+    port: 25433
+    data_dir: /home/postgres/fly_dev/product_platform/data/smoke/standby
+
+streaming_clusters:
+  smoke:
+    primary: platform_smoke_primary
+    standbys:
+      - instance: platform_smoke_standby
+        slot: platform_smoke_standby_slot
+    replication:
+      mode: async
