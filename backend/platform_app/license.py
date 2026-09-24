@@ -10,9 +10,16 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-from argon2.low_level import Type, hash_secret_raw
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_decrypt
+try:
+    from argon2.low_level import Type, hash_secret_raw
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_decrypt
+except ImportError:
+    Type = None
+    hash_secret_raw = None
+    Ed25519PrivateKey = None
+    crypto_aead_xchacha20poly1305_ietf_decrypt = None
+
 from pydantic import BaseModel, Field, model_validator
 
 from .config import Settings

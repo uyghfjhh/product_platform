@@ -51,6 +51,7 @@ class OperationInput(BaseModel):
 class QueryInput(BaseModel):
     sql: str = Field(min_length=1, max_length=200000)
     max_rows: int = Field(default=200, ge=1, le=1000)
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class FbasecmanProfileInput(BaseModel):
@@ -271,8 +272,11 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         environment = store.get_environment(environment_id)
         if environment is None:
             raise HTTPException(status_code=404, detail="环境不存在")
+        target_env = dict(environment)
+        if item.port:
+            target_env["port"] = item.port
         try:
-            return execute_query(environment, item.sql, item.max_rows)
+            return execute_query(target_env, item.sql, item.max_rows)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

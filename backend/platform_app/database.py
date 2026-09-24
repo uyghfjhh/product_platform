@@ -2,11 +2,17 @@
 
 import time
 
-import psycopg
-from psycopg.rows import tuple_row
+try:
+    import psycopg
+    from psycopg.rows import tuple_row
+except ImportError:
+    psycopg = None
+    tuple_row = None
 
 
 def execute_query(environment: dict, sql: str, max_rows: int = 200) -> dict:
+    if psycopg is None:
+        raise RuntimeError("未检测到 psycopg 依赖库，请执行 ./web.sh setup 或 pip install 'psycopg[binary]' 后重试")
     started = time.monotonic()
     with psycopg.connect(
         host=environment["host"],
@@ -47,6 +53,8 @@ def execute_query(environment: dict, sql: str, max_rows: int = 200) -> dict:
 
 def list_objects(environment: dict) -> list[dict]:
     """只读系统目录，返回界面对象树需要的稳定字段。"""
+    if psycopg is None:
+        return []
     with psycopg.connect(
         host=environment["host"], port=environment["port"],
         dbname=environment["database_name"], user=environment["database_user"],
@@ -69,6 +77,8 @@ def list_objects(environment: dict) -> list[dict]:
 
 
 def list_columns(environment: dict, schema: str, table: str) -> list[dict]:
+    if psycopg is None:
+        return []
     with psycopg.connect(
         host=environment["host"], port=environment["port"],
         dbname=environment["database_name"], user=environment["database_user"],

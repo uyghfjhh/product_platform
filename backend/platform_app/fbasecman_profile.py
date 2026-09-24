@@ -1,4 +1,5 @@
 """将 fbasecman 回归拓扑映射为 pgcluster 部署配置。"""
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -37,35 +38,37 @@ def build_profile(
     if any(port < 1024 or port > 65535 for value in all_ports.values()
            for port in (value if isinstance(value, list) else [value])):
         raise ValueError("生成的数据库端口超出有效范围")
-    if not Path(data_root).is_absolute() or data_root == "/":
+    if not (Path(data_root).is_absolute() or data_root.startswith("/")) or data_root in {"/", "\\"}:
         raise ValueError("数据根目录需要非根绝对路径")
-    if not Path(license_file).is_absolute():
+    if not (Path(license_file).is_absolute() or license_file.startswith("/")):
         raise ValueError("License 文件需要绝对路径")
 
     use_citus = bool(db.get("enable_citus"))
     preloads = ["fdd_mmr"] + (["citus"] if use_citus else [])
+    mmr_extensions = ["fbase_mac", "fdd_mmr", "fb_license"] + (["citus"] if use_citus else [])
     installations = {
         "regress_postgres": {
             "provider": "fbase",
             "home": db["mmr_postgres_dir"],
             "license": {"source_file": license_file, "data_file": "license.dat"},
-            "plugins": {name: {"required": True, "extension": name} for name in preloads},
+            "plugins": {name: {"required": True, "extension": name} for name in mmr_extensions},
         }
     }
     instances = {}
     streaming = {}
+    posix_root = Path(data_root).as_posix().rstrip("/")
     for group in ("mmr1", "mmr2"):
         primary_name = "test_" + group
         instances[primary_name] = {
             "host": "regress_host", "installation": "regress_postgres",
-            "port": all_ports[group], "data_dir": str(Path(data_root) / primary_name),
+            "port": all_ports[group], "data_dir": f"{posix_root}/{primary_name}",
         }
         standbys = []
         for index, port in enumerate(all_ports[group + "_standbys"], 1):
             name = f"{primary_name}_s{index}"
             instances[name] = {
                 "host": "regress_host", "installation": "regress_postgres",
-                "port": port, "data_dir": str(Path(data_root) / name),
+                "port": port, "data_dir": f"{posix_root}/{name}",
             }
             standbys.append({
                 "instance": name,
@@ -114,7 +117,7 @@ def build_profile(
         "mmr_clusters": {
             "fbasecman_regress": {
                 "database": "postgres", "group_name": "g1",
-                "extensions": preloads,
+                "extensions": mmr_extensions,
                 "members": {
                     "node1": {"streaming_cluster": "mmr1", "node_name": "node1",
                               "mmr_node": {"streaming": "off", "two_phase": False}},

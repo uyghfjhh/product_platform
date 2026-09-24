@@ -18,7 +18,10 @@ def main() -> int:
     if not (source / "suites" / "registry.py").is_file() or not override.is_file():
         parser.error("用例来源或测试配置不存在")
 
-    sys.path.insert(0, str(source))
+    repo_root = Path(__file__).resolve().parents[2]
+    for p in (str(source), str(repo_root), str(repo_root / "backend")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
     import framework.configuration as package
     import framework.configuration.loader as loader
 

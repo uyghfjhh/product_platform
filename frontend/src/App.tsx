@@ -90,7 +90,7 @@ export default function App() {
     switch (page) {
       case 'overview': return <OverviewPage products={products} environments={environments} tasks={tasks} openTask={setTaskId} navigate={setPage} />;
       case 'environments': return <EnvironmentsPage products={products} environments={environments} selectedId={environmentId} onSelect={setEnvironmentId} reload={reload} />;
-      case 'deployment': return <DeploymentPage {...common} />;
+      case 'deployment': return <DeploymentPage {...common} navigate={(p) => setPage(p as Page)} />;
       case 'database': return <DatabasePage {...common} />;
       case 'tests': return <TestsPage {...common} />;
       case 'stability': return <StabilityPage {...common} />;
@@ -123,26 +123,40 @@ export default function App() {
             <Button className="mobile-menu-button" icon={<MenuOutlined />} onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
             <Typography.Text strong className="header-title">{title}</Typography.Text>
           </Space>
-          <Space className="header-controls" wrap>
-            <Select
-              className="context-select"
-              value={productId || undefined}
-              options={products.map((item) => ({ label: item.title, value: item.id }))}
-              onChange={(value) => setProductId(value)}
-              placeholder="选择产品"
-              aria-label="当前产品"
-            />
-            <Select
-              className="context-select"
-              value={environmentId || undefined}
-              options={environments.filter((item) => item.product_id === productId).map((item) => ({ label: item.title, value: item.id }))}
-              onChange={setEnvironmentId}
-              placeholder="选择环境"
-              aria-label="当前环境"
-            />
-            {active && <Button type="text" onClick={() => setTaskId(active.id)}>
-              <Tag color={statusColor(active.status)}>{active.status}</Tag>
-            </Button>}
+          <Space className="header-controls" wrap size="middle">
+            <Space size={6}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>产品:</Typography.Text>
+              <Select
+                className="context-select"
+                value={productId || undefined}
+                options={products.map((item) => ({ label: item.title, value: item.id }))}
+                onChange={(value) => setProductId(value)}
+                placeholder="选择产品"
+                aria-label="当前产品"
+              />
+            </Space>
+            <Space size={6}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>绑定环境:</Typography.Text>
+              <Select
+                className="context-select"
+                style={{ minWidth: 200 }}
+                value={environmentId || undefined}
+                options={environments
+                  .filter((item) => item.product_id === productId)
+                  .map((item) => ({ label: `${item.title} (${item.host}:${item.port})`, value: item.id }))}
+                onChange={setEnvironmentId}
+                placeholder="选择绑定测试环境"
+                aria-label="当前绑定环境"
+              />
+              <Button size="small" type="dashed" onClick={() => setPage('environments')}>
+                + 新建环境
+              </Button>
+            </Space>
+            {active && (
+              <Button type="text" onClick={() => setTaskId(active.id)}>
+                <Tag color={statusColor(active.status)}>{active.status}</Tag>
+              </Button>
+            )}
           </Space>
         </Header>
         <Content className="platform-content">

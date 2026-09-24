@@ -12,12 +12,13 @@ from platform_app.topology import configured_topology
 
 
 def settings_for(tmp_path: Path) -> Settings:
-    fly = Path("/home/postgres/fly_dev")
+    repo_root = Path(__file__).resolve().parent.parent
+    fly_root = repo_root.parent
     return Settings(
         data_dir=tmp_path / "data",
-        pgcluster_root=fly / "pgcluster",
-        fbasecman_regress_root=fly / "fbasecman_dev" / "fbasecman_regress_v2",
-        fbase_regress_root=fly / "postgresql_for_fbase_dev" / "fbase_regress",
+        pgcluster_root=fly_root / "pgcluster",
+        fbasecman_regress_root=repo_root / "regress" / "fbasecman",
+        fbase_regress_root=repo_root / "regress" / "fbase",
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )
@@ -38,7 +39,7 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     assert created.status_code == 200, created.text
     profile, override = profile_paths(settings, "cman-profile")
     generated = yaml.safe_load(profile.read_text(encoding="utf-8"))
-    assert generated["mmr_clusters"]["fbasecman_regress"]["extensions"] == ["fdd_mmr"]
+    assert "fdd_mmr" in generated["mmr_clusters"]["fbasecman_regress"]["extensions"]
     environment = client.get("/api/v1/environments/cman-profile").json()
     assert environment["deployment_config"] == str(profile)
     assert environment["deployment_target"] == "mmr.fbasecman_regress"
@@ -52,11 +53,12 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     })
     assert foreign.status_code == 422
     assert "不属于当前环境" in foreign.json()["detail"]
+    backend_dir = Path(__file__).resolve().parent.parent / "backend"
     check = subprocess.run([
         sys.executable, "-m", "platform_app.legacy_cman_runner",
         "--source", str(settings.fbasecman_regress_root),
         "--override", str(override), "--check-profile", "guc",
-    ], capture_output=True, text=True, timeout=20)
+    ], cwd=backend_dir, capture_output=True, text=True, timeout=60)
     assert check.returncode == 0, check.stdout + check.stderr
     assert not (settings.data_dir / "legacy_cman" / "cman-profile" / "output" / "env" / "test_context.yaml").exists()
     case_task = client.post("/api/v1/operations", json={

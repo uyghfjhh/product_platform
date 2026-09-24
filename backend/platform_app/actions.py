@@ -1,6 +1,9 @@
 """已注册的业务动作及其可执行提供者。"""
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import hashlib
 import json
 import os
@@ -86,14 +89,16 @@ def environment_lock(data_dir: Path, environment_id: str):
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_name = hashlib.sha256(environment_id.encode("utf-8")).hexdigest()[:24]
     with (lock_dir / (lock_name + ".lock")).open("a+") as handle:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError("该环境已有平台操作正在执行")
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError("该环境已有平台操作正在执行")
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def command_for_task(

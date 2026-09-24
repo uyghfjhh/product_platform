@@ -1,6 +1,5 @@
-"""迁移期从旧仓库读取用例清单，独立解释器避免同名 framework 包冲突。"""
-
 import json
+import os
 import subprocess
 import sys
 
@@ -14,8 +13,10 @@ items = []
 for suite in get_default_registry().all_suites():
     for case in suite.get_cases():
         items.append({
-            "suite": suite.id, "target": case.target, "title": case.summary,
-            "enabled": bool(case.enabled), "tags": list(case.tags),
+            "suite": suite.id, "target": case.target,
+            "title": getattr(case, "summary", getattr(case, "title", case.target)),
+            "enabled": bool(getattr(case, "enabled", True)),
+            "tags": list(getattr(case, "tags", []) or []),
         })
 print(json.dumps(items, ensure_ascii=False))
 """
@@ -44,12 +45,16 @@ def discover_cases(settings: Settings, product_id: str) -> list[dict]:
         raise ValueError("未知产品")
     if not root.is_dir():
         raise FileNotFoundError("用例来源目录不存在: %s" % root)
+    repo_root = root.parents[1] if root.name == "fbasecman" else root.parent
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{root}{os.pathsep}{repo_root}{os.pathsep}{repo_root / 'backend'}{os.pathsep}{env.get('PYTHONPATH', '')}"
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,
         capture_output=True,
         text=True,
-        timeout=20,
+        env=env,
+        timeout=60,
     )
     if result.returncode != 0:
         raise RuntimeError(

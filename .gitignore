@@ -1,12 +1,39 @@
+# Python & Virtual Environments
 .venv/
-node_modules/
-frontend/dist/
-data/
-*.pyc
+venv/
+ENV/
+*.py[cod]
+*$py.class
 __pycache__/
-.pytest_cache/
-.DS_Store
-*.lock
-.ruff_cache/
-*.tsbuildinfo
 *.egg-info/
+
+# Tests & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+.vite/
+
+# Runtime Data, Logs & Daemon State
+data/
+output/
+**/output/
+*.log
+*.pid
+*.port
+
+# Environment & Local Configuration Overrides
+*.local.yaml
+*.local.yaml.*
+.env
+.env.local
+
+# OS Artifacts
+.DS_Store
+Thumbs.db

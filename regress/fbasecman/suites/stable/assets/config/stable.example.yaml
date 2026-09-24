@@ -1,0 +1,23 @@
+# Optional overlay for ./stable.sh --config <this-file>.
+# The base configuration is stable.yaml; this file changes only workload settings.
+stable:
+  pgbench_duration: 40m
+  jdbc_duration: 20m
+  interval_seconds: 60
+  server_lifetime: 60
+  global_prepared_statements_limit: 2000
+  backend_prepared_statements_limit: 2000
+  jdbc:
+    long_conn_clients: 0
+    short_conn_clients: 100
+    shared_sql_count: 2000
+    private_sql_count: 200
+    short_conn_batch: 1
+    short_conn_idle_ms: 5
+    rw_switch_enabled: true
+    rw_switch_interval_ops: 100
+    heartbeat_enabled: true
+    heartbeat_interval_ops: 50
+    guc_enabled: true
+    guc_interval_ops: 100
+    guc_distinct_count: 200

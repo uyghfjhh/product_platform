@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fbasecman 自动化回归测试平台</title>
+  <link rel="stylesheet" href="/style.css?v=2.7">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+</head>
+<body>
+  <!-- Modern Zero-Header Left Sidebar -->
+  <aside class="app-sidebar" id="appSidebar">
+    <!-- Brand / Logo Area -->
+    <div class="sidebar-header">
+      <div class="sidebar-brand-row">
+        <div class="brand-logo">
+          <span class="logo-icon">⚡</span>
+          <div class="brand-text-wrap">
+            <span class="brand-title">fbasecman</span>
+            <span class="brand-subtitle">Regress v2.2</span>
+          </div>
+        </div>
+        <!-- Top Quick Collapse/Expand Toggle Button -->
+        <button class="sidebar-collapse-toggle" id="btnCollapseSidebarTop" title="收起/展开侧边栏">
+          <span class="collapse-icon">❮</span>
+        </button>
+      </div>
+      <div class="system-status" id="systemStatus" title="系统代理及管控通道状态">
+        <span class="status-indicator-dot idle"></span>
+        <span class="status-text" id="statusText">系统就绪</span>
+      </div>
+    </div>
+
+    <!-- Core View Navigation -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">核心业务</div>
+      <nav class="sidebar-nav" id="navModes">
+        <button class="sidebar-nav-item nav-mode-btn active" data-view="deploy" id="tabBtnDeploy" data-tooltip="数据库部署" title="切换到数据库部署与管理">
+          <span class="nav-icon">🟢</span>
+          <span class="nav-label">数据库部署</span>
+        </button>
+        <button class="sidebar-nav-item nav-mode-btn" data-view="regress" id="tabBtnRegress" data-tooltip="自动化回归测试" title="切换到自动化回归测试套件">
+          <span class="nav-icon">🔵</span>
+          <span class="nav-label">自动化回归测试</span>
+        </button>
+        <button class="sidebar-nav-item nav-mode-btn" data-view="stable" id="tabBtnStable" data-tooltip="常稳与性能压测" title="切换到常稳压测与性能监控">
+          <span class="nav-icon">🟣</span>
+          <span class="nav-label">常稳与性能压测</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Utilities / Tools Section -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">运维工具</div>
+      <div class="sidebar-tools">
+        <button class="sidebar-tool-btn sql-nav-btn" id="btnTopNavSql" data-tooltip="Web-PSQL 数据库交互工作台" title="打开 Web-PSQL 数据库交互工作台">
+          <span class="tool-icon">💻</span>
+          <span class="tool-label">SQL 工作台</span>
+        </button>
+        <button class="sidebar-tool-btn topo-nav-btn" id="btnTopNavTopo" data-tooltip="3D 高可用全息拓扑看板" title="点击打开高可用集群 3D 全息拓扑看板">
+          <span class="tool-icon">🪐</span>
+          <span class="tool-label">3D 拓扑看板</span>
+        </button>
+        <a class="sidebar-tool-btn" href="/api/junit.xml" download="fbasecman_junit.xml" id="btnExportJunit" data-tooltip="下载标准 CI/CD JUnit XML 报告" title="下载标准 CI/CD JUnit XML 报告">
+          <span class="tool-icon">⬇️</span>
+          <span class="tool-label">导出 JUnit XML</span>
+        </a>
+        <button class="sidebar-tool-btn" id="btnRefreshAll" data-tooltip="刷新全局所有状态" title="刷新所有状态">
+          <span class="tool-icon">🔄</span>
+          <span class="tool-label">刷新状态</span>
+        </button>
+        <button class="sidebar-tool-btn danger" id="btnRunFailed" data-tooltip="重新执行所有上次失败用例" title="重新执行所有上次失败的用例">
+          <span class="tool-icon">⚠️</span>
+          <span class="tool-label">重跑失败项</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sidebar Footer -->
+    <div class="sidebar-footer">
+      <a class="sidebar-footer-link" href="javascript:void(0)" id="btnHelpDoc" data-tooltip="查看转测与使用说明" title="查看使用说明">
+        <span class="footer-icon">📖</span>
+        <span class="footer-label">说明文档</span>
+      </a>
+      <button class="sidebar-toggle-btn" id="btnToggleSidebar" data-tooltip="收起 / 展开侧边栏" title="折叠/展开侧边栏">
+        <span class="toggle-icon">◀</span>
+        <span class="toggle-label">收起侧栏</span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main-container">
+    <!-- VIEW 1: 集群部署与图形化拓扑 -->
+    <div class="view-panel active" id="viewDeploy">
+      <!-- Deploy Action Toolbar (Grouped & Responsive) -->
+      <section class="deploy-toolbar" id="deployToolbar">
+        <div class="deploy-toolbar-full" id="deployToolbarFull">
+          <div class="deploy-actions-left">
+            <!-- Group 1: Setup Primary -->
+            <button class="action-btn primary" id="btnDeploySetup" title="初始化并重建集群环境 (./run.sh env setup)">
+              <span class="btn-icon">⚡</span> <span class="btn-text">一键部署</span>
+            </button>
+
+            <!-- Group 2: Cluster Lifecycle Segmented Group -->
+            <div class="action-btn-group" title="集群实例生命周期管控">
+              <button class="action-btn success group-btn" id="btnDeployStart" title="启动所有数据库与代理节点">
+                <span class="btn-icon">▶</span> <span class="btn-text">启动</span>
+              </button>
+              <button class="action-btn danger group-btn" id="btnDeployStop" title="停止所有节点">
+                <span class="btn-icon">⏹</span> <span class="btn-text">停止</span>
+              </button>
+              <button class="action-btn warning group-btn" id="btnDeployRestart" title="重启所有节点">
+                <span class="btn-icon">🔄</span> <span class="btn-text">重启</span>
+              </button>
+            </div>
+
+            <!-- Group 3: Ops & Health Tools -->
+            <div class="action-btn-group" title="诊断自愈与清理">
+              <button class="action-btn group-btn" id="btnDeployClean" title="清理残留数据库实例与环境 (./run.sh env clean)">
+                <span class="btn-icon">🧹</span> <span class="btn-text">清理</span>
+              </button>
+              <button class="action-btn info group-btn" id="btnDeployHeal" title="自动探测并自愈流复制节点 (./run.sh env heal)">
+                <span class="btn-icon">🩺</span> <span class="btn-text">自愈</span>
+              </button>
+              <button class="action-btn doctor group-btn" id="btnDeployDoctor" title="检查系统依赖、端口与隔离性">
+                <span class="btn-icon">🔍</span> <span class="btn-text">体检</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="deploy-actions-right">
+            <button class="action-btn wizard-toggle-btn" id="btnToggleWizard" title="配置端口、拓扑与路由参数">
+              <span class="btn-icon">📐</span> <span class="btn-text">部署向导</span>
+            </button>
+            <button class="action-btn" id="btnRefreshTopo" title="重新检测节点状态">
+              <span class="btn-icon">🔄</span> <span class="btn-text">刷新拓扑</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Dynamic Running/Lock Status Ribbon -->
+        <div class="deploy-running-bar" id="deployRunningBar" style="display: none;">
+          <div class="running-bar-left">
+            <span class="running-spinner"></span>
+            <span class="running-action-text" id="runningActionText">正在执行集群操作...</span>
+            <span class="running-step-tag" id="runningStepTag">步骤: 准备中</span>
+            <span class="running-timer" id="runningTimer">⏱ 00:00</span>
+          </div>
+          <div class="running-bar-right">
+            <button class="action-btn small info" id="btnOpenActionModal">📺 查看终端 / 进度</button>
+            <button class="action-btn small danger" id="btnAbortRunningAction">⏹ 终止操作</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Topology Interactive Canvas Area -->
+      <section class="topo-stage-container">
+        <!-- Canvas Controls Overlay -->
+        <div class="canvas-controls">
+          <button class="canvas-btn" id="btnZoomIn" title="放大">➕</button>
+          <button class="canvas-btn" id="btnZoomOut" title="缩小">➖</button>
+          <button class="canvas-btn" id="btnResetView" title="重置视角">⟲</button>
+          <button class="canvas-btn" id="btnFitView" title="适应画布">⛶</button>
+        </div>
+
+        <!-- Main Topology Canvas Container -->
+        <div class="topo-canvas" id="topoCanvas">
+          <!-- Dynamically populated SVG and HTML hardware cards -->
+        </div>
+
+        <!-- Canvas Scale Floating Badge -->
+        <div class="canvas-scale-badge" id="canvasScaleBadge">100%</div>
+
+        <!-- Dedicated Node Inspector Slide-over Drawer -->
+        <aside class="node-inspector-drawer collapsed" id="nodeInspectorDrawer">
+          <div class="inspector-header">
+            <div class="inspector-header-info">
+              <div class="inspector-badge-row">
+                <span class="inspector-cluster-tag" id="inspClusterTag">MMR1 集群</span>
+                <span class="inspector-role-badge" id="inspRoleBadge">STANDBY</span>
+                <span class="inspector-status-badge" id="inspStatusBadge">● 在线</span>
+              </div>
+              <h3 class="inspector-node-title" id="inspNodeTitle">test_mmr1_s1</h3>
+              <div class="inspector-node-sub" id="inspNodeSub">192.168.0.15:10012</div>
+            </div>
+            <button class="inspector-close-btn" id="btnCloseInspector" title="关闭 (Esc)">✕</button>
+          </div>
+
+          <div class="inspector-body">
+            <!-- Connection String Snippet with One-Click Copy -->
+            <div class="insp-conn-box">
+              <div class="conn-box-header">
+                <span class="conn-box-label">PSQL 直连命令行</span>
+                <button class="btn-copy-conn" id="btnCopyPsqlConn" title="复制完整连接命令">📋 复制</button>
+              </div>
+              <code class="conn-code-snippet" id="inspConnSnippet">psql -h 192.168.0.15 -p 10012 -U postgres</code>
+              <button class="btn-open-sql-wb" id="btnOpenSqlWorkbench" title="打开 Web-PSQL 交互控制台">
+                <span>💻</span> 进入 Web-PSQL 交互控制台
+              </button>
+            </div>
+
+            <!-- Key Metrics Grid -->
+            <div class="insp-metrics-grid">
+              <div class="insp-metric-card">
+                <div class="metric-label">探测延迟</div>
+                <div class="metric-val text-green" id="inspLatency">-</div>
+              </div>
+              <div class="insp-metric-card">
+                <div class="metric-label">活跃会话数</div>
+                <div class="metric-val" id="inspConns">-</div>
+              </div>
+              <div class="insp-metric-card">
+                <div class="metric-label">下游从库</div>
+                <div class="metric-val" id="inspDownstreams">-</div>
+              </div>
+              <div class="insp-metric-card">
+                <div class="metric-label">内核模式</div>
+                <div class="metric-val text-cyan" id="inspRecovery">-</div>
+              </div>
+            </div>
+
+            <!-- WAL & LSN Diagnostic Box -->
+            <div class="insp-detail-section">
+              <div class="section-title">
+                <span>📡 WAL 流复制与内核状态</span>
+                <button class="tool-btn small" id="btnRefreshNodeProbe" title="重新探测">⚡ 刷新</button>
+              </div>
+              <div class="insp-kv-table">
+                <div class="insp-kv-row">
+                  <span class="kv-key">当前/接收 LSN:</span>
+                  <span class="kv-val code-font" id="inspCurrentLsn">-</span>
+                </div>
+                <div class="insp-kv-row" id="inspReplayRow">
+                  <span class="kv-key">回放 LSN:</span>
+                  <span class="kv-val code-font" id="inspReplayLsn">-</span>
+                </div>
+                <div class="insp-kv-row">
+                  <span class="kv-key">内核版本:</span>
+                  <span class="kv-val" id="inspPgVersion">-</span>
+                </div>
+                <div class="insp-kv-row">
+                  <span class="kv-key">部署目录:</span>
+                  <span class="kv-val code-font text-muted" id="inspDataDir">-</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Node Lifecycle Operations Toolbar -->
+            <div class="insp-detail-section">
+              <div class="section-title">🛠 单节点运维控制</div>
+              <div class="insp-action-grid">
+                <button class="node-act-btn warning" id="btnNodeRestart" title="重启当前 PostgreSQL 进程">🔄 重启节点</button>
+                <button class="node-act-btn danger" id="btnNodeStop" title="停止当前 PostgreSQL 进程">⏹ 停止节点</button>
+                <button class="node-act-btn success" id="btnNodeStart" title="启动当前 PostgreSQL 进程">▶ 启动节点</button>
+                <button class="node-act-btn info" id="btnNodeLog" title="查看最近运行日志">📜 节点日志</button>
+              </div>
+            </div>
+
+            <!-- Node Log Quick Preview Area -->
+            <div class="insp-log-box" id="inspLogBox" style="display: none;">
+              <div class="log-box-header">
+                <span>最新运行日志 (末尾 50 行)</span>
+                <button class="log-box-close" id="btnCloseNodeLog">✕</button>
+              </div>
+              <pre class="insp-log-pre" id="inspLogPre">加载中...</pre>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Sliding Deployment Wizard Drawer -->
+        <aside class="wizard-drawer collapsed" id="wizardDrawer">
+          <div class="wizard-header">
+            <div class="wizard-title">
+              <span class="wizard-icon">📐</span>
+              <span>集群图形化部署向导</span>
+            </div>
+            <button class="wizard-close-btn" id="btnCloseWizard">✕</button>
+          </div>
+          <div class="wizard-body">
+            <div class="wizard-group">
+              <label class="wizard-label">集群拓扑模式</label>
+              <div class="wizard-radio-group">
+                <label class="wizard-radio"><input type="radio" name="wiz_topo" value="mmr_only" checked> MMR 双对等多主集群 (MMR1 复用为 REP 测试)</label>
+              </div>
+            </div>
+
+            <div class="wizard-group">
+              <label class="wizard-label">代理路由模式 (rw_split_method)</label>
+              <select class="wizard-select" id="wizRwSplit">
+                <option value="sql_parse" selected>sql_parse (基于 SQL 语法解析智能分离)</option>
+                <option value="hint">hint (基于 Hint 注释标签引导分离)</option>
+                <option value="none">none (不分离，直通后端)</option>
+              </select>
+            </div>
+
+            <div class="wizard-group">
+              <label class="wizard-label">GUC 会话参数同步 (enable_guc_sync)</label>
+              <div class="wizard-toggle-box">
+                <label class="wizard-checkbox"><input type="checkbox" id="wizGucSync" checked> 启用前后端 GUC 缓存与差异重放</label>
+              </div>
+            </div>
+
+            <div class="wizard-group">
+              <label class="wizard-label">节点端口规划</label>
+              <div class="wizard-grid-2">
+                <div>
+                  <span class="field-desc">fbasecman 端口:</span>
+                  <input type="number" class="wizard-input" id="wizPortProxy" value="7280">
+                </div>
+                <div>
+                  <span class="field-desc">MMR 主节点 1:</span>
+                  <input type="number" class="wizard-input" id="wizPortMmr1" value="10011">
+                </div>
+                <div>
+                  <span class="field-desc">MMR 主节点 2:</span>
+                  <input type="number" class="wizard-input" id="wizPortMmr2" value="10021">
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-footer">
+              <button class="wizard-btn primary" id="btnWizardApply">⚡ 应用配置并一键拉起集群</button>
+              <button class="wizard-btn" id="btnWizardCancel">取消</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- Health Metrics Bottom Strip -->
+      <section class="health-strip" id="deployHealthStrip">
+        <div class="health-card">
+          <div class="health-card-label">MMR1 集群 (复用为 REP 测试)</div>
+          <div class="health-card-val" id="healthMmr1Val">7 / 7 节点在线</div>
+          <div class="health-card-sub">1 写主库 (10011) + 6 物理流复制从库</div>
+        </div>
+        <div class="health-card">
+          <div class="health-card-label">MMR2 集群</div>
+          <div class="health-card-val" id="healthMmr2Val">7 / 7 节点在线</div>
+          <div class="health-card-sub">1 写主库 (10021) + 6 物理流复制从库</div>
+        </div>
+        <div class="health-card">
+          <div class="health-card-label">集群总节点 & 代理网关</div>
+          <div class="health-card-val" id="healthProxyVal">14 节点就绪 | 代理在线</div>
+          <div class="health-card-sub">智能读写分离、GUC 同步与高可用路由</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- VIEW 2: 自动化回归测试 (保留原看板) -->
+    <div class="view-panel" id="viewRegress" style="display: none;">
+      <!-- Top Summary Metrics Cards -->
+      <section class="metrics-grid">
+        <div class="metric-card card-total clickable" data-filter="all" title="点击查看全部用例">
+          <div class="metric-meta">
+            <span class="metric-label">总测试用例</span>
+            <span class="metric-sub" id="metricSuiteCount">8 个分类</span>
+          </div>
+          <div class="metric-value" id="metricTotalCases">-</div>
+        </div>
+
+        <div class="metric-card card-pass clickable" data-filter="pass" title="点击筛选已通过用例">
+          <div class="metric-meta">
+            <span class="metric-label">已通过 (PASS)</span>
+            <span class="metric-sub">验证合格</span>
+          </div>
+          <div class="metric-value text-pass" id="metricPass">-</div>
+        </div>
+
+        <div class="metric-card card-fail clickable" id="cardFailedCases" data-filter="fail" title="点击快速查看并筛选全部失败用例">
+          <div class="metric-meta">
+            <span class="metric-label">已失败 (FAIL)</span>
+            <span class="metric-action-tag">点击查看 ❯</span>
+          </div>
+          <div class="metric-value text-fail" id="metricFail">-</div>
+        </div>
+
+        <div class="metric-card card-untested clickable" data-filter="untested" title="点击筛选未执行用例">
+          <div class="metric-meta">
+            <span class="metric-label">未执行 (UNTESTED)</span>
+            <span class="metric-sub">等待执行</span>
+          </div>
+          <div class="metric-value text-untested" id="metricUntested">-</div>
+        </div>
+
+        <div class="metric-card card-rate" title="综合通过率">
+          <div class="metric-meta">
+            <span class="metric-label">综合通过率</span>
+            <span class="metric-sub" id="metricPassRatio">-</span>
+          </div>
+          <div class="metric-value text-rate" id="metricPassRate">0%</div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="passProgressBar" style="width: 0%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Filter Active Banner -->
+      <div class="filter-banner" id="filterBanner" style="display: none;">
+        <div class="filter-banner-left">
+          <span class="filter-banner-icon">⚠️</span>
+          <span class="filter-banner-text" id="filterBannerText">当前已筛选出失败用例</span>
+        </div>
+        <div class="filter-banner-right">
+          <button class="filter-banner-btn primary" id="btnOpenFailedModal">📋 失败用例清单弹窗</button>
+          <button class="filter-banner-btn danger" id="btnBannerRunFailed">▶ 重跑所有失败项</button>
+          <button class="filter-banner-btn" id="btnClearFilter">✕ 显示全部用例</button>
+        </div>
+      </div>
+
+      <!-- Filter & Search Toolbar -->
+      <section class="toolbar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="搜索用例名称、Core ID (如 CORE-13)、中文描述..." autocomplete="off">
+          <button class="clear-search-btn" id="btnClearSearch" title="清空搜索">✕</button>
+        </div>
+
+        <div class="filter-group">
+          <button class="filter-pill active" data-filter="all">全部 <span class="pill-count" id="pillAllCount">0</span></button>
+          <button class="filter-pill" data-filter="pass">通过 <span class="pill-count" id="pillPassCount">0</span></button>
+          <button class="filter-pill" data-filter="fail">失败 <span class="pill-count" id="pillFailCount">0</span></button>
+          <button class="filter-pill" data-filter="untested">未执行 <span class="pill-count" id="pillUntestedCount">0</span></button>
+        </div>
+
+        <div class="toolbar-actions">
+          <button class="tool-btn" id="btnExpandAll" title="展开全部用例分类">➕ 全部展开</button>
+          <button class="tool-btn" id="btnCollapseAll" title="折叠全部用例分类">➖ 全部折叠</button>
+        </div>
+      </section>
+
+      <!-- Tree Navigation Container -->
+      <section class="tree-container" id="treeContainer">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <span>正在加载测试清单与执行状态...</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- VIEW 3: 常稳与性能压测 -->
+    <div class="view-panel" id="viewStable" style="display: none;">
+      <!-- Stable Overview Banner -->
+      <section class="stable-banner">
+        <div class="stable-status-pill" id="stableStatusPill">
+          <span class="pulse-dot idle" id="stablePulseDot"></span>
+          <span class="status-title" id="stableStatusTitle">常稳状态: 未启动</span>
+        </div>
+        <div class="stable-meta-group">
+          <div class="stable-meta-item">
+            <span class="meta-label">运行耗时:</span>
+            <span class="meta-val" id="stableElapsedVal">0.0s</span>
+          </div>
+          <div class="stable-meta-item">
+            <span class="meta-label">fbasecman PID:</span>
+            <span class="meta-val" id="stablePidVal">-</span>
+          </div>
+          <div class="stable-meta-item">
+            <span class="meta-label">ASAN 告警:</span>
+            <span class="meta-val" id="stableAsanVal">0 项</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stable Control & Metrics Grid -->
+      <section class="stable-grid">
+        <!-- Left: Workload Config & Actions -->
+        <div class="stable-control-card">
+          <h3 class="card-heading">⚡ 压测任务与控制</h3>
+          <div class="workload-selection">
+            <div class="workload-label">选择压测 Workload 目标:</div>
+            <div class="workload-checkboxes" id="workloadCheckboxes">
+              <label class="workload-item"><input type="radio" name="stable_target" value="all" checked> <strong>all (完整常稳集合)</strong></label>
+              <label class="workload-item"><input type="radio" name="stable_target" value="pgbench"> pgbench (读写并发事务压测)</label>
+              <label class="workload-item"><input type="radio" name="stable_target" value="jdbc"> jdbc (扩展协议长连接压测)</label>
+              <label class="workload-item"><input type="radio" name="stable_target" value="jdbc:prepared_leak"> jdbc:prepared_leak (PS 缓存泄露与淘汰专项)</label>
+              <label class="workload-item"><input type="radio" name="stable_target" value="fbasecman"> fbasecman (仅代理进程自身常稳)</label>
+            </div>
+          </div>
+
+          <div class="stable-btn-toolbar">
+            <button class="action-btn primary" id="btnStableStart">▶ 启动常稳压测</button>
+            <button class="action-btn danger" id="btnStableStop">⏹ 停止压测</button>
+            <button class="action-btn warning" id="btnStableReload">🔄 配置平滑重载</button>
+            <button class="action-btn info" id="btnStableRecover">🩺 异常恢复 (Recover)</button>
+            <button class="action-btn" id="btnStableArchive">📦 归档日志 (Archive)</button>
+          </div>
+
+          <div class="stable-report-actions">
+            <button class="action-btn" id="btnViewStableReport">📄 查看常稳测试报告</button>
+          </div>
+        </div>
+
+        <!-- Right: Realtime Performance Charts -->
+        <div class="stable-charts-card">
+          <h3 class="card-heading">📊 实时资源与性能监控 (CPU / RSS 内存 / 句柄)</h3>
+          <div class="metrics-visual-grid">
+            <div class="mini-metric-stat">
+              <div class="stat-label">物理内存 (RSS)</div>
+              <div class="stat-val" id="metricRssVal">0.0 MB</div>
+              <div class="stat-sub">内存泄露风险监测</div>
+            </div>
+            <div class="mini-metric-stat">
+              <div class="stat-label">CPU 占用率</div>
+              <div class="stat-val" id="metricCpuVal">0.0%</div>
+              <div class="stat-sub">核心计算负载</div>
+            </div>
+            <div class="mini-metric-stat">
+              <div class="stat-label">打开文件句柄 (FD)</div>
+              <div class="stat-val" id="metricFdVal">0</div>
+              <div class="stat-sub">连接句柄占用</div>
+            </div>
+          </div>
+
+          <!-- Dynamic SVG Line Chart -->
+          <div class="chart-canvas-box">
+            <div class="chart-title">RSS 内存趋势走势图 (MB)</div>
+            <svg class="trend-svg" id="rssTrendSvg" viewBox="0 0 500 120">
+              <path class="trend-path-fill" id="rssPathFill" d=""></path>
+              <path class="trend-path" id="rssPath" d=""></path>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stable Report Modal / Container -->
+      <section class="stable-report-container" id="stableReportContainer" style="display: none;">
+        <div class="report-box-header">
+          <span>📄 常稳测试报告与日志诊断</span>
+          <button class="close-report-btn" id="btnCloseStableReport">✕ 关闭</button>
+        </div>
+        <pre class="stable-report-pre" id="stableReportPre">正在加载报告...</pre>
+      </section>
+    </div>
+  </main>
+
+  <!-- Docked Live Terminal Drawer -->
+  <aside class="terminal-drawer collapsed" id="terminalDrawer">
+    <div class="terminal-header" id="terminalHeader">
+      <div class="terminal-title">
+        <span class="terminal-pulse" id="terminalPulse"></span>
+        <span class="term-title-text" id="terminalTitle">执行终端日志</span>
+        <span class="term-target-badge" id="terminalTargetBadge" style="display: none;">-</span>
+        <span class="term-elapsed" id="terminalElapsed">0.0s</span>
+      </div>
+      <div class="terminal-controls">
+        <button class="term-btn danger" id="btnStopTask" style="display: none;">⏹ 终止执行</button>
+        <button class="term-btn" id="btnClearTerminal">🧹 清屏</button>
+        <button class="term-btn" id="btnCopyTerminal">📋 复制</button>
+        <button class="term-btn toggle-btn" id="btnToggleTerminal">▲ 展开日志</button>
+      </div>
+    </div>
+    <div class="terminal-body" id="terminalBody">
+      <pre class="terminal-output" id="terminalOutput">等待测试任务启动...</pre>
+    </div>
+  </aside>
+
+  <!-- Immersive Report Modal -->
+  <div class="modal-overlay" id="reportModalOverlay" style="display: none;">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <div class="modal-title-top">
+            <span class="modal-core-id" id="modalCoreId" style="display: none;">CORE-XX</span>
+            <h2 class="modal-title" id="modalTitle">测试报告</h2>
+            <span class="modal-status-badge pass" id="modalStatusBadge">PASS</span>
+            <span class="modal-duration-tag" id="modalDurationTag">0.00s</span>
+            <button class="modal-info-btn" id="btnToggleDetails" title="查看完整用例描述与精确起止时间">ℹ️ 详情</button>
+          </div>
+          <!-- Foldable Details Drawer (hidden by default to maximize space) -->
+          <div class="modal-details-drawer" id="modalDetailsDrawer" style="display: none;">
+            <div class="modal-subtitle" id="modalSubtitle">用例目标及描述</div>
+            <div class="modal-meta-row">
+              <span class="meta-item"><strong class="meta-label">开始时间:</strong> <span id="modalStartTime">-</span></span>
+              <span class="meta-item"><strong class="meta-label">结束时间:</strong> <span id="modalEndTime">-</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <button class="modal-action-btn" id="btnToggleFullscreen" title="全屏/窗口切换 (F11)">⛶</button>
+          <button class="modal-close-btn" id="btnModalClose" title="关闭 (Esc)">✕</button>
+        </div>
+      </div>
+
+      <div class="modal-tabs">
+        <div class="tabs-nav-group">
+          <button class="tab-btn active" data-tab="tab-steps">交互步骤详情 (<span id="tabStepCount">0</span>)</button>
+          <button class="tab-btn highlight-topo" data-tab="tab-topology" id="tabTopologyBtn" style="display: none;">🪐 架构拓扑看板</button>
+          <button class="tab-btn danger" data-tab="tab-backtrace" id="tabBacktraceBtn" style="display: none;">🚨 GDB 崩溃调用栈</button>
+          <button class="tab-btn" data-tab="tab-assertions">检测项断言 (<span id="tabAssertCount">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-overview">用例设计与配置</button>
+          <button class="tab-btn" data-tab="tab-raw">原始报告 (report.txt)</button>
+          <button class="tab-btn" data-tab="tab-logs">运行时日志</button>
+        </div>
+        <div class="topology-view-toggle" id="topoViewToggleBar" style="display: none;">
+          <button class="view-btn" id="btnTopoView3D">🪐 3D 全息拓扑</button>
+          <button class="view-btn active" id="btnTopoViewGraph">🖼️ 2D 架构图</button>
+          <button class="view-btn" id="btnTopoViewCards">📋 详细节点卡片</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab 1: Interactive Steps Details -->
+        <div class="tab-pane active" id="tab-steps">
+          <div class="steps-timeline" id="modalStepsList">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Tab 1.5: High Availability Topology Visualizer (Ultra-compact, no redundant intro) -->
+        <div class="tab-pane" id="tab-topology">
+          <div class="topology-visualizer-container" id="modalTopologyContainer">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Tab 1.8: Crash Forensics GDB Backtrace -->
+        <div class="tab-pane" id="tab-backtrace">
+          <div class="backtrace-alert">
+            <span class="alert-icon">🚨</span>
+            <div class="alert-desc">
+              <strong>检测到进程崩溃与 Core Dump</strong>
+              <p>系统已通过 GDB 自动提取出崩溃线程堆栈与全线程 Backtrace，用于快速定位 C 源码段错误或致命信号：</p>
+            </div>
+          </div>
+          <pre class="raw-report-pre backtrace-pre" id="modalBacktraceContent">-</pre>
+        </div>
+
+        <!-- Tab 2: Assertions Check items -->
+        <div class="tab-pane" id="tab-assertions">
+          <div class="assertions-list" id="modalAssertionsList">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Tab 3: Case Overview & Config -->
+        <div class="tab-pane" id="tab-overview">
+          <div class="overview-section">
+            <h4 class="section-title">验证目的</h4>
+            <div class="info-block" id="modalPurpose">-</div>
+
+            <h4 class="section-title">测试内容清单</h4>
+            <ol class="contents-list" id="modalContentsList">
+              <!-- Rendered dynamically -->
+            </ol>
+
+            <h4 class="section-title">通过 / 失败原因</h4>
+            <div class="info-block highlight" id="modalReason">-</div>
+
+            <h4 class="section-title">关键拓扑与参数配置</h4>
+            <pre class="code-block" id="modalKeyConfig">-</pre>
+          </div>
+        </div>
+
+        <!-- Tab 4: Raw Report -->
+        <div class="tab-pane" id="tab-raw">
+          <div class="raw-actions">
+            <button class="tool-btn small" id="btnCopyRawReport">📋 复制原始报告</button>
+          </div>
+          <pre class="raw-report-pre" id="modalRawReport">-</pre>
+        </div>
+
+        <!-- Tab 5: Runtime Logs -->
+        <div class="tab-pane" id="tab-logs">
+          <div class="log-selector-bar">
+            <label for="logFileSelect">选择日志文件: </label>
+            <select id="logFileSelect" class="log-select">
+              <option value="">加载中...</option>
+            </select>
+            <button class="tool-btn small" id="btnRefreshLog">刷新当前日志</button>
+          </div>
+          <pre class="raw-report-pre" id="modalLogViewer">请选择日志文件查看内容</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Failed Cases Summary Modal -->
+  <div class="modal-overlay" id="failedCasesModalOverlay" style="display: none;">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <div class="modal-title-top">
+            <h2 class="modal-title">已失败测试用例清单</h2>
+            <span class="modal-status-badge fail" id="modalFailedCountBadge">3 项失败</span>
+          </div>
+          <div class="modal-subtitle">点击【查看报告】深入分析失败原因与日志，或点击【重新执行】进行针对性复测</div>
+        </div>
+        <div class="modal-header-actions">
+          <button class="nav-btn danger" id="btnModalRunAllFailed">▶ 批量重跑所有失败项</button>
+          <button class="modal-close-btn" id="btnFailedModalClose" title="关闭 (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="failed-cases-container" id="failedCasesList">
+          <!-- Dynamic failed cases items rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cluster Environment Operation Execution Modal -->
+  <div class="modal-overlay" id="envActionModalOverlay" style="display: none;">
+    <div class="modal-container env-action-modal">
+      <div class="modal-header">
+        <div class="modal-title-area">
+          <div class="modal-title-top">
+            <span class="env-modal-icon" id="envModalIcon">⚡</span>
+            <h2 class="modal-title" id="envModalTitle">集群操作监控</h2>
+            <span class="env-status-badge running" id="envStatusBadge">执行中</span>
+            <span class="env-timer-badge" id="envTimerBadge">⏱ 00:00</span>
+          </div>
+          <div class="modal-subtitle" id="envModalSubtitle">正在执行集群底层运维指令，已锁定冲突操作以保证安全</div>
+        </div>
+        <div class="modal-header-actions">
+          <button class="modal-close-btn" id="btnEnvModalClose" title="最小化窗口 (Esc)">✕</button>
+        </div>
+      </div>
+
+      <div class="modal-body env-modal-body">
+        <!-- Progress Bar & Multi-Step Tracker -->
+        <div class="env-stepper-box" id="envStepperBox">
+          <div class="env-progress-track">
+            <div class="env-progress-fill" id="envProgressFill" style="width: 5%;"></div>
+          </div>
+          <div class="env-steps-row" id="envStepsRow">
+            <div class="env-step-item active" data-step="preflight">
+              <span class="step-num">1</span>
+              <span class="step-label">预检环境</span>
+            </div>
+            <div class="env-step-item" data-step="clean_previous">
+              <span class="step-num">2</span>
+              <span class="step-label">清理残留</span>
+            </div>
+            <div class="env-step-item" data-step="setup_mmr_topology">
+              <span class="step-num">3</span>
+              <span class="step-label">构建MMR</span>
+            </div>
+            <div class="env-step-item" data-step="health_check">
+              <span class="step-num">4</span>
+              <span class="step-label">健康检测</span>
+            </div>
+            <div class="env-step-item" data-step="collect_test_context">
+              <span class="step-num">5</span>
+              <span class="step-label">测试上下文</span>
+            </div>
+            <div class="env-step-item" data-step="prepare_jdbc">
+              <span class="step-num">6</span>
+              <span class="step-label">准备驱动</span>
+            </div>
+          </div>
+          <div class="env-step-desc" id="envStepDesc">
+            <span class="desc-pulse"></span>
+            <span id="envStepDescText">正在初始化操作任务...</span>
+          </div>
+        </div>
+
+        <!-- Prominent Error Alert Banner (Shown on Failure) -->
+        <div class="env-error-banner" id="envErrorBanner" style="display: none;">
+          <div class="error-banner-header">
+            <div class="error-banner-title">
+              <span class="error-icon">❌</span>
+              <strong>操作执行失败</strong>
+              <span class="error-code-badge" id="envErrorCodeBadge">退出码: 1</span>
+            </div>
+            <div class="error-banner-tools">
+              <button class="tool-btn small danger" id="btnCopyErrorLog">📋 复制错误信息</button>
+            </div>
+          </div>
+          <div class="error-summary-box" id="envErrorSummaryBox">-</div>
+        </div>
+
+        <!-- Live Terminal Stream Area -->
+        <div class="env-terminal-container">
+          <div class="env-terminal-topbar">
+            <div class="terminal-label">
+              <span class="term-dot"></span>
+              <span>实时控制台输出 (Console Stream)</span>
+              <span class="terminal-line-count" id="envTerminalLineCount">0 行</span>
+            </div>
+            <div class="terminal-tools">
+              <label class="term-toggle">
+                <input type="checkbox" id="chkEnvAutoScroll" checked> 自动滚动
+              </label>
+              <button class="tool-btn small" id="btnClearEnvLog">🧹 清屏</button>
+              <button class="tool-btn small" id="btnCopyEnvLog">📋 复制全部日志</button>
+            </div>
+          </div>
+          <div class="env-terminal-scroll" id="envTerminalScroll">
+            <pre class="env-terminal-pre" id="envTerminalPre">等待操作输出...</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer env-modal-footer">
+        <div class="footer-left">
+          <button class="action-btn danger" id="btnModalAbortAction">⏹ 终止执行 (Abort)</button>
+        </div>
+        <div class="footer-right">
+          <button class="action-btn" id="btnModalMinimize">最小化至后台</button>
+          <button class="action-btn warning" id="btnModalRetry" style="display: none;">🔄 重试当前操作</button>
+          <button class="action-btn success" id="btnModalDoneRefresh" style="display: none;">✅ 完成并刷新拓扑</button>
+          <button class="action-btn" id="btnModalCloseFailed" style="display: none;">关闭窗口</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Web-PSQL Interactive Workbench Modal -->
+  <div class="modal-overlay" id="sqlWorkbenchModal" style="display: none;">
+    <div class="modal-container sql-workbench-modal">
+      <div class="modal-header sql-header">
+        <div class="sql-header-left">
+          <div class="sql-title-row">
+            <span class="sql-app-icon">⚡</span>
+            <h2 class="modal-title">Web-PSQL 数据库交互工作台</h2>
+            <span class="sql-node-badge" id="sqlNodeBadge">test_mmr1 (10011)</span>
+            <span class="sql-role-badge" id="sqlRoleBadge">PRIMARY</span>
+          </div>
+          <div class="sql-conn-sub">
+            <span>目标地址: <strong id="sqlConnHostPort">192.168.0.15:10011</strong></span>
+            <span class="sql-divider">|</span>
+            <span>数据库:</span>
+            <select class="sql-db-select" id="sqlSelectDb">
+              <option value="postgres">postgres</option>
+              <option value="test_db">test_db</option>
+            </select>
+            <span class="sql-divider">|</span>
+            <span>执行用户: <strong id="sqlConnUser">postgres</strong></span>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <button class="modal-close-btn" id="btnCloseSqlWorkbench" title="关闭工作台 (Esc)">✕</button>
+        </div>
+      </div>
+
+      <div class="modal-body sql-workbench-body">
+        <!-- Quick Query Templates Bar -->
+        <div class="sql-templates-bar">
+          <span class="templates-label">⚡ 快捷诊断模板:</span>
+          <button class="template-pill" data-sql="SELECT application_name, client_addr, state, sync_state FROM pg_stat_replication;">📡 流复制状态</button>
+          <button class="template-pill" data-sql="SELECT node_name, node_state, node_host, node_port FROM fdd.mmr_node;">🪐 MMR多主节点</button>
+          <button class="template-pill" data-sql="SELECT pid, usename, client_addr, state, query FROM pg_stat_activity WHERE pid != pg_backend_pid();">👥 活跃会话</button>
+          <button class="template-pill" data-sql="SELECT slot_name, plugin, slot_type, active FROM pg_replication_slots;">📥 复制槽状态</button>
+          <button class="template-pill" data-sql="SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name;">📋 查看用户表 (\dt)</button>
+          <button class="template-pill" data-sql="SELECT version(), pg_is_in_recovery(), pg_current_wal_lsn();">ℹ️ 内核版本与LSN</button>
+        </div>
+
+        <!-- SQL Editor & Action Bar -->
+        <div class="sql-editor-section">
+          <div class="sql-editor-toolbar">
+            <div class="toolbar-left">
+              <button class="nav-btn primary" id="btnExecuteSql">
+                <span>▶ 执行查询 (Ctrl+Enter)</span>
+              </button>
+              <button class="tool-btn small" id="btnClearSql">🧹 清空</button>
+              <label class="sql-limit-toggle">
+                <input type="checkbox" id="chkSqlLimit" checked> 安全查询 <code>LIMIT 200</code>
+              </label>
+            </div>
+            <div class="toolbar-right">
+              <span class="sql-shortcut-tip">提示: <code>Ctrl + Enter</code> 直接执行</span>
+            </div>
+          </div>
+          <div class="sql-textarea-wrapper">
+            <textarea id="sqlInputArea" class="sql-code-editor" spellcheck="false" placeholder="在此输入 SQL 查询或命令，支持多行输入与 DDL/DML... 例如：SELECT * FROM pg_stat_replication;"></textarea>
+          </div>
+        </div>
+
+        <!-- Result Status Bar -->
+        <div class="sql-result-status-strip">
+          <div class="strip-left">
+            <span class="sql-status-tag idle" id="sqlStatusTag">就绪</span>
+            <span class="sql-summary-text" id="sqlSummaryText">输入 SQL 并点击执行</span>
+            <span class="sql-timer-text" id="sqlTimerText">⏱ - ms</span>
+          </div>
+          <div class="strip-right">
+            <div class="view-switch-group">
+              <button class="view-pill active" id="btnSqlViewGrid" title="结构化表格视图">📊 结构化表格</button>
+              <button class="view-pill" id="btnSqlViewRaw" title="PSQL 终端对齐输出">🔤 PSQL 纯文本</button>
+            </div>
+            <button class="tool-btn small" id="btnExportSqlCsv" title="导出当前结果为 CSV">📥 导出 CSV</button>
+            <button class="tool-btn small" id="btnCopySqlRaw" title="复制结果">📋 复制</button>
+          </div>
+        </div>
+
+        <!-- Result Viewports -->
+        <div class="sql-result-viewport">
+          <!-- Error Banner -->
+          <div class="sql-error-box" id="sqlErrorBox" style="display: none;">
+            <div class="error-box-header">
+              <span class="error-icon">❌</span>
+              <strong>SQL 执行报错 (PostgreSQL Error)</strong>
+            </div>
+            <pre class="error-msg-pre" id="sqlErrorPre"></pre>
+          </div>
+
+          <!-- Empty / Welcome Placeholder -->
+          <div class="sql-placeholder" id="sqlPlaceholder">
+            <span class="placeholder-icon">💻</span>
+            <span class="placeholder-title">Web-PSQL 交互控制台就绪</span>
+            <span class="placeholder-sub">在上方输入 SQL 或点击快捷模板，按 <code>Ctrl + Enter</code> 执行，即可在此查看实时结构化表格与终端输出</span>
+          </div>
+
+          <!-- Structured Grid View -->
+          <div class="sql-grid-scroll" id="sqlGridScroll" style="display: none;">
+            <table class="sql-data-table" id="sqlDataTable">
+              <thead id="sqlTableHead"></thead>
+              <tbody id="sqlTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Raw PSQL Text View -->
+          <div class="sql-raw-scroll" id="sqlRawScroll" style="display: none;">
+            <pre class="sql-raw-pre" id="sqlRawPre"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help / Info Modal -->
+  <div class="modal-overlay" id="helpModalOverlay" style="display: none;">
+    <div class="modal-container small-modal">
+      <div class="modal-header">
+        <h2 class="modal-title">fbasecman 回归测试平台使用说明</h2>
+        <button class="modal-close-btn" id="btnHelpClose">✕</button>
+      </div>
+      <div class="modal-body doc-content">
+        <h3>💡 操作指引</h3>
+        <ul>
+          <li><strong>树状分类展开：</strong>点击任一测试组标题（如 <code>high_availability</code>），即可展开查看包含的全部用例。</li>
+          <li><strong>整组执行：</strong>点击分类右侧的 <code>[▶ 执行整组]</code>，系统将在后台依次执行该类别下的全部测试。</li>
+          <li><strong>单用例执行：</strong>直接点击用例条目右侧的 <code>[▶ 执行]</code> 按钮，立即运行该单项。</li>
+          <li><strong>查看测试报告：</strong>测试执行完成后，条目右侧可点击 <code>[📄 查看报告]</code> 打开沉浸式弹窗，交互式查看执行步骤、中间状态表格、断言和完整日志。</li>
+          <li><strong>实时终端：</strong>下方停靠的终端抽屉可实时展示执行 stdout/stderr 日志，支持随时手动 <code>[⏹ 终止执行]</code>。</li>
+        </ul>
+        <h3>⚡ 命令行等效用法</h3>
+        <pre class="code-block">./run.sh run high_availability.core_13_monitor_confirm
+./run.sh run high_availability
+./run.sh run failed</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Quick Actions Popover -->
+  <div id="nodeQuickActionsPopover" class="node-quick-actions-popover" style="display: none;">
+    <div class="popover-header">
+      <div class="popover-title">
+        <span class="popover-icon">⚡</span>
+        <span id="popoverNodeLabel">节点快捷指令</span>
+      </div>
+      <button class="popover-close-btn" onclick="window.dashboard.closeQuickActionsPopover()">✕</button>
+    </div>
+    <div class="popover-body" id="popoverActionsList"></div>
+  </div>
+
+  <!-- Global Cyber Toast Notifications Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/vendor/three.min.js"></script>
+  <script src="/vendor/OrbitControls.js"></script>
+  <script src="/vendor/gsap.min.js"></script>
+  <script src="/app.js?v=2.2"></script>
+</body>
+</html>

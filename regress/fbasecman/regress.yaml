@@ -1,0 +1,34 @@
+fbasecman:
+  fbasecman_bin: /home/postgres/fly_dev/fbasecman_dev/build/sources/fbasecman
+  write_port: 29432
+  read_port: 28432
+  log_level: info
+  license_dir: /home/postgres/lic
+database:
+  enable_citus: true # 是否在部署时启用并安装 Citus 插件 (默认 false)
+  mmr_host: 192.168.1.24
+  mmr_pg_user: postgres
+  mmr_postgres_dir: /usr/local/pgsql15.3-mmr
+  mmr_data_root: /home/postgres/fbasecman_regress_v2_mmr
+  ports:
+    mmr1: 11011
+    mmr1_standby1: 11012
+    mmr1_standby2: 11013
+    mmr1_standby3: 11014
+    mmr1_standbys: [11012, 11013, 11014, 11015, 11016, 11017]
+    mmr2: 11021
+    mmr2_standby1: 11022
+    mmr2_standby2: 11023
+    mmr2_standby3: 11024
+    mmr2_standbys: [11022, 11023, 11024, 11025, 11026, 11027]
+
+local:
+  postgres_dir: /usr/local/pgsql15.3-mmr
+  jdbc_lib_dir: lib_jdbc
+  jdbc_versions: ["42.7.7", "42.7.0", "42.2.7"]
+
+framework:
+  output_dir: output
+  default_timeout: 60
+  keep_workdir: false
+  fail_fast: false

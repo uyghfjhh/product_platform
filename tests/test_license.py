@@ -1,6 +1,9 @@
 import base64
 import subprocess
 from datetime import date
+from pathlib import Path
+
+import pytest
 
 from argon2.low_level import Type, hash_secret_raw
 from cryptography.hazmat.primitives import serialization
@@ -74,9 +77,11 @@ def test_python_license_is_accepted_by_existing_c_verifier(tmp_path):
 
     filename = tmp_path / "license.dat"
     filename.write_bytes(response.content)
-    verifier = "/home/postgres/fly_dev/fd_licenser/fd_licenser"
+    verifier = Path("/home/postgres/fly_dev/fd_licenser/fd_licenser")
+    if not verifier.is_file():
+        pytest.skip(f"fd_licenser 校验器未在当前环境找到: {verifier}")
     result = subprocess.run(
-        [verifier, "check", "-k", str(key_dir), str(filename)],
+        [str(verifier), "check", "-k", str(key_dir), str(filename)],
         cwd=tmp_path,
         capture_output=True,
         text=True,

@@ -1,0 +1,1 @@
+"""fbasecman product adapter."""

@@ -1,0 +1,75 @@
+fbasecman:
+  fbasecman_bin: /home/postgres/fly_dev/fbasecman_dev/build-asan/sources/fbasecman
+  write_port: 27432
+  read_port: 26432
+  log_level: info
+  license_dir: /home/postgres/lic
+
+# Stable owns this topology. Its data roots and database ports must not overlap
+# with the regression environment in regress.yaml.
+database:
+  mmr_host: 192.168.1.24
+  rep_host: 192.168.1.24
+  mmr_pg_user: postgres
+  rep_pg_user: postgres
+  mmr_postgres_dir: /usr/local/pgsql15.3-mmr
+  rep_postgres_dir: /usr/local/pgsql15.3-mmr
+  mmr_data_root: /home/postgres/fbasecman_stable_v2_mmr
+  rep_data_root: /home/postgres/fbasecman_stable_v2_rep
+  ports:
+    mmr1: 12011
+    mmr1_standby1: 12012
+    mmr1_standby2: 12013
+    mmr1_standby3: 12014
+    mmr2: 12021
+    mmr2_standby1: 12022
+    mmr2_standby2: 12023
+    mmr2_standby3: 12024
+    rep_primary: 12051
+    rep_standby1: 12052
+    rep_standby2: 12053
+
+local:
+  postgres_dir: /usr/local/pgsql15.3-mmr
+  jdbc_lib_dir: lib_jdbc
+  jdbc_versions: ["42.7.7", "42.7.0", "42.2.7"]
+
+framework:
+  output_dir: output
+  environment_output_dir: output/stable/env
+  default_timeout: 60
+  keep_workdir: false
+  fail_fast: false
+
+stable:
+  pgbench_duration: 40m
+  jdbc_duration: 20m
+  # This profile is intentionally narrowed to the reload crash reproducer.
+  enabled_workloads: [pgbench.reload_status_toggle]
+  # HA command workloads remain available but are excluded by enabled_workloads.
+  ha_commands:
+    enabled: true
+  # Reproduce reload/routing lifetime races: mutate one datasource while
+  # short-lived clients repeatedly change read/write mode.
+  reload_status_toggle:
+    enabled: true
+    datasource: pg_240
+    interval_seconds: 0.2
+  interval_seconds: 60
+  server_lifetime: 60
+  global_prepared_statements_limit: 2000
+  backend_prepared_statements_limit: 2000
+  jdbc:
+    long_conn_clients: 0
+    short_conn_clients: 100
+    shared_sql_count: 2000
+    private_sql_count: 200
+    short_conn_batch: 1
+    short_conn_idle_ms: 5
+    rw_switch_enabled: true
+    rw_switch_interval_ops: 100
+    heartbeat_enabled: true
+    heartbeat_interval_ops: 50
+    guc_enabled: true
+    guc_interval_ops: 100
+    guc_distinct_count: 200

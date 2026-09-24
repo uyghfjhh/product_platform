@@ -182,3 +182,121 @@ button, input, textarea { font-family: inherit; }
   .filter-toolbar .ant-input-affix-wrapper, .filter-toolbar .ant-input-search, .filter-toolbar .ant-select { width: 100%; max-width: none; }
   .product-row { align-items: flex-start; }
 }
+
+/* ==========================================================================
+   商务清晰简洁风: 测试指标药丸栏与套件折叠卡片 (Tests View Layout)
+   ========================================================================== */
+.metrics-pill-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.metric-pill-item {
+  padding: 8px 18px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e1e7e4;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+.metric-pill-item:hover {
+  border-color: #166e60;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+.metric-pill-item.active {
+  background: #f0f7f5;
+  border-color: #166e60;
+}
+.pill-label {
+  font-size: 13px;
+  color: #59706a;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pill-count {
+  font-size: 16px;
+  font-weight: 600;
+  color: #24312e;
+}
+.metric-pill-item.pass .pill-count { color: #137333; }
+.metric-pill-item.pass.active { background: #e6f4ea; border-color: #137333; }
+.metric-pill-item.fail .pill-count { color: #c5221f; }
+.metric-pill-item.fail.active { background: #fce8e6; border-color: #c5221f; }
+.metric-pill-item.untested .pill-count { color: #5f6368; }
+.metric-pill-item.rate { cursor: default; }
+.metric-pill-item.rate:hover { border-color: #e1e7e4; box-shadow: none; }
+.metric-pill-item.rate .pill-count { color: #166e60; }
+
+.suite-accordion {
+  background: transparent !important;
+}
+.suite-accordion .ant-collapse-item {
+  background: #fff !important;
+  border: 1px solid #e1e7e4 !important;
+  border-radius: 6px !important;
+  margin-bottom: 12px !important;
+  overflow: hidden;
+}
+.suite-accordion .ant-collapse-header {
+  align-items: center !important;
+  padding: 12px 18px !important;
+}
+.suite-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.suite-case-list {
+  display: flex;
+  flex-direction: column;
+  background: #f8faf9;
+  margin: -12px -16px;
+}
+.case-row-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  background: #fff;
+  border-bottom: 1px solid #edf1ef;
+  transition: background 0.15s ease;
+}
+.case-row-item:last-child {
+  border-bottom: none;
+}
+.case-row-item:hover {
+  background: #f7faf8;
+}
+.case-row-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+}
+.case-target-code {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.case-title-desc {
+  font-size: 13px;
+  color: #40524c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.case-row-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 16px;
+  flex-shrink: 0;
+}
+

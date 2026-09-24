@@ -1,4 +1,5 @@
-"""平台自身的配置与数据路径。"""
+"""平台自身的全局配置与数据路径定义。"""
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -51,7 +52,7 @@ def load_settings() -> Settings:
         fbasecman_regress_root=Path(
             os.environ.get(
                 "PRODUCT_PLATFORM_CMAN_REGRESS_ROOT",
-                fly_root / "fbasecman_dev" / "fbasecman_regress_v2",
+                ROOT / "regress" / "fbasecman" if (ROOT / "regress" / "fbasecman").is_dir() else ROOT,
             )
         )
         .expanduser()

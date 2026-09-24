@@ -1,6 +1,7 @@
 """读取 fbasecman 回归产物；原始内容只做显示，不从文本猜测成功。"""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -46,8 +47,8 @@ def case_artifacts(settings: Settings, target: str, environment_id: str | None =
     if report_path.is_file():
         # 旧报告解析器运行在独立进程，避免与另一个 framework 包冲突。
         script = (
-            "import json,sys; from tools.web_reports import parse_report; "
-            "print(json.dumps(parse_report(sys.argv[1],sys.argv[2]),ensure_ascii=False))"
+            "import json,sys; from tools.web_server import _parse_report; "
+            "print(json.dumps(_parse_report(sys.argv[1],sys.argv[2]),ensure_ascii=False))"
         )
         result = subprocess.run(
             [sys.executable, "-c", script, target, str(report_root(settings, environment_id))],
@@ -202,11 +203,15 @@ def export_source_report(settings: Settings, environment_id: str, format_name: s
             "from framework.reporting.html import export_html_from_runs; "
             "print(export_html_from_runs(Path(sys.argv[1])))"
         )
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.run(
         [sys.executable, "-c", script, str(root)],
         cwd=settings.fbasecman_regress_root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=env,
         timeout=30,
     )
     if process.returncode:

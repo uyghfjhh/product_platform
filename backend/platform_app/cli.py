@@ -27,7 +27,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("start", help="启动平台与后台任务进程")
     start.add_argument("--host", default="0.0.0.0")
-    start.add_argument("--port", type=int, default=8765)
+    start.add_argument("--port", type=int, default=8080)
     commands.add_parser("check", help="检查本地存储和产品集成")
     args = parser.parse_args()
     settings = load_settings()

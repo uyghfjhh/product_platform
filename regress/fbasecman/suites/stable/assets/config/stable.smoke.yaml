@@ -1,0 +1,13 @@
+# Short, low-concurrency override for real environment smoke checks.
+# It changes only stable workload settings; topology isolation remains intact.
+stable:
+  pgbench_duration: 20s
+  jdbc_duration: 20s
+  interval_seconds: 1
+  jdbc:
+    long_conn_clients: 0
+    short_conn_clients: 2
+    shared_sql_count: 20
+    private_sql_count: 5
+    short_conn_batch: 1
+    short_conn_idle_ms: 5
