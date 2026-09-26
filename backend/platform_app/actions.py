@@ -11,17 +11,25 @@ import select
 import signal
 import socket
 import subprocess
-import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
-from .cman_artifacts import CaseProgressObserver, sync_current_results
-from .fbasecman_profile import legacy_root, profile_paths
+from .diagnostics import diagnose
+from .event_contracts import SceneObservationError
+from .product_adapters.fbasecman import CaseProgressObserver, sync_current_results
+from .product_registry import DEPLOYMENT_ACTIONS, get_product_spec
+from .providers import command_for, observe_database, observe_runtime
+from .scene import (
+    emit_action,
+    emit_configured_scene,
+    emit_observation,
+    emit_pgcluster_status,
+    endpoint_id,
+)
 from .storage import Store
-
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}
 
@@ -41,6 +49,8 @@ ACTIONS = {
         Action("deployment.validate", "校验部署配置", "deployment"),
         Action("deployment.status", "查看部署状态", "deployment"),
         Action("deployment.health", "检查集群健康", "deployment"),
+        Action("deployment.doctor", "环境体检", "deployment"),
+        Action("deployment.heal", "检查并恢复集群", "deployment", True),
         Action("deployment.create", "创建集群", "deployment", True),
         Action("deployment.start", "启动集群", "deployment", True),
         Action("deployment.stop", "停止集群", "deployment", True),
@@ -52,25 +62,21 @@ ACTIONS = {
         Action("tests.prepare_fbasecman", "准备 fbasecman 测试夹具", "tests", True),
         Action("tests.fbase", "运行 FBase 用例", "tests", True),
         Action("stability.fbasecman", "运行 fbasecman 常稳", "stability", True),
+        Action("diagnostics.analyze", "AI 分析当前测试结果", "diagnostics"),
     )
 }
 
 
 def actions_for_environment(environment: dict) -> list[dict]:
-    product = environment["product_id"]
+    product = get_product_spec(environment["product_id"])
+    if product is None:
+        return []
+    allowed = set(product.actions)
+    if environment.get("deployment_config") and "deployment" in product.capabilities:
+        allowed.update(DEPLOYMENT_ACTIONS)
     result = []
     for action in ACTIONS.values():
-        if action.id.startswith("deployment.") and not environment.get(
-            "deployment_config"
-        ):
-            continue
-        if action.id == "tests.fbasecman" and product != "fbasecman":
-            continue
-        if action.id == "tests.prepare_fbasecman" and product != "fbasecman":
-            continue
-        if action.id == "tests.fbase" and product != "fbase-database":
-            continue
-        if action.id == "stability.fbasecman" and product != "fbasecman":
+        if action.id not in allowed:
             continue
         result.append(
             {
@@ -104,70 +110,8 @@ def environment_lock(data_dir: Path, environment_id: str):
 def command_for_task(
     settings: Settings, environment: dict, action: str, target: str, parameters: dict
 ) -> tuple[list[str], Path]:
-    if action.startswith("deployment."):
-        config_file = Path(environment["deployment_config"] or "")
-        if not config_file.is_file():
-            raise FileNotFoundError("部署配置不存在: %s" % config_file)
-        pgcluster = settings.pgcluster_root / "pgcluster"
-        if not pgcluster.is_file():
-            raise FileNotFoundError("pgcluster 入口不存在: %s" % pgcluster)
-        cli_action = action.partition(".")[2]
-        command = [
-            sys.executable,
-            str(pgcluster),
-            "-f",
-            str(config_file),
-            cli_action,
-            target,
-        ]
-        if cli_action in {"clean", "failover", "rejoin"}:
-            command.append("--yes")
-        return command, settings.pgcluster_root
-
-    if action == "tests.fbasecman":
-        profile, override = profile_paths(settings, environment["id"])
-        if not profile.is_file() or not override.is_file():
-            raise RuntimeError("请先生成 pgcluster 回归部署方案")
-        context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
-        if not context.is_file():
-            raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
-        return [
-            sys.executable, "-m", "platform_app.legacy_cman_runner",
-            "--source", str(settings.fbasecman_regress_root),
-            "--override", str(override), target,
-        ], settings.fbasecman_regress_root
-
-    if action == "tests.prepare_fbasecman":
-        profile, override = profile_paths(settings, environment["id"])
-        if not profile.is_file() or not override.is_file():
-            raise RuntimeError("请先生成 pgcluster 测试部署方案")
-        return [
-            sys.executable, "-m", "platform_app.fbasecman_fixture",
-            "--profile", str(profile), "--override", str(override),
-        ], settings.data_dir
-
-    if action == "tests.fbase":
-        script = settings.fbase_regress_root / "run.sh"
-        if not script.is_file():
-            raise FileNotFoundError("FBase 测试入口不存在: %s" % script)
-        cluster = parameters.get("cluster")
-        if cluster not in {"mac", "mmr"}:
-            raise ValueError("FBase 测试需要选择 mac 或 mmr 集群")
-        command = [str(script), "run", cluster]
-        if target != "all":
-            command.append(target)
-        return command, settings.fbase_regress_root
-
-    if action == "stability.fbasecman":
-        script = settings.fbasecman_regress_root / "stable.sh"
-        if not script.is_file():
-            raise FileNotFoundError("fbasecman 常稳入口不存在: %s" % script)
-        command = [str(script), "run"]
-        if target != "all":
-            command.append(target)
-        return command, settings.fbasecman_regress_root
-
-    raise ValueError("该操作未注册执行器: %s" % action)
+    spec = command_for(settings, environment, action, target, parameters)
+    return spec.command, spec.cwd
 
 
 def _check_database(store: Store, task_id: str, environment: dict) -> None:
@@ -177,31 +121,22 @@ def _check_database(store: Store, task_id: str, environment: dict) -> None:
     )
     with socket.create_connection((host, port), timeout=3):
         pass
+    emit_observation(store, task_id, endpoint_id(environment), "reachable", "tcp.connect", {
+        "host": host, "port": port,
+    })
     store.add_event(
         task_id,
         "observation.captured",
         {"title": "TCP 端口可连接", "host": host, "port": port, "state": "reachable"},
     )
 
-    if environment["product_id"] == "fbase-database":
-        import psycopg
-
-        with psycopg.connect(
-            host=host,
-            port=port,
-            dbname=environment["database_name"],
-            user=environment["database_user"],
-            connect_timeout=4,
-            options="-c statement_timeout=4000",
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT version()")
-                version = cursor.fetchone()[0]
-        store.add_event(
-            task_id,
-            "observation.captured",
-            {"title": "数据库 SQL 可用", "version": version, "state": "ready"},
-        )
+    for observation in observe_database(environment):
+        store.add_event(task_id, "observation.captured", {
+            "title": "数据库 SQL 可用" if observation.kind == "sql.version" else observation.kind,
+            **observation.details, "state": observation.state,
+        })
+        emit_observation(store, task_id, endpoint_id(environment), observation.state,
+                         observation.kind, observation.details)
 
 
 def _run_command(
@@ -223,9 +158,15 @@ def _run_command(
         },
     )
     with log_path.open("w", encoding="utf-8") as log:
+        env = os.environ.copy()
+        current_pp = env.get("PYTHONPATH", "")
+        repo_root = store.path.parent.parent
+        paths_to_add = [str(cwd), str(repo_root / "regress" / "fbasecman"), str(repo_root / "backend"), str(repo_root)]
+        env["PYTHONPATH"] = ":".join(p for p in paths_to_add if Path(p).is_dir()) + ((":" + current_pp) if current_pp else "")
         process = subprocess.Popen(
             command,
             cwd=cwd,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -311,7 +252,7 @@ def _run_command(
         )
     return (
         returncode == 0,
-        "执行完成" if returncode == 0 else "产品工具退出码 %s；见原始日志" % returncode,
+        "执行完成" if returncode == 0 else f"产品工具退出码 {returncode}；见原始日志",
     )
 
 
@@ -321,26 +262,64 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
         return
     environment = store.get_environment(task["environment_id"])
     if environment is None:
-        store.transition_task(task_id, ("RUNNING",), "FAILED", reason="环境已不存在")
+        store.finish_task(task_id, ("RUNNING",), "FAILED", "环境已不存在")
         return
     action = ACTIONS[task["action"]]
     parameters = json.loads(task["parameters"])
+    execution_finished = False
     try:
-        with environment_lock(settings.data_dir, environment["id"]):
-            if action.id == "database.check":
+        lock = nullcontext() if action.id == "diagnostics.analyze" else environment_lock(settings.data_dir, environment["id"])
+        with lock:
+            if action.id == "diagnostics.analyze":
+                result = store.get_result(environment["product_id"], environment["id"],
+                                          task["target"], parameters.get("profile", "default"))
+                if result is None:
+                    raise ValueError("当前环境没有该测试目标的结果")
+                store.add_event(task_id, "step.started", {"title": "收集证据并分析代码与提交"})
+                content = diagnose(store, settings, result)
+                store.add_event(task_id, "diagnosis.ready", {
+                    "target": result["target"], "facts": len(content["analysis"]["facts"]),
+                })
+                success, reason = True, "AI 诊断已生成；请核对证据与候选提交"
+            elif action.id == "database.check":
+                emit_configured_scene(store, settings, task_id, environment)
+                emit_action(store, task_id, environment, action.id, task["target"], "started")
                 _check_database(store, task_id, environment)
+                emit_action(store, task_id, environment, action.id, task["target"], "finished", True)
                 success, reason = True, "连接正常"
             else:
+                emit_configured_scene(store, settings, task_id, environment)
                 command, cwd = command_for_task(
                     settings, environment, task["action"], task["target"], parameters
                 )
                 observer = (CaseProgressObserver(settings, environment["id"],
                                                 task["target"], time.time())
                             if action.id == "tests.fbasecman" else None)
-                success, reason = _run_command(
-                    store, task_id, command, cwd, action.changes_environment,
-                    observer=observer,
-                )
+                emit_action(store, task_id, environment, action.id, task["target"], "started")
+                try:
+                    success, reason = _run_command(
+                        store, task_id, command, cwd, action.changes_environment,
+                        observer=observer,
+                    )
+                except Exception:
+                    emit_action(store, task_id, environment, action.id, task["target"], "finished")
+                    raise
+                emit_action(store, task_id, environment, action.id, task["target"], "finished", success)
+                if action.id == "tests.fbase" and success:
+                    try:
+                        for observation in observe_runtime(settings, environment):
+                            emit_observation(
+                                store, task_id,
+                                observation.details.get("entity_id", endpoint_id(environment)),
+                                observation.state, observation.kind, observation.details,
+                            )
+                    except Exception as exc:  # noqa: BLE001 - observation cannot change test verdict
+                        store.add_event(task_id, "scene.observation.error", SceneObservationError(
+                            source="product.runtime", message=str(exc),
+                        ).model_dump())
+                if action.id.startswith("deployment.") and action.id != "deployment.validate":
+                    emit_pgcluster_status(store, settings, task_id, environment)
+        execution_finished = True
         current = store.get_task(task_id)
         if current and current["cancel_requested"]:
             terminal = (
@@ -348,41 +327,37 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
             )
         else:
             terminal = "SUCCEEDED" if success else "FAILED"
-        store.transition_task(
-            task_id, ("RUNNING", "CANCELLING"), terminal, reason=reason
-        )
-    except Exception as exc:
+
+        # Publish the current result before the task becomes terminal. Readers
+        # should never observe "finished" while still seeing the prior result.
+        if action.id == "tests.fbasecman":
+            count = sync_current_results(
+                store, settings, environment, task["target"],
+                current["started_at"] or current["created_at"],
+            )
+            if count == 0:
+                reason = "本次没有生成可核对的用例报告；见命令日志"
+                store.put_result(
+                    environment["product_id"], environment["id"], task["target"],
+                    parameters.get("profile", "default"), "ERROR", reason,
+                    str(settings.data_dir / "operations" / (task_id + ".log")),
+                )
+                if terminal == "SUCCEEDED":
+                    terminal = "FAILED"
+        elif action.id == "tests.fbase":
+            store.put_result(
+                environment["product_id"], environment["id"], task["target"],
+                parameters.get("profile", "default"),
+                "PASS" if terminal == "SUCCEEDED" else "ERROR", reason,
+                str(settings.data_dir / "operations" / (task_id + ".log")),
+            )
+    except Exception as exc:  # noqa: BLE001 - persist any worker failure as a terminal task
         terminal = (
             "RECOVERY_REQUIRED"
-            if action.changes_environment
+            if action.changes_environment and not execution_finished
             and (store.get_task(task_id) or {}).get("process_id")
             else "FAILED"
         )
+        reason = str(exc)
         store.add_event(task_id, "operation.error", {"message": str(exc)})
-        store.transition_task(
-            task_id, ("RUNNING", "CANCELLING"), terminal, reason=str(exc)
-        )
-    final = store.get_task(task_id)
-    store.add_event(
-        task_id,
-        "operation.finished",
-        {"status": final["status"], "reason": final["reason"]},
-    )
-    if action.id == "tests.fbasecman":
-        count = sync_current_results(store, settings, environment, task["target"],
-                                     final["started_at"] or final["created_at"])
-        if count == 0:
-            store.put_result(environment["product_id"], environment["id"], task["target"],
-                             parameters.get("profile", "default"),
-                             "ERROR", "本次没有生成可核对的用例报告；见命令日志",
-                             str(settings.data_dir / "operations" / (task_id + ".log")))
-    elif action.id == "tests.fbase":
-        store.put_result(
-            environment["product_id"],
-            environment["id"],
-            task["target"],
-            parameters.get("profile", "default"),
-            "PASS" if final["status"] == "SUCCEEDED" else "ERROR",
-            final["reason"],
-            str(settings.data_dir / "operations" / (task_id + ".log")),
-        )
+    store.finish_task(task_id, ("RUNNING", "CANCELLING"), terminal, reason)

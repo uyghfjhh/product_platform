@@ -97,6 +97,16 @@ class NodeController(object):
         cmd = '%s/bin/pg_ctl -D "%s" promote' % (self.pg_dir, pgdata)
         rc, out = self._run_cmd(cmd, "pg_promote_%s.log" % node_key)
         time.sleep(1)
+        if rc == 0 and node_key in self.nodes:
+            _, port = self.nodes[node_key]
+            group_prefix = "mmr1" if "mmr1" in node_key or node_key.startswith("A") else "mmr2"
+            for i in range(1, 7):
+                slot_cmd = (
+                    '%s/bin/psql -h 127.0.0.1 -p %d -U postgres -d postgres -c '
+                    '"SELECT pg_create_physical_replication_slot(\'regress_%s_s%d\') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name=\'regress_%s_s%d\');"'
+                    % (self.pg_dir, port, group_prefix, i, group_prefix, i)
+                )
+                self._run_cmd(slot_cmd, "pg_ensure_slots_%s_%d.log" % (node_key, i))
         return rc == 0
 
     def rebuild_replica(self, standby_key, primary_key, app_name=None):
@@ -118,10 +128,11 @@ class NodeController(object):
 
         cmd = (
             'rm -rf "%s" && '
-            '%s/bin/pg_basebackup -h "%s" -p %d -U "%s" -D "%s" -Fp -Xs -R && '
+            '%s/bin/pg_basebackup -h "%s" -p %d -U "%s" -D "%s" -Fp -Xs -R -c fast && '
             'sed -i "s/target_session_attrs=any/target_session_attrs=any application_name=%s/" "%s/postgresql.auto.conf" && '
+            'sed -i "/^primary_slot_name/d" "%s/postgresql.auto.conf" "%s/pgcluster.conf" 2>/dev/null || true; '
             'echo "port=%d" >>"%s/postgresql.conf"'
-            % (st_pgdata, self.pg_dir, self.host, pr_port, self.repl_user, st_pgdata, app_name, st_pgdata, st_port, st_pgdata)
+            % (st_pgdata, self.pg_dir, self.host, pr_port, self.repl_user, st_pgdata, app_name, st_pgdata, st_pgdata, st_pgdata, st_port, st_pgdata)
         )
         rc, out = self._run_cmd(cmd, "pg_rebuild_%s.log" % standby_key)
         rebuild_transcript = self.last_operation_transcript

@@ -93,6 +93,33 @@ class ConsoleSnapshot(object):
             )
         return row
 
+    def assert_fields(self, filters, **expected_fields):
+        row = self.find_one(**filters)
+        for field_name, expected_value in expected_fields.items():
+            if field_name not in row or row[field_name] != str(expected_value):
+                raise ConsoleAssertionError(
+                    "Field %r mismatch for %r: expected %r, got %r\nFull row: %r"
+                    % (field_name, filters, expected_value, row.get(field_name), row)
+                )
+        return row
+
+    def assert_columns(self, *columns):
+        actual = list(self.records[0]) if self.records else []
+        missing = [column for column in columns if column not in actual]
+        if missing:
+            raise ConsoleAssertionError("Missing columns %r; actual columns %r" % (missing, actual))
+        return actual
+
+    def assert_error(self, *fragments):
+        if getattr(self, "returncode", 0) == 0:
+            raise ConsoleAssertionError("Expected command failure: %s" % self.raw_output)
+        output = self.raw_output.lower()
+        missing = [fragment for fragment in fragments if fragment.lower() not in output]
+        if missing:
+            raise ConsoleAssertionError(
+                "Expected error fragments %r; actual output: %s" % (missing, self.raw_output)
+            )
+
     def assert_candidate_absent(self, candidate_node):
         """Assert that candidate_node is absent from all rows in this snapshot."""
         for row in self.records:
@@ -158,4 +185,3 @@ class ConsoleSnapshot(object):
         for k, v in row.items():
             lines.append("%s | %s" % (str(k).ljust(label_width), v))
         return "\n".join(lines)
-

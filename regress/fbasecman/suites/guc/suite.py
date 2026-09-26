@@ -1,9 +1,6 @@
 """GUC regression suite entry point."""
 
-import time
-from pathlib import Path
-
-from framework.configuration import load_regression_config
+from framework.suites.runner import run_cases, run_runtime_case
 from .manifest import GUC_CASES, case_items, find_case
 from .runtime import GucRuntime
 from .executors import (
@@ -58,34 +55,12 @@ def show():
 
 
 def run_case(root, case):
-    started = time.monotonic()
-    runtime = None
-    try:
-        runtime = GucRuntime(root, case)
-        with runtime:
-            EXECUTORS[case.executor](runtime)
-        runtime.finish("PASS", "GUC 规范化、多值解析及连接复用重放验证通过；所有检测项符合预期。")
-        print("%-58s SUCCESS %8.3fs" % (case.target, time.monotonic() - started))
-        return True
-    except Exception as exc:
-        if runtime is not None:
-            try:
-                runtime.finish("FAIL", str(exc))
-            except Exception:
-                runtime.stop()
-        else:
-            env = load_regression_config(Path(root))
-            run_root = env.output_dir / "runs" / "guc" / case.name
-            run_root.mkdir(parents=True, exist_ok=True)
-            (run_root / "report.txt").write_text(
-                "Test: %s\nStatus: FAIL\nSummary: %s\nFailure: %s\n" %
-                (case.target, case.summary, exc), encoding="utf-8")
-        print("%-58s FAIL    %8.3fs" % (case.target, time.monotonic() - started))
-        return False
+    return run_runtime_case(
+        root, case, GucRuntime, EXECUTORS,
+        "GUC 规范化、多值解析及连接复用重放验证通过；所有检测项符合预期。",
+    )
 
 
 def run(root, target=None):
     selected = [find_case(target)] if target else case_items()
-    failures = sum(0 if run_case(root, case) else 1 for case in selected)
-    print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-    return failures == 0
+    return run_cases(root, selected, run_case)

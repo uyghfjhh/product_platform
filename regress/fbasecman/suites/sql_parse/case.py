@@ -13,9 +13,5 @@ class SqlParseCase(HaCommandCase):
             notes=notes,
             route_mode="sql_parse",
             report_groups=("mmr_group",),
+            suite_id="sql_parse",
         )
-        self.suite_name = "sql_parse"
-
-    @property
-    def target(self):
-        return "sql_parse.%s" % self.name

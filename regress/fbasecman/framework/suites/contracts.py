@@ -40,6 +40,26 @@ class CaseResult(object):
         self.steps = list(steps or [])
 
 
+class SuiteRunResult(object):
+    """Suite outcome with per-case report references."""
+
+    def __init__(self, suite_id, total, passed, failed, results=None):
+        self.suite_id = suite_id
+        self.total = int(total)
+        self.passed = int(passed)
+        self.failed = int(failed)
+        self.results = list(results or [])
+
+    @property
+    def status(self):
+        return "PASS" if self.failed == 0 else "FAIL"
+
+    def __bool__(self):
+        return self.failed == 0
+
+    __nonzero__ = __bool__
+
+
 def validate_cases(suite_id: str, cases: Iterable[Any]) -> List[Any]:
     """Validate the minimum case contract and return a materialized list."""
     materialized = list(cases)
@@ -104,6 +124,8 @@ class SuitePlugin(object):
     def run(self, root_dir: Path, target: Optional[str] = None) -> int:
         try:
             result = self._runner(root_dir, target=target)
+            if isinstance(result, SuiteRunResult):
+                return 0 if result.status == "PASS" else 1
             if isinstance(result, CaseResult):
                 return 0 if result.status == "PASS" else 1
             if isinstance(result, bool):

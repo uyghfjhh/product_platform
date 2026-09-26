@@ -1,7 +1,9 @@
 """Global-cache case declaration."""
 
+from framework.suites import CaseSpec
 
-class GlobalCacheCase:
+
+class GlobalCacheCase(CaseSpec):
     def __init__(
         self,
         name,
@@ -27,15 +29,16 @@ class GlobalCacheCase:
         test_contents=None,
         step_rules=None,
     ):
-        self.name = name
-        self.summary = summary
+        super(GlobalCacheCase, self).__init__(
+            suite_id="global_cache", name=name, summary=summary, executor=driver,
+            topology=topology, route_mode=rw_split_method, enabled=enabled,
+        )
         self.batch = batch
         self.priority = priority
         self.driver = driver
         self.topology = topology
         self.rw_split_method = rw_split_method
         self.pool_mode = pool_mode
-        self.enabled = enabled
         self.notes = notes or []
         self.fbasecman = fbasecman or {}
         self.jdbc = jdbc or {}
@@ -49,7 +52,3 @@ class GlobalCacheCase:
         self.issue_id = issue_id
         self.test_contents = tuple(test_contents or (summary,))
         self.step_rules = tuple(step_rules or ())
-
-    @property
-    def target(self):
-        return "global_cache.%s" % self.name

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from framework.configuration import load_regression_config
+from framework.suites.runner import run_cases
 from .manifest import HIGH_AVAILABILITY_CASES, case_items, find_case
 from .runtime import HighAvailabilityRuntime
 
@@ -78,6 +79,4 @@ def run_case(root, case):
 
 def run(root, target=None):
     selected = [find_case(target)] if target else case_items()
-    failures = sum(0 if run_case(root, case) else 1 for case in selected)
-    print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-    return failures == 0
+    return run_cases(root, selected, run_case)

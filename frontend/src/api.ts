@@ -50,8 +50,13 @@ export type Event = {
 
 export type Case = {
   suite: string;
+  suite_title?: string;
+  suite_description?: string;
   target: string;
+  name?: string;
   title: string;
+  core_id?: string;
+  summary?: string;
   enabled: boolean;
   tags: string[];
 };
@@ -99,13 +104,24 @@ export function statusColor(status: string): string {
   return 'default';
 }
 
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function operationRequest(environmentId: string, action: string, target?: string, parameters: Record<string, unknown> = {}, acknowledgeChange = false) {
   return post<Task>('/operations', {
     environment_id: environmentId,
     action,
     target: target || undefined,
     parameters,
-    submission_key: crypto.randomUUID(),
+    submission_key: generateUUID(),
     acknowledge_change: acknowledgeChange,
   });
 }

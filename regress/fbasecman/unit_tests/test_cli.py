@@ -4,7 +4,7 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tools.cli import build_parser, main, _case_status, _read_last_failed, _write_last_failed
+from tools.cli import build_parser, main, _case_status, _failed_targets, _read_last_failed, _write_last_failed
 from tools.clean import run_clean
 
 
@@ -18,6 +18,10 @@ class CliImportTest(unittest.TestCase):
 
     def test_regression_output_cleanup_preserves_stable_artifacts(self):
         parser = build_parser()
+        args = parser.parse_args(["output", "clean"])
+        self.assertEqual("output", args.command)
+        self.assertEqual("clean", args.output_command)
+
         args = parser.parse_args(["outout", "clean"])
         self.assertEqual("outout", args.command)
         self.assertEqual("clean", args.output_command)
@@ -55,6 +59,16 @@ class CliImportTest(unittest.TestCase):
     def test_outstanding_is_registered_as_run_target(self):
         args = build_parser().parse_args(["run", "outstanding"])
         self.assertEqual("outstanding", args.target)
+        self.assertEqual("heal", args.preflight)
+        args = build_parser().parse_args(["run", "outstanding", "--preflight", "off"])
+        self.assertEqual("off", args.preflight)
+
+    def test_failed_preflight_keeps_targets_even_with_old_pass_report(self):
+        import tools.cli as cli
+        from unittest.mock import patch
+
+        with patch.object(cli, "_case_status", return_value="PASS"):
+            self.assertEqual(["sample.basic"], _failed_targets(["sample.basic"], 3))
 
     def test_last_failed_roundtrip(self):
         import tools.cli as cli

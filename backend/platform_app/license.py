@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import secrets
+import shutil
 import threading
 import time
 from datetime import date, datetime
@@ -12,18 +13,22 @@ from pathlib import Path
 
 try:
     from argon2.low_level import Type, hash_secret_raw
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_decrypt
+    from nacl.bindings import (
+        crypto_aead_xchacha20poly1305_ietf_decrypt,
+        crypto_aead_xchacha20poly1305_ietf_encrypt,
+    )
 except ImportError:
     Type = None
     hash_secret_raw = None
     Ed25519PrivateKey = None
     crypto_aead_xchacha20poly1305_ietf_decrypt = None
+    crypto_aead_xchacha20poly1305_ietf_encrypt = None
 
 from pydantic import BaseModel, Field, model_validator
 
 from .config import Settings
-
 
 KEY_VERSION = re.compile(r"^1\.([1-9][0-9]*)$")
 MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
@@ -124,8 +129,6 @@ def _read_legacy_key(key_dir: Path, version: str, password: str) -> Ed25519Priva
     if len(private) != 64 or private[32:] != expected_public:
         raise ValueError("私钥与公钥不匹配")
     signer = Ed25519PrivateKey.from_private_bytes(private[:32])
-    from cryptography.hazmat.primitives import serialization
-
     actual_public = signer.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
@@ -133,6 +136,103 @@ def _read_legacy_key(key_dir: Path, version: str, password: str) -> Ed25519Priva
     if actual_public != expected_public:
         raise ValueError("私钥与公钥不匹配")
     return signer
+
+
+def _key_metadata(key_dir: Path, version: str) -> dict:
+    directory = _version_dir(key_dir, version)
+    public_file = directory / "public.pem"
+    try:
+        lines = public_file.read_text(encoding="ascii").splitlines()
+        public = bytes.fromhex(lines[1])
+    except (OSError, IndexError, ValueError) as exc:
+        raise ValueError("无法读取公钥文件") from exc
+    if len(public) != 32:
+        raise ValueError("公钥文件格式无效")
+    revoked_file = key_dir / "revoked.json"
+    try:
+        revoked = json.loads(revoked_file.read_text(encoding="utf-8")) if revoked_file.is_file() else {}
+    except (OSError, ValueError):
+        revoked = {}
+    return {
+        "version": version,
+        "public_key": public.hex(),
+        "fingerprint": hashlib.sha256(public).hexdigest(),
+        "revoked": version in revoked,
+        "revoked_at": revoked.get(version),
+    }
+
+
+def key_metadata(settings: Settings, version: str) -> dict:
+    return _key_metadata(settings.license_key_dir, version)
+
+
+def _write_key_pair(key_dir: Path, version: str, signer: Ed25519PrivateKey,
+                    password: str, *, replace: bool = False) -> None:
+    if not password:
+        raise ValueError("密钥口令不能为空")
+    directory = _version_dir(key_dir, version)
+    directory.mkdir(parents=True, exist_ok=True)
+    private_file, public_file = directory / "private.pem", directory / "public.pem"
+    if not replace and (private_file.exists() or public_file.exists()):
+        raise ValueError("密钥版本已存在")
+    public = signer.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw,
+    )
+    private = signer.private_bytes(
+        encoding=serialization.Encoding.Raw, format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    ) + public
+    salt, nonce = secrets.token_bytes(16), secrets.token_bytes(24)
+    derived = hash_secret_raw(password.encode("utf-8"), salt, 2, 65536, 1, 32, Type.ID)
+    encrypted = crypto_aead_xchacha20poly1305_ietf_encrypt(private, b"", nonce, derived)
+    packed = base64.b64encode(salt + nonce + encrypted).decode("ascii")
+    public_text = "-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n" % public.hex()
+    private_text = "-----BEGIN ENCRYPTED PRIVATE KEY-----\n%s\n-----END ENCRYPTED PRIVATE KEY-----\n" % packed
+    private_file.write_text(private_text, encoding="ascii")
+    public_file.write_text(public_text, encoding="ascii")
+
+
+def generate_key(settings: Settings, version: str, password: str) -> dict:
+    if not KEY_VERSION.fullmatch(version):
+        raise ValueError("License 版本应为 1.<密钥版本>")
+    signer = Ed25519PrivateKey.generate()
+    _write_key_pair(settings.license_key_dir, version, signer, password)
+    return _key_metadata(settings.license_key_dir, version)
+
+
+def revoke_key(settings: Settings, version: str, password: str) -> dict:
+    _read_legacy_key(settings.license_key_dir, version, password)
+    metadata = _key_metadata(settings.license_key_dir, version)
+    if metadata["revoked"]:
+        return metadata
+    revoked_file = settings.license_key_dir / "revoked.json"
+    try:
+        values = json.loads(revoked_file.read_text(encoding="utf-8")) if revoked_file.is_file() else {}
+    except (OSError, ValueError):
+        values = {}
+    values[version] = datetime.now().astimezone().isoformat(timespec="seconds")
+    revoked_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = revoked_file.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(revoked_file)
+    return _key_metadata(settings.license_key_dir, version)
+
+
+def change_key_password(settings: Settings, version: str, old_password: str,
+                        new_password: str) -> dict:
+    signer = _read_legacy_key(settings.license_key_dir, version, old_password)
+    _write_key_pair(settings.license_key_dir, version, signer, new_password, replace=True)
+    return _key_metadata(settings.license_key_dir, version)
+
+
+def delete_key(settings: Settings, version: str, password: str) -> None:
+    versions = options(settings)["key_versions"]
+    if version not in versions:
+        raise ValueError("密钥版本不存在")
+    if len(versions) <= 1:
+        raise ValueError("不能删除唯一的密钥版本")
+    _read_legacy_key(settings.license_key_dir, version, password)
+    shutil.rmtree(_version_dir(settings.license_key_dir, version))
 
 
 def _separator(title: str) -> str:
@@ -153,6 +253,8 @@ def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
     if not SIGN_LIMIT.acquire(blocking=False):
         raise RuntimeError("当前已有两项 License 生成操作，请稍后重试")
     try:
+        if _key_metadata(settings.license_key_dir, request.license_version)["revoked"]:
+            raise ValueError("所选密钥版本已撤销")
         signer = _read_legacy_key(
             settings.license_key_dir, request.license_version, request.password
         )

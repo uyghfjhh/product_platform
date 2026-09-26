@@ -1,13 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from 'antd';
 import { ReloadOutlined, CompassOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
-
-// Declare global THREE for TypeScript
-declare global {
-  interface Window {
-    THREE?: any;
-  }
-}
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export type TopologyNode = {
   id: string;
@@ -41,8 +36,7 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
   const activeContextRef = useRef<{ cleanup: () => void } | null>(null);
 
   useEffect(() => {
-    const THREE = window.THREE;
-    if (!THREE || !containerRef.current) return;
+    if (!containerRef.current) return;
 
     const container = containerRef.current;
     const width = container.clientWidth || 900;
@@ -65,7 +59,7 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
     container.appendChild(renderer.domElement);
 
     // 3. OrbitControls
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
     controls.maxPolarAngle = Math.PI / 2 + 0.05;

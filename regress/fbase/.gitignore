@@ -1,0 +1,17 @@
+# Runtime environments, logs and reports
+output/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local virtual environments and editor files
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+*~

@@ -19,7 +19,7 @@ from suites.stable.state import StateStore
 from suites.stable.supervisor import _observe_workloads, supervise
 from tools.stable_cli import parser
 from tools.stable_top import dashboard, run_top, run_tui
-from env.postgres import _mmr_nodes, _rep_nodes
+from products.fbasecman.environment.postgres import _mmr_nodes, _rep_nodes
 
 
 ROOT = Path(__file__).resolve().parents[3]

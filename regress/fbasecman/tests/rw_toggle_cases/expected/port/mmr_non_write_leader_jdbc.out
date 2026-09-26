@@ -1,0 +1,14 @@
+BEGIN;
+pg_is_in_recovery: false
+PORT: 10021
+ADDR: 192.168.0.15
+INSERT 1
+15	test_1
+UPDATE 1
+15	test_2
+DELETE 1
+(0 rows)
+1	name
+2	name
+3	name
+COMMIT;

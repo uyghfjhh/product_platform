@@ -31,6 +31,8 @@ output/
 # Environment & Local Configuration Overrides
 *.local.yaml
 *.local.yaml.*
+!regress/fbasecman/regress.local.yaml.example
+!regress/fbasecman/stable.local.yaml.example
 .env
 .env.local
 

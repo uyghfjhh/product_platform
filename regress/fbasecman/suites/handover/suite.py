@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from framework.execution.locking import ExclusiveFileLock
+from framework.suites.runner import run_cases
 from suites.handover.manifest import HANDOVER_CASES, case_items, find_case, validate_manifest
 from suites.handover.runtime import HandoverFailure, HandoverRuntime
 from suites.handover.executors import dispatch_executor
@@ -79,7 +80,10 @@ def run_case(root, case):
             # Report rendering must never prevent process cleanup.
             rt.stop()
         suffix = " [%s]" % case.issue_id if getattr(case, "issue_id", None) else ""
-        print(_result_line(case.target, "FAIL%s" % suffix, time.monotonic() - started))
+        print(
+            _result_line(case.target, "FAIL%s" % suffix, time.monotonic() - started),
+            flush=True,
+        )
         return False
     except BaseException:
         # KeyboardInterrupt and SystemExit still own a case-local process.
@@ -88,7 +92,7 @@ def run_case(root, case):
     finally:
         rt.stop()
     rt.finish("PASS", "文档规定的 SQL/JDBC 结果、路由、console 状态和业务统计均满足预期。")
-    print(_result_line(case.target, "SUCCESS", time.monotonic() - started))
+    print(_result_line(case.target, "SUCCESS", time.monotonic() - started), flush=True)
     return True
 
 
@@ -100,8 +104,4 @@ def run(root, target=None):
         raise HandoverFailure("missing executors: %s" % ", ".join(sorted(set(unknown))))
     lock_path = Path(root) / "output" / "handover.lock"
     with ExclusiveFileLock(lock_path, "handover suite"):
-        failures = 0
-        for case in selected:
-            failures += 0 if run_case(root, case) else 1
-        print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-        return failures == 0
+        return run_cases(root, selected, run_case)

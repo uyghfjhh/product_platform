@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-PLATFORM_ROOT = Path(__file__).resolve().parents[3]
-for p in (ROOT_DIR, PLATFORM_ROOT, PLATFORM_ROOT / "backend"):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from framework.execution.shell import ShellCommandError
-from framework.environment import create_environment_provider
 from framework.configuration import load_regression_config, validate_profile_isolation
 from framework.persistence import atomic_write_text
 import products.fbasecman.environment  # Registers the product environment provider.
-from framework.suites import get_default_registry
+from suites.registry import get_default_registry
 from tools.clean import run_clean
 from tools.doctor import run_doctor
 
@@ -33,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     env_parser = subparsers.add_parser("env")
+    env_parser.add_argument("--deployment-config", default=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_CONFIG"))
+    env_parser.add_argument("--deployment-target", default=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_TARGET", "mmr.fbasecman_regress"))
     env_sub = env_parser.add_subparsers(dest="env_command")
     setup = env_sub.add_parser("setup")
     setup.add_argument(
@@ -63,16 +62,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=10.0,
         help="日志截断阈值大小 (MB, 默认: 10.0)",
     )
-    output_parser = subparsers.add_parser(
-        "outout", help="manage regression output artifacts only"
-    )
-    output_sub = output_parser.add_subparsers(dest="output_command")
-    output_sub.add_parser(
-        "clean", help="remove output/env, output/runs and output/handover.lock"
-    )
+    for command, help_text in (
+        ("output", "manage regression output artifacts only"),
+        ("outout", "deprecated alias for 'output'"),
+    ):
+        output_parser = subparsers.add_parser(command, help=help_text)
+        output_sub = output_parser.add_subparsers(dest="output_command")
+        output_sub.add_parser(
+            "clean", help="remove output/env, output/runs and output/handover.lock"
+        )
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("target", nargs="?")
+    run_parser.add_argument(
+        "--preflight", choices=("heal", "warn", "off"), default="heal",
+        help="environment check policy: heal and stop on failure (default), warn, or off",
+    )
     run_parser.add_argument(
         "--junit",
         nargs="?",
@@ -102,55 +107,44 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def do_env(args: argparse.Namespace) -> int:
-    extra_configs = [Path(path).resolve() for path in args.config]
-    env = load_regression_config(ROOT_DIR, extra_configs=extra_configs)
-    provider = create_environment_provider(
-        "fbasecman", env, verbose=args.env_command != "status"
-    )
+    config = args.deployment_config
+    if not config or not Path(config).is_file():
+        print("部署需要 --deployment-config 指向平台生成的 pgcluster YAML", file=sys.stderr)
+        return 2
+    target = args.deployment_target
+    pgcluster = Path(os.environ.get(
+        "PRODUCT_PLATFORM_PGCLUSTER_ROOT", str(ROOT_DIR.parents[2] / "pgcluster")
+    )) / "pgcluster"
+    if not pgcluster.is_file():
+        print("找不到 pgcluster: %s" % pgcluster, file=sys.stderr)
+        return 2
 
-    try:
-        if args.env_command == "setup":
-            provider.setup(adopt_existing=args.adopt_existing)
-            print("env setup complete")
-            return 0
-        if args.env_command == "clean":
-            plan = provider.clean(dry_run=args.dry_run)
-            if args.dry_run:
-                print(plan.render())
-                return 0
-            print("env clean complete")
-            return 0
-    except ShellCommandError as error:
-        detail = error.result.stderr.strip() or error.result.stdout.strip()
-        print("env %s failed: %s" % (args.env_command, detail or error),
-              file=sys.stderr)
-        if error.result.returncode in (73, 74):
-            print("The test PGDATA ownership marker is missing or does not match.",
-                  file=sys.stderr)
-            print("Inspect targets with './run.sh env clean --dry-run', then run "
-                  "'./run.sh env setup --adopt-existing'.", file=sys.stderr)
-        print("Details: %s" % error.result.command, file=sys.stderr)
-        return error.result.returncode or 1
-    if args.env_command == "status":
-        print(provider.status_text())
+    def call(command, extra=()):
+        argv = [sys.executable, str(pgcluster), "-f", str(Path(config).resolve()), command]
+        if command != "doctor":
+            argv.append(target)
+        argv.extend(extra)
+        return subprocess.run(argv, cwd=str(pgcluster.parent)).returncode
+
+    if args.env_command == "setup":
+        if args.adopt_existing:
+            print("pgcluster create 不支持 --adopt-existing；请先核对现有数据目录", file=sys.stderr)
+            return 2
+        for command in ("validate", "create", "health"):
+            result = call(command)
+            if result:
+                return result
         return 0
-    if args.env_command == "start":
-        provider.start()
-        print("env start complete")
-        return 0
-    if args.env_command == "restart":
-        provider.restart()
-        print("env restart complete")
-        return 0
-    if args.env_command == "stop":
-        provider.stop()
-        print("env stop complete")
-        return 0
+    if args.env_command == "clean" and args.dry_run:
+        return call("graph")
+    if args.env_command == "clean":
+        return call("clean", ("--yes",))
     if args.env_command == "heal":
-        res = provider.heal()
-        print("env heal complete: %s" % res)
-        return 0
-    raise AssertionError(f"unknown env command: {args.env_command}")
+        if call("health") == 0:
+            return 0
+        result = call("restart")
+        return result or call("health")
+    return call(args.env_command)
 
 
 def do_doctor(args: argparse.Namespace) -> int:
@@ -188,9 +182,9 @@ def do_clean(args: argparse.Namespace) -> int:
     return 0
 
 
-def do_outout(args: argparse.Namespace) -> int:
+def do_output(args: argparse.Namespace) -> int:
     if args.output_command != "clean":
-        print("Usage: ./run.sh outout clean")
+        print("Usage: ./run.sh output clean")
         return 2
     result = run_clean(ROOT_DIR, output_only=True)
     print("Output clean removed:")
@@ -200,6 +194,11 @@ def do_outout(args: argparse.Namespace) -> int:
     else:
         print("  - nothing")
     return 0
+
+
+# Retain the former Python-level helper name for callers that have not yet
+# switched from the misspelled command-line alias.
+do_outout = do_output
 
 
 def do_run(args: argparse.Namespace) -> int:
@@ -230,7 +229,7 @@ def do_run(args: argparse.Namespace) -> int:
         failures = []
         for target in targets:
             try:
-                result = _run_target(target)
+                result = _run_target(target, preflight=args.preflight)
             except Exception as exc:
                 print("%s rerun failed: %s" % (target, exc), file=sys.stderr)
                 result = 1
@@ -247,16 +246,15 @@ def do_run(args: argparse.Namespace) -> int:
 
     expected = _selected_targets(args.target)
     try:
-        result = _run_target(args.target)
+        result = _run_target(args.target, preflight=args.preflight)
     except Exception:
-        _write_last_failed(
-            target for target in expected if _case_status(target) != "PASS")
+        _write_last_failed(_failed_targets(expected, 1))
         if getattr(args, "junit", None):
             _export_junit(args.junit)
         if getattr(args, "html", None):
             _export_html(args.html)
         raise
-    _write_last_failed(target for target in expected if _case_status(target) != "PASS")
+    _write_last_failed(_failed_targets(expected, result))
     if getattr(args, "junit", None):
         _export_junit(args.junit)
     if getattr(args, "html", None):
@@ -264,9 +262,34 @@ def do_run(args: argparse.Namespace) -> int:
     return result
 
 
-def _run_target(target: str) -> int:
+def _run_target(target: str, preflight: str = "heal") -> int:
     registry = get_default_registry()
-    return registry.run_target(ROOT_DIR, target)
+    # Deployment readiness is owned by pgcluster. The legacy sanitizer also
+    # performs deployment mutations, so it must not run in platform CLI mode.
+    if preflight != "off":
+        check = argparse.Namespace(
+            env_command="status",
+            deployment_config=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_CONFIG"),
+            deployment_target=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_TARGET", "mmr.fbasecman_regress"),
+            dry_run=False, adopt_existing=False,
+        )
+        if not check.deployment_config:
+            print("预检需要 PRODUCT_PLATFORM_PGCLUSTER_CONFIG；或使用 --preflight off", file=sys.stderr)
+            return 2
+        check.env_command = "heal" if preflight == "heal" else "status"
+        status = do_env(check)
+        if status and preflight == "heal":
+            return status
+        if status:
+            print("pgcluster 预检未通过，按 warn 策略继续执行", file=sys.stderr)
+    return registry.run_target(ROOT_DIR, target, sanitize=False)
+
+
+def _failed_targets(targets, result):
+    failures = [target for target in targets if _case_status(target) != "PASS"]
+    # A preflight failure produces no new case report. Previous PASS reports
+    # must not cause the failed invocation to disappear from `run failed`.
+    return failures or (list(targets) if result != 0 else [])
 
 
 def _selected_targets(target: str):
@@ -364,8 +387,10 @@ def main() -> int:
         return do_doctor(args)
     if args.command == "clean":
         return do_clean(args)
-    if args.command == "outout":
-        return do_outout(args)
+    if args.command in ("output", "outout"):
+        if args.command == "outout":
+            print("Warning: 'outout' is deprecated; use 'output'.", file=sys.stderr)
+        return do_output(args)
     if args.command == "run":
         return do_run(args)
     if args.command == "show":
@@ -378,12 +403,11 @@ def main() -> int:
 
 
 def do_web(args: argparse.Namespace) -> int:
-    print("[提示] Web 服务管理已独立封装为 ./web.sh 脚本:")
-    print("  启动后台服务: ./web.sh start [端口, 默认: 8080]")
-    print("  查看服务状态: ./web.sh status")
-    print("  停止后台服务: ./web.sh stop")
-    print("  实时跟踪日志: ./web.sh logs")
-    return 0
+    platform_web = ROOT_DIR.parent.parent / "web.sh"
+    return subprocess.run(
+        [str(platform_web), "start", "--host", args.host, "--port", str(args.port)],
+        cwd=str(platform_web.parent),
+    ).returncode
 
 
 def do_test(args: argparse.Namespace) -> int:

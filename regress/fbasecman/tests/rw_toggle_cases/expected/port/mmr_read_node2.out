@@ -1,0 +1,32 @@
+ port  
+-------
+ 10012
+(1 row)
+
+ inet_server_addr 
+------------------
+ 192.168.0.15
+(1 row)
+
+psql:read_port.sql:5: ERROR:  cannot execute INSERT in a read-only transaction
+ id | name 
+----+------
+(0 rows)
+
+psql:read_port.sql:9: ERROR:  cannot execute UPDATE in a read-only transaction
+ id | name 
+----+------
+(0 rows)
+
+psql:read_port.sql:13: ERROR:  cannot execute DELETE in a read-only transaction
+ id | name 
+----+------
+(0 rows)
+
+ id | name 
+----+------
+  1 | name
+  2 | name
+  3 | name
+(3 rows)
+

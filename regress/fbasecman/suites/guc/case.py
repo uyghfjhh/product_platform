@@ -18,10 +18,6 @@ class GucCase(HaCommandCase):
             notes=notes,
             route_mode=rw_split_method,
             report_groups=("mmr_group",),
+            suite_id="guc",
         )
-        self.suite_name = "guc"
         self.rw_split_method = rw_split_method
-
-    @property
-    def target(self):
-        return "guc.%s" % self.name

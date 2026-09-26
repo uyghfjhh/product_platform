@@ -3,14 +3,17 @@
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
+
+from .migrations import SCHEMA_VERSION as CURRENT_SCHEMA_VERSION
+from .migrations import migrate
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 class ConflictError(RuntimeError):
@@ -18,6 +21,8 @@ class ConflictError(RuntimeError):
 
 
 class Store:
+    SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
+
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,63 +42,7 @@ class Store:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript("""
-                CREATE TABLE IF NOT EXISTS environments (
-                    id TEXT PRIMARY KEY,
-                    product_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    host TEXT NOT NULL,
-                    port INTEGER NOT NULL,
-                    database_name TEXT NOT NULL,
-                    database_user TEXT NOT NULL,
-                    deployment_config TEXT,
-                    deployment_target TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id TEXT PRIMARY KEY,
-                    environment_id TEXT NOT NULL REFERENCES environments(id),
-                    action TEXT NOT NULL,
-                    target TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    parameters TEXT NOT NULL,
-                    reason TEXT,
-                    submission_key TEXT UNIQUE,
-                    created_at TEXT NOT NULL,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    cancel_requested INTEGER NOT NULL DEFAULT 0,
-                    process_id INTEGER,
-                    process_started_at TEXT,
-                    last_sequence INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS events (
-                    task_id TEXT NOT NULL REFERENCES tasks(id),
-                    sequence INTEGER NOT NULL,
-                    recorded_at TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    PRIMARY KEY (task_id, sequence)
-                );
-                CREATE TABLE IF NOT EXISTS results (
-                    product_id TEXT NOT NULL,
-                    environment_id TEXT NOT NULL,
-                    target TEXT NOT NULL,
-                    profile TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason TEXT,
-                    artifact_dir TEXT,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (product_id, environment_id, target, profile)
-                );
-                CREATE TABLE IF NOT EXISTS knowledge_sources (
-                    id TEXT PRIMARY KEY,
-                    product_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-            """)
+            migrate(connection)
 
     @staticmethod
     def _dict(row: sqlite3.Row | None) -> dict | None:
@@ -151,6 +100,27 @@ class Store:
             connection.commit()
         return self.get_environment(environment_id) if changed else None
 
+    def delete_environment(self, environment_id: str) -> bool:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT 1 FROM tasks WHERE environment_id=? AND status IN ('QUEUED','RUNNING','CANCELLING') LIMIT 1",
+                (environment_id,),
+            ).fetchone()
+            if active:
+                connection.rollback()
+                raise ConflictError("环境仍有未结束的任务")
+            connection.execute(
+                "DELETE FROM events WHERE task_id IN (SELECT id FROM tasks WHERE environment_id=?)",
+                (environment_id,),
+            )
+            connection.execute("DELETE FROM results WHERE environment_id=?", (environment_id,))
+            connection.execute("DELETE FROM diagnoses WHERE environment_id=?", (environment_id,))
+            connection.execute("DELETE FROM tasks WHERE environment_id=?", (environment_id,))
+            changed = connection.execute("DELETE FROM environments WHERE id=?", (environment_id,)).rowcount
+            connection.commit()
+        return bool(changed)
+
     def create_task(
         self,
         environment_id: str,
@@ -159,6 +129,19 @@ class Store:
         parameters: dict,
         submission_key: str | None,
     ) -> dict:
+        task, _created = self.create_task_once(
+            environment_id, action, target, parameters, submission_key,
+        )
+        return task
+
+    def create_task_once(
+        self,
+        environment_id: str,
+        action: str,
+        target: str,
+        parameters: dict,
+        submission_key: str | None,
+    ) -> tuple[dict, bool]:
         payload = json.dumps(parameters, ensure_ascii=False, sort_keys=True)
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -176,7 +159,7 @@ class Store:
                         connection.rollback()
                         raise ConflictError("提交标识已用于其他操作")
                     connection.commit()
-                    return dict(found)
+                    return dict(found), False
             task_id = str(uuid.uuid4())
             connection.execute(
                 """
@@ -195,7 +178,7 @@ class Store:
                 ),
             )
             connection.commit()
-        return self.get_task(task_id) or {}
+        return self.get_task(task_id) or {}, True
 
     def get_task(self, task_id: str) -> dict | None:
         with self.connect() as connection:
@@ -270,6 +253,33 @@ class Store:
             )
             connection.commit()
             return True
+
+    def finish_task(self, task_id: str, expected: tuple[str, ...], status: str,
+                    reason: str | None) -> bool:
+        """Publish terminal status and completion event in one transaction."""
+        if status not in {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}:
+            raise ValueError("任务终态无效")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status,last_sequence FROM tasks WHERE id=?", (task_id,),
+            ).fetchone()
+            if row is None or row["status"] not in expected:
+                connection.rollback()
+                return False
+            at = now()
+            sequence = row["last_sequence"] + 1
+            connection.execute(
+                "UPDATE tasks SET status=?,reason=?,finished_at=?,last_sequence=? WHERE id=?",
+                (status, reason, at, sequence, task_id),
+            )
+            connection.execute(
+                "INSERT INTO events(task_id,sequence,recorded_at,event_type,payload) VALUES (?,?,?,?,?)",
+                (task_id, sequence, at, "operation.finished",
+                 json.dumps({"status": status, "reason": reason}, ensure_ascii=False)),
+            )
+            connection.commit()
+        return True
 
     def add_event(self, task_id: str, event_type: str, payload: dict) -> dict:
         with self.connect() as connection:
@@ -351,3 +361,44 @@ class Store:
                     (environment_id,),
                 )
             ]
+
+    def get_result(self, product_id: str, environment_id: str, target: str,
+                   profile: str = "default") -> dict | None:
+        with self.connect() as connection:
+            return self._dict(connection.execute(
+                "SELECT * FROM results WHERE product_id=? AND environment_id=? AND target=? AND profile=?",
+                (product_id, environment_id, target, profile),
+            ).fetchone())
+
+    def put_diagnosis(self, result: dict, evidence_hash: str, model: str,
+                      content: dict) -> None:
+        with self.connect() as connection:
+            connection.execute("""
+                INSERT INTO diagnoses(product_id,environment_id,target,profile,result_updated_at,
+                                      evidence_hash,model,content,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(product_id,environment_id,target,profile) DO UPDATE SET
+                    result_updated_at=excluded.result_updated_at,
+                    evidence_hash=excluded.evidence_hash,model=excluded.model,
+                    content=excluded.content,created_at=excluded.created_at
+            """, (
+                result["product_id"], result["environment_id"], result["target"],
+                result["profile"], result["updated_at"], evidence_hash, model,
+                json.dumps(content, ensure_ascii=False), now(),
+            ))
+
+    def get_diagnosis(self, product_id: str, environment_id: str, target: str,
+                      profile: str = "default") -> dict | None:
+        with self.connect() as connection:
+            row = self._dict(connection.execute("""
+                SELECT d.*, r.updated_at AS current_result_updated_at
+                FROM diagnoses d LEFT JOIN results r ON
+                    r.product_id=d.product_id AND r.environment_id=d.environment_id
+                    AND r.target=d.target AND r.profile=d.profile
+                WHERE d.product_id=? AND d.environment_id=? AND d.target=? AND d.profile=?
+            """, (product_id, environment_id, target, profile)).fetchone())
+        if row is None:
+            return None
+        row["content"] = json.loads(row["content"])
+        row["stale"] = row["result_updated_at"] != row.pop("current_result_updated_at")
+        return row

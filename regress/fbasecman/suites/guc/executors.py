@@ -4,6 +4,31 @@ from framework.reporting import ReportCheck
 from suites.ha_commands.runtime import HaCommandFailure
 
 
+def verify_effective_search_path(rt, *checks):
+    fixture_output = rt.prepare_search_path_tables()
+    rt.add_guc_step(
+        title="准备 search_path 同名表验证数据",
+        execution="在 site_a/site_b 主库分别创建 public、postgres、schema1、schema2 的 guc_search_path_probe",
+        intermediate=fixture_output,
+        expected="两个 MMR 主库均有各 schema 的同名表及对应标记",
+        actual="两主库建表与插入命令均返回 0",
+        result="PASS",
+    )
+    try:
+        for path_sql, expected_schema in checks:
+            rt.verify_search_path_table(path_sql, expected_schema)
+    finally:
+        cleanup_output = rt.cleanup_search_path_tables()
+        rt.add_guc_step(
+            title="清理 search_path 验证表",
+            execution="直连 site_a/site_b 主库删除本用例的 guc_search_path_probe 表",
+            intermediate=cleanup_output,
+            expected="两主库测试表清理命令均成功",
+            actual="两主库清理命令均返回 0",
+            result="PASS",
+        )
+
+
 def record_step1_start(rt, conf):
     """通用步骤 1: 启动 fbasecman 代理、提取配置文件字段作证，并明确说明测试模式."""
     rw_mode = getattr(rt.case, "rw_split_method", "sql_parse")
@@ -151,6 +176,8 @@ def execute_search_path_reuse_sql_parse(rt):
         coverage=4,
         coverage_check="验证 search_path 规范化重放恢复结果及嵌套引号防范",
     )
+    verify_effective_search_path(rt, ("'public'", "public"),
+                                 ('"$user", public', "postgres"))
 
 
 def execute_search_path_reuse_hint(rt):
@@ -255,6 +282,8 @@ def execute_search_path_reuse_hint(rt):
         coverage=4,
         coverage_check="HINT 模式下校验 search_path 规范化重放恢复结果及嵌套引号防范",
     )
+    verify_effective_search_path(rt, ("'public'", "public"),
+                                 ('"$user", public', "postgres"))
 
 
 def execute_search_path_multivalue_sql_parse(rt):
@@ -353,6 +382,7 @@ def execute_search_path_multivalue_sql_parse(rt):
         coverage=4,
         coverage_check="连接复用状态一致性",
     )
+    verify_effective_search_path(rt, ('"$user", public', "postgres"))
 
 
 def execute_search_path_multivalue_hint(rt):
@@ -451,6 +481,7 @@ def execute_search_path_multivalue_hint(rt):
         coverage=4,
         coverage_check="HINT 模式连接复用状态一致性",
     )
+    verify_effective_search_path(rt, ('"$user", public', "postgres"))
 
 
 def execute_search_path_empty_normalize(rt):
@@ -545,6 +576,8 @@ def execute_search_path_empty_normalize(rt):
         coverage=4,
         coverage_check="连接复用从空值恢复默认值",
     )
+    verify_effective_search_path(rt, ("''", None),
+                                 ('"$user", public', "postgres"))
 
 
 def execute_search_path_mixed_quotes_cleanup(rt):
@@ -645,6 +678,10 @@ def execute_search_path_mixed_quotes_cleanup(rt):
         coverage=4,
         coverage_check="会话隔离与清理确认",
     )
+    verify_effective_search_path(rt,
+                                 ("'schema1', \"schema2\", public", "schema1"),
+                                 ('"schema2", public', "schema2"),
+                                 ('"$user", public', "postgres"))
 
 
 def execute_reset_param_sql_parse(rt):
@@ -1857,4 +1894,3 @@ def execute_report_param_timezone_hint(rt):
         coverage=4,
         coverage_check="连接复用状态一致性",
     )
-

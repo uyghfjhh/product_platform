@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import shlex
 import sys
@@ -24,7 +25,6 @@ from suites.stable.runtime import (
 from suites.stable.state import StateStore
 from suites.stable.supervisor import launch_supervisor
 from tools.stable_top import run_top, run_tui
-from products.fbasecman.environment.provider import FbasecmanEnvironmentProvider
 from tools.doctor import run_doctor
 
 
@@ -36,6 +36,8 @@ def parser():
     result.add_argument("--config", action="append", default=[], help="追加 YAML 配置")
     commands = result.add_subparsers(dest="command")
     env = commands.add_parser("env", help="管理独立 stable PostgreSQL 环境")
+    env.add_argument("--deployment-config", default=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_CONFIG"))
+    env.add_argument("--deployment-target", default=os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_TARGET", "mmr.fbasecman_regress"))
     env_sub = env.add_subparsers(dest="env_command")
     setup = env_sub.add_parser("setup")
     setup.add_argument("--adopt-existing", action="store_true", help="认领已检查的旧 PGDATA 后重建")
@@ -77,26 +79,8 @@ def config(args):
 
 
 def do_env(args):
-    cfg = config(args)
-    provider = FbasecmanEnvironmentProvider(cfg.runtime_config, verbose=args.env_command != "status")
-    if args.env_command == "setup":
-        provider.setup(adopt_existing=args.adopt_existing); print("stable env setup complete"); return 0
-    if args.env_command == "clean":
-        plan = provider.clean(
-            dry_run=args.dry_run, adopt_existing=args.adopt_existing,
-        )
-        if args.dry_run: print(plan.render())
-        else: print("stable env clean complete")
-        return 0
-    if args.env_command == "status":
-        print(provider.status_text()); return 0
-    if args.env_command == "start":
-        provider.start(); print("stable env start complete"); return 0
-    if args.env_command == "restart":
-        provider.restart(); print("stable env restart complete"); return 0
-    if args.env_command == "stop":
-        provider.stop(); print("stable env stop complete"); return 0
-    raise StableFailure("stable env command is required")
+    from tools.cli import do_env as run_pgcluster_env
+    return run_pgcluster_env(args)
 
 
 def selected(target, cfg):

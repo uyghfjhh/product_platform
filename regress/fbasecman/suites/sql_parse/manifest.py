@@ -5,6 +5,17 @@ from .case import SqlParseCase
 
 SQL_PARSE_CASES = (
     SqlParseCase(
+        name="savepoint_recovery_after_local_25p02",
+        summary="Extended 事务在本地 25P02 后仍可 ROLLBACK TO SAVEPOINT",
+        executor="savepoint_recovery_after_local_25p02",
+        notes=(
+            "每条 SQL 明确发送 Extended P/B/D/E/S 并记录回包、SQLSTATE 与 ReadyForQuery。",
+            "先验证除零后直接 ROLLBACK TO 的对照路径。",
+            "再验证除零、额外 25P02、ROLLBACK TO、SELECT 9 的完整恢复路径。",
+            "保存点可恢复时代理不应向后端发送内部简单查询 Q(ROLLBACK)。",
+        ),
+    ),
+    SqlParseCase(
         name="heartbeat_bind_normal",
         summary="SQL_PARSE heartbeat 正常 Extended Bind 本地响应",
         executor="heartbeat_bind_normal",

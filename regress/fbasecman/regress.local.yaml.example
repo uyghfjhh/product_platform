@@ -1,0 +1,27 @@
+# Copy this file to regress.local.yaml for one machine. It is ignored by Git.
+# The load order is regress.yaml -> regress.local.yaml -> explicit --config files.
+# Keep only values that differ from the shared baseline; never put passwords or
+# generated state under version control.
+fbasecman:
+  fbasecman_bin: /path/to/fbasecman
+  license_dir: /path/to/license
+
+database:
+  enable_citus: false # 是否在部署时启用并安装 Citus 插件 (默认 false)
+  mmr_host: 192.168.x.x
+  mmr_postgres_dir: /path/to/postgresql
+  ports:
+    mmr1: 10011
+    mmr1_standby1: 10012
+    mmr1_standby2: 10013
+    mmr1_standby3: 10014
+    mmr1_standbys: [10012, 10013, 10014, 10015, 10016, 10017]
+    mmr2: 10021
+    mmr2_standby1: 10022
+    mmr2_standby2: 10023
+    mmr2_standby3: 10024
+    mmr2_standbys: [10022, 10023, 10024, 10025, 10026, 10027]
+
+local:
+  postgres_dir: /path/to/postgresql
+  jdbc_lib_dir: lib_jdbc

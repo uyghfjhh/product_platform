@@ -1,11 +1,8 @@
 """HA console command suite entry point."""
 
-import time
-from pathlib import Path
-
-from framework.configuration import load_regression_config
+from framework.suites.runner import run_cases, run_runtime_case
 from .manifest import HA_COMMAND_CASES, case_items, find_case, validate_manifest
-from .runtime import HaCommandFailure, HaCommandRuntime
+from .runtime import HaCommandRuntime
 from .helpers import *
 from .executors import *
 
@@ -117,38 +114,14 @@ def show():
 
 
 def run_case(root, case):
-    started = time.monotonic()
-    rt = None
-    try:
-        rt = HaCommandRuntime(root, case)
-        with rt:
-            EXECUTORS[case.executor](rt)
-        rt.finish("PASS", "命令输入输出及用例声明的配置、日志和运行态证据均符合预期。")
-        print("%-58s SUCCESS %8.3fs" % (case.target, time.monotonic() - started))
-        return True
-    except Exception as exc:
-        if rt is not None:
-            try:
-                rt.finish("FAIL", str(exc))
-            except Exception:
-                rt.stop()
-        else:
-            # Initialization errors must leave an artifact at the standard
-            # case location, otherwise a failed run is impossible to inspect.
-            run_root = (load_regression_config(Path(root)).output_dir / "runs" /
-                        "ha_commands" / case.name)
-            run_root.mkdir(parents=True, exist_ok=True)
-            (run_root / "report.txt").write_text(
-                "Test: %s\nStatus: FAIL\nSummary: %s\nFailure: %s\n"
-                "Steps: <runtime initialization failed before steps could run>\n" %
-                (case.target, case.summary, exc), encoding="utf-8")
-        print("%-58s FAIL    %8.3fs" % (case.target, time.monotonic() - started))
-        return False
+    return run_runtime_case(
+        root, case, HaCommandRuntime, EXECUTORS,
+        "命令输入输出及用例声明的配置、日志和运行态证据均符合预期。",
+        initialization_step="<runtime initialization failed before steps could run>",
+    )
 
 
 def run(root, target=None):
     validate_manifest()
     selected = [find_case(target)] if target else case_items()
-    failures = sum(0 if run_case(root, case) else 1 for case in selected)
-    print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-    return failures == 0
+    return run_cases(root, selected, run_case)

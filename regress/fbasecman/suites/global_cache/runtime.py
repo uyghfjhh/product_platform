@@ -430,6 +430,10 @@ class CaseRuntime(GlobalCacheReportMixin):
             "ssh",
             "-F",
             "/dev/null",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
             "%s@%s" % (user, host),
             "bash -lc %s" % shlex.quote(script),
         ]
@@ -487,7 +491,7 @@ class CaseRuntime(GlobalCacheReportMixin):
             "  done\n"
             "done\n"
         ) % dir_args
-        cmd = ["ssh", "-F", "/dev/null", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
         rc, _ = self.run_command(cmd, pg_snapshot, check=False, record=False)
         self.summary["log_evidence"] = {
             "fbasecman": str(self.fbasecman_log),
@@ -512,7 +516,7 @@ class CaseRuntime(GlobalCacheReportMixin):
             "done\n"
             "echo \"$count\"\n"
         ) % (dir_args, grep_pattern)
-        cmd = ["ssh", "-F", "/dev/null", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
         _, output = self.run_command(cmd, logfile, step_title=step_title, check=True)
         text = output.strip()
         try:
@@ -553,7 +557,7 @@ class CaseRuntime(GlobalCacheReportMixin):
             "  grep -r -h -E %s \"$dir\"/* 2>/dev/null || true\n"
             "done | tail -n %d\n"
         ) % (dir_args, grep_pattern, max_lines)
-        cmd = ["ssh", "-F", "/dev/null", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
         _, output = self.run_command(cmd, logfile, step_title=step_title, check=True)
         lines = [line.rstrip() for line in output.splitlines() if line.strip()]
         if self.step_records and self.step_records[-1].get("title") == step_title:

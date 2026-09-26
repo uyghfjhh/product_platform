@@ -1,0 +1,517 @@
+/* Reference deployment topology styles. */
+.reference-deploy-canvas { --border-medium:#29384c; --border-subtle:#26364c; --radius-lg:10px; --radius-md:7px; --radius-sm:5px; --radius-full:9999px; --text-muted:#91a5bc; --text-primary:#eaf3ff; --text-secondary:#a6b9cd; --bg-surface-elevated:#182235; --bg-card:#131c2e; --bg-card-hover:#19263e; --color-primary:#6366f1; --font-mono:ui-monospace,Consolas,monospace; }
+.reference-deploy-stage { border: 1px solid #29394f; border-radius: 10px; background: #0b111d; overflow: hidden; }
+.reference-deploy-viewport { width: 100%; overflow: auto; max-height: min(72vh, 760px); }
+.reference-deploy-canvas { position: relative; width: 900px; height: 800px; transform-origin: top left; }
+.reference-deploy-canvas .topo-node { cursor: pointer; }
+.reference-deploy-canvas .action-btn { background: #1d68c0; border: 1px solid #408ce7; color: #fff; border-radius: 4px; cursor: pointer; }
+.topo-stage-container {
+  position: relative;
+  width: 100%;
+  height: 640px;
+  background: radial-gradient(circle at 50% 50%, #0d1527 0%, #080c16 100%);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  overflow: auto;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.6);
+}
+
+.topo-canvas {
+  width: 1400px;
+  height: 1020px;
+  position: relative;
+  /* Cyberpunk / High-tech grid background */
+  background-image: 
+    linear-gradient(rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center center;
+}
+
+/* Cluster Group Bounding Boxes */
+.cluster-group-box {
+  position: absolute;
+  border: 1px dashed rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-lg);
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: none;
+  z-index: 2;
+  transition: all 0.2s;
+}
+
+.cluster-group-box.mmr {
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(88, 28, 135, 0.06);
+}
+
+.cluster-group-box.rep {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(6, 78, 59, 0.06);
+}
+
+.cluster-group-tag {
+  position: absolute;
+  top: -11px;
+  left: 16px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cluster-group-box.mmr .cluster-group-tag {
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.cluster-group-box.rep .cluster-group-tag {
+  color: #34d399;
+  border-color: rgba(168, 85, 129, 0.4);
+}
+
+/* Node Hardware Card on Canvas */
+.topo-node {
+  position: absolute;
+  width: 220px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.85rem;
+  color: #e2e8f0;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(56, 189, 248, 0.1);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  z-index: 5;
+}
+
+.topo-node.compact {
+  width: 195px;
+  padding: 0.45rem 0.65rem;
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.topo-node.compact .topo-node-header {
+  margin-bottom: 0.2rem;
+}
+
+.topo-node.compact .topo-node-title {
+  font-size: 0.76rem;
+}
+
+.topo-node.compact .topo-node-badge {
+  font-size: 0.62rem;
+  padding: 0.05rem 0.3rem;
+}
+
+.topo-node.compact .topo-node-body {
+  font-size: 0.67rem;
+}
+
+.topo-node.compact .topo-node-field {
+  margin-top: 0.1rem;
+}
+
+.topo-node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 30px -5px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.25);
+  border-color: #38bdf8;
+}
+
+.topo-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.topo-node-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.topo-node-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.topo-node-pulse.active {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulse-glow 2s infinite;
+}
+
+.topo-node-pulse.down {
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.7; }
+}
+
+.topo-node-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+/* Offline / Cleaned Node Styling */
+.topo-node.node-down {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px dashed rgba(239, 68, 68, 0.35);
+  box-shadow: none;
+  opacity: 0.65;
+  filter: grayscale(0.4);
+}
+
+.topo-node.node-down:hover {
+  opacity: 0.95;
+  filter: none;
+  border-color: rgba(239, 68, 68, 0.65);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.25);
+}
+
+.topo-node.node-down .topo-node-title {
+  color: #94a3b8;
+}
+
+.topo-node-badge.down {
+  background: rgba(239, 68, 68, 0.16) !important;
+  color: #f87171 !important;
+  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+}
+
+.topo-node-badge.active {
+  background: rgba(56, 189, 248, 0.15) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+}
+
+.status-field-down {
+  color: #f87171 !important;
+  font-weight: 600;
+}
+
+/* Cluster Group Box Offline / Cleaned State */
+.cluster-group-box.cluster-down {
+  border: 1px dashed rgba(239, 68, 68, 0.3) !important;
+  background: rgba(15, 23, 42, 0.2) !important;
+}
+
+.cluster-group-tag.down {
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #f87171 !important;
+}
+
+.cluster-status-pill {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 600;
+  margin-left: 0.6rem;
+}
+
+.cluster-status-pill.down {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.cluster-status-pill.active {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.cluster-status-pill.warn {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* Canvas Cleaned State Watermark / Banner */
+.topo-canvas-state-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.65rem 1.4rem;
+  background: rgba(15, 23, 42, 0.94);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(12px);
+  animation: slideDownBar 0.3s ease-out;
+}
+
+.topo-canvas-state-banner.down {
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(239, 68, 68, 0.2);
+}
+
+.topo-canvas-state-banner.active {
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 15px rgba(34, 197, 94, 0.15);
+}
+
+.topo-canvas-state-banner .banner-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.topo-canvas-state-banner .banner-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #f87171;
+  margin-bottom: 0.15rem;
+}
+
+.topo-canvas-state-banner.active .banner-title {
+  color: #4ade80;
+}
+
+.topo-canvas-state-banner .banner-desc {
+  font-size: 0.76rem;
+  color: #94a3b8;
+}
+
+.topo-node-body {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.topo-node-field {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.2rem;
+}
+
+.topo-node-field .field-key {
+  color: var(--text-muted);
+}
+
+.topo-node-field .field-val {
+  font-family: var(--font-mono);
+  color: #94a3b8;
+}
+
+/* SVG Edges and Animated Dashes */
+.topo-svg-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.topo-edge-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke 0.3s ease, opacity 0.3s ease;
+}
+
+/* Inactive Edges (endpoints down/cleaned) */
+.topo-edge-line.edge-inactive {
+  stroke: rgba(100, 116, 139, 0.25) !important;
+  stroke-dasharray: 4 6 !important;
+  animation: none !important;
+  opacity: 0.35 !important;
+  filter: none !important;
+}
+
+/* Active Edges (flowing data/replication) */
+.topo-edge-line.edge-active.route {
+  stroke: rgba(56, 189, 248, 0.75);
+  stroke-dasharray: 6 4;
+  animation: topo-dash 1.2s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.5));
+}
+
+.topo-edge-line.edge-active.sync {
+  stroke: rgba(168, 85, 247, 0.75);
+  stroke-dasharray: 6 4;
+  animation: topo-dash 1.5s linear infinite;
+  filter: drop-shadow(0 0 5px rgba(168, 85, 247, 0.5));
+}
+
+.topo-edge-line.edge-active.replication {
+  stroke: rgba(16, 185, 129, 0.75);
+  stroke-dasharray: 8 4;
+  animation: topo-dash 1.2s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.5));
+}
+
+@keyframes topo-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.topo-node-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.node-action-icon-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.node-action-icon-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.node-quick-sql-btn {
+  margin-top: 0.45rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 4px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(56, 189, 248, 0.25) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: #c7d2fe;
+  font-size: 0.73rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.node-quick-sql-btn:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.45) 0%, rgba(56, 189, 248, 0.45) 100%);
+  border-color: #818cf8;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.45);
+  transform: translateY(-1px);
+}
+
+.topo-node.compact .node-quick-sql-btn {
+  display: none;
+}
+
+.topo-node-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.node-action-icon-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.node-action-icon-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.node-quick-sql-btn {
+  margin-top: 0.45rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 4px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(56, 189, 248, 0.25) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: #c7d2fe;
+  font-size: 0.73rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.node-quick-sql-btn:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.45) 0%, rgba(56, 189, 248, 0.45) 100%);
+  border-color: #818cf8;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.45);
+  transform: translateY(-1px);
+}
+
+.topo-node.compact .node-quick-sql-btn {
+  display: none;
+}
+
+/* Topology Node Quick Action Buttons & Popover */
+.node-quick-btn-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 0.45rem;
+}
+
+.node-quick-btn-row .node-quick-sql-btn {
+  margin-top: 0;
+  flex: 1;
+}
+
+.node-quick-zap-btn {
+  padding: 0.28rem 0.55rem;
+  border-radius: 4px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(234, 88, 12, 0.25) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fef08a;
+  font-size: 0.73rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.node-quick-zap-btn:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.45) 0%, rgba(234, 88, 12, 0.45) 100%);
+  border-color: #f59e0b;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.45);
+  transform: translateY(-1px);
+}
+
+.node-quick-actions-popover {

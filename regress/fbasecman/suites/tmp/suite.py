@@ -5,7 +5,9 @@ import time
 from pathlib import Path
 
 from framework.configuration import load_regression_config
-from suites.ha_commands.runtime import HaCommandRuntime, HaCommandFailure
+from framework.suites.runner import run_cases
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
+from suites.ha_commands.runtime import HaCommandFailure
 from .manifest import TMP_CASES, case_items, find_case
 
 
@@ -98,7 +100,7 @@ def run_case(root, case):
     started = time.monotonic()
     runtime = None
     try:
-        runtime = HaCommandRuntime(root, case)
+        runtime = FbasecmanCaseRuntime(root, case)
         EXECUTORS[case.executor](runtime)
         runtime.finish("PASS", "缺陷复现成功：证实 reload 关闭监控后确实存在业务路由丢失问题。")
         print("%-58s SUCCESS %8.3fs" % (case.target, time.monotonic() - started))
@@ -122,6 +124,4 @@ def run_case(root, case):
 
 def run(root, target=None):
     selected = [find_case(target)] if target else case_items()
-    failures = sum(0 if run_case(root, case) else 1 for case in selected)
-    print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-    return failures == 0
+    return run_cases(root, selected, run_case)

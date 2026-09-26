@@ -1,0 +1,1 @@
+"""Tested-product adapters."""

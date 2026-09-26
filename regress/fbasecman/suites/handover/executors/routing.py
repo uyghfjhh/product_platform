@@ -75,7 +75,9 @@ def execute_mmr_hint_set_readonly(rt):
     write_port = str(db_ports["mmr1"])
 
     # 准备测试表
-    rt.psql("DROP TABLE IF EXISTS test; CREATE TABLE test(id int primary key, name text);", title="准备测试表 test")
+    # MMR does not replicate DDL.  The environment setup creates this table
+    # independently on both primaries; only clear test data through DML here.
+    rt.psql("DELETE FROM test;", title="清理测试表 test 数据")
 
     # ------------------ 测试一：首次连接默认发送至写节点 ------------------
     # 1. 验证首次连接查询路由至写中心
@@ -125,7 +127,8 @@ def execute_mmr_hint_begin_readonly(rt):
     db_ports = rt.env.config["database"]["ports"]
     write_port = str(db_ports["mmr1"])
 
-    rt.psql("DROP TABLE IF EXISTS test; CREATE TABLE test(id int primary key, name text); INSERT INTO test VALUES (12, 'data_12');", title="准备测试数据")
+    # Keep DDL out of the business path; table structure is prepared by env setup.
+    rt.psql("DELETE FROM test; INSERT INTO test VALUES (12, 'data_12');", title="清理并准备测试数据")
 
     statements = [
         "BEGIN READ ONLY",

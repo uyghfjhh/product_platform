@@ -1,2 +1,3 @@
 PyYAML>=6.0
-pytest>=8.0
+# The framework requires Python 3.8 or newer.
+pytest>=7,<9

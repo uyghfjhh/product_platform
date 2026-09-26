@@ -1,9 +1,7 @@
 """Small crash-safe persistence primitives with process coordination."""
 
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
+import fcntl
+import json
 import os
 import tempfile
 from contextlib import contextmanager
@@ -27,15 +25,19 @@ def atomic_write_text(path, text):
             os.unlink(temporary)
 
 
+def write_json(path, value):
+    """原子写 JSON 文件：先写临时文件再 rename，读取方不会看到半截内容。"""
+    atomic_write_text(
+        path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
 @contextmanager
 def blocking_file_lock(path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as handle:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            if fcntl is not None:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

@@ -60,7 +60,9 @@ def load_settings() -> Settings:
         fbase_regress_root=Path(
             os.environ.get(
                 "PRODUCT_PLATFORM_FBASE_REGRESS_ROOT",
-                fly_root / "postgresql_for_fbase_dev" / "fbase_regress",
+                ROOT / "regress" / "fbase"
+                if (ROOT / "regress" / "fbase").is_dir()
+                else fly_root / "postgresql_for_fbase_dev" / "fbase_regress",
             )
         )
         .expanduser()

@@ -6,13 +6,6 @@ from pathlib import Path
 
 AMBIGUOUS_MODULE_NAMES = {"utils", "misc", "legacy", "common_helpers"}
 
-TRANSITIONAL_IMPORTS = {
-    "products/fbasecman/environment/provider.py": {
-        "env.cluster",
-        "env.inventory",
-    },
-}
-
 TRANSITIONAL_DYNAMIC_SOURCE_FUNCTIONS = {}
 
 TRANSITIONAL_SUBPROCESS_FUNCTIONS = {
@@ -53,11 +46,8 @@ def architecture_violations(root):
         if path.stem in AMBIGUOUS_MODULE_NAMES:
             violations.append("%s: ambiguous module name %r" % (relative, path.stem))
 
-        allowed = TRANSITIONAL_IMPORTS.get(relative, set())
         for imported in _import_names(tree):
             top = imported.split(".", 1)[0]
-            if imported in allowed:
-                continue
             if relative.startswith("framework/") and top in {
                 "products", "suites", "tests", "env", "lib"
             }:

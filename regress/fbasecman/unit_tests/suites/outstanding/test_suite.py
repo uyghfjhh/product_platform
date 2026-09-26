@@ -1,4 +1,5 @@
 import unittest
+import os
 from pathlib import Path
 
 from suites.outstanding.suite import (
@@ -8,19 +9,14 @@ from suites.outstanding.suite import (
 )
 
 
-def _get_source_root() -> Path:
-    direct = Path(__file__).resolve().parents[4] / "sources"
-    if direct.is_dir():
-        return direct
-    fbasecman = Path(__file__).resolve().parents[4] / "fbasecman_dev" / "sources"
-    if fbasecman.is_dir():
-        return fbasecman
-    return direct
-
-
 class OutstandingSuiteParserTest(unittest.TestCase):
+    def source_root(self):
+        # Source assertions inspect the product checkout, not regression code.
+        default = Path(__file__).resolve().parents[6] / "fbasecman_dev"
+        return Path(os.environ.get("PRODUCT_PLATFORM_CMAN_SOURCE_ROOT", default))
+
     def test_relay_buffers_close_and_execute_when_local_parsing_is_enabled(self):
-        source_root = _get_source_root()
+        source_root = self.source_root() / "sources"
         relay = (source_root / "relay.h").read_text(encoding="utf-8")
         frontend = (source_root / "frontend.c").read_text(encoding="utf-8")
         switch_block = relay.split(
@@ -41,7 +37,7 @@ class OutstandingSuiteParserTest(unittest.TestCase):
         )
 
     def test_execute_parser_consumes_max_rows_and_rejects_trailing_data(self):
-        source_root = _get_source_root()
+        source_root = self.source_root() / "sources"
         kiwi = (source_root.parent / "third_party" / "kiwi" / "kiwi" /
                 "be_read.h").read_text(encoding="utf-8")
         parser = (source_root / "parser" / "fb_frontend.c").read_text(

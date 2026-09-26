@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from platform_app.api import create_app
 from platform_app.config import Settings
-from platform_app.fbasecman_profile import profile_paths
+from platform_app.product_adapters.fbasecman.profile import profile_paths
 from platform_app.topology import configured_topology
 
 
@@ -55,7 +55,7 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     assert "不属于当前环境" in foreign.json()["detail"]
     backend_dir = Path(__file__).resolve().parent.parent / "backend"
     check = subprocess.run([
-        sys.executable, "-m", "platform_app.legacy_cman_runner",
+        sys.executable, "-m", "platform_app.product_adapters.fbasecman.legacy_runner",
         "--source", str(settings.fbasecman_regress_root),
         "--override", str(override), "--check-profile", "guc",
     ], cwd=backend_dir, capture_output=True, text=True, timeout=60)

@@ -44,9 +44,13 @@ def test_catalog_and_environment_persist_without_external_services(tmp_path):
 
 def test_actual_tcp_check_publishes_events_and_current_status(tmp_path):
     config = settings_for(tmp_path)
-    app = create_app(
-        config, enqueuer=lambda task_id: run_task(app.state.store, config, task_id)
-    )
+    enqueued = []
+
+    def enqueue(task_id):
+        enqueued.append(task_id)
+        run_task(app.state.store, config, task_id)
+
+    app = create_app(config, enqueuer=enqueue)
     client = TestClient(app)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -80,8 +84,12 @@ def test_actual_tcp_check_publishes_events_and_current_status(tmp_path):
             for event in client.get("/api/v1/operations/" + task_id + "/events").json()
         ]
         assert event_types == [
+            "scene.topology.configured",
+            "scene.action.started",
             "step.started",
+            "scene.entity.observed",
             "observation.captured",
+            "scene.action.finished",
             "operation.finished",
         ]
         retry = client.post(
@@ -93,11 +101,12 @@ def test_actual_tcp_check_publishes_events_and_current_status(tmp_path):
             },
         )
         assert retry.json()["id"] == task_id
+        assert enqueued == [task_id]
         assert (
-            client.get("/api/v1/operations/" + task_id + "/events?after=2").json()[0][
+            client.get("/api/v1/operations/" + task_id + "/events?after=6").json()[0][
                 "sequence"
             ]
-            == 3
+            == 7
         )
 
 
@@ -125,3 +134,68 @@ def test_mutating_action_requires_explicit_confirmation(tmp_path):
     )
     assert result.status_code == 422
     assert client.get("/api/v1/operations").json() == []
+
+
+def test_environment_delete_waits_for_tasks_and_removes_their_events(tmp_path):
+    config = settings_for(tmp_path)
+    app = create_app(config, enqueuer=lambda task_id: None)
+    client = TestClient(app)
+    client.post("/api/v1/environments", json={
+        "id": "lab", "product_id": "fbasecman", "title": "隔离环境",
+        "host": "127.0.0.1", "port": 5432,
+    }).raise_for_status()
+    task = app.state.store.create_task("lab", "database.check", "lab", {}, None)
+    app.state.store.add_event(task["id"], "observation.captured", {"state": "ready"})
+
+    assert client.delete("/api/v1/environments/lab").status_code == 409
+    assert app.state.store.get_environment("lab") is not None
+
+    app.state.store.transition_task(task["id"], ("QUEUED",), "SUCCEEDED")
+    assert client.delete("/api/v1/environments/lab").status_code == 200
+    assert app.state.store.get_task(task["id"]) is None
+    assert app.state.store.list_events(task["id"]) == []
+
+
+def test_product_test_action_requires_matching_environment(tmp_path):
+    config = settings_for(tmp_path)
+    client = TestClient(create_app(config, enqueuer=lambda task_id: None))
+    client.post("/api/v1/environments", json={
+        "id": "cman", "product_id": "fbasecman", "title": "代理环境",
+        "host": "127.0.0.1", "port": 5432,
+    }).raise_for_status()
+    response = client.post("/api/v1/operations", json={
+        "environment_id": "cman", "action": "tests.fbase", "target": "mmr",
+        "parameters": {"cluster": "mmr"}, "acknowledge_change": True,
+    })
+    assert response.status_code == 422
+    assert client.get("/api/v1/operations").json() == []
+
+
+def test_test_result_is_published_before_task_finishes(tmp_path, monkeypatch):
+    from platform_app import actions
+
+    config = settings_for(tmp_path)
+    store = create_app(config, enqueuer=lambda task_id: None).state.store
+    store.put_environment({
+        "id": "database", "product_id": "fbase-database", "title": "数据库环境",
+        "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
+        "database_user": "postgres", "deployment_config": None,
+        "deployment_target": None,
+    })
+    task = store.create_task("database", "tests.fbase", "mmr", {"cluster": "mmr"}, None)
+    monkeypatch.setattr(actions, "command_for_task", lambda *_: (["true"], tmp_path))
+    monkeypatch.setattr(actions, "_run_command", lambda *_args, **_kwargs: (True, "执行完成"))
+    original_put_result = store.put_result
+    statuses_at_publication = []
+
+    def record_publication(*args):
+        statuses_at_publication.append(store.get_task(task["id"])["status"])
+        original_put_result(*args)
+
+    monkeypatch.setattr(store, "put_result", record_publication)
+    run_task(store, config, task["id"])
+
+    assert statuses_at_publication == ["RUNNING"]
+    assert store.get_task(task["id"])["status"] == "SUCCEEDED"
+    assert store.list_results("database")[0]["status"] == "PASS"
+    assert store.list_events(task["id"])[-1]["event_type"] == "operation.finished"

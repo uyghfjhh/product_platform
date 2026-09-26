@@ -5,8 +5,9 @@ import time
 from pathlib import Path
 
 from framework.configuration import load_regression_config
+from framework.suites.runner import run_cases
 from framework.execution.phased_process import PhaseAction, PhasedProcess, observe_phases
-from suites.ha_commands.runtime import HaCommandRuntime
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
 from .manifest import OUTSTANDING_CASES, case_items, find_case
 
 
@@ -258,7 +259,7 @@ def run_case(root, case):
     started = time.monotonic()
     runtime = None
     try:
-        runtime = HaCommandRuntime(root, case)
+        runtime = FbasecmanCaseRuntime(root, case)
         with runtime:
             executor = EXECUTORS.get(case.executor, _run_outstanding_case)
             executor(runtime)
@@ -285,6 +286,4 @@ def run_case(root, case):
 
 def run(root, target=None):
     selected = [find_case(target)] if target else case_items()
-    failures = sum(0 if run_case(root, case) else 1 for case in selected)
-    print("Total: SUCCESS:%d FAIL:%d" % (len(selected) - failures, failures))
-    return failures == 0
+    return run_cases(root, selected, run_case)

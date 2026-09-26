@@ -5,13 +5,13 @@ from fastapi.testclient import TestClient
 
 from platform_app.actions import command_for_task
 from platform_app.api import create_app
-from platform_app.cman_artifacts import (
+from platform_app.product_adapters.fbasecman.artifacts import (
     CaseProgressObserver,
     case_artifacts,
     case_log,
     sync_current_results,
 )
-from platform_app.fbasecman_profile import legacy_root
+from platform_app.product_adapters.fbasecman.profile import legacy_root
 
 from test_fbasecman_profile import settings_for
 

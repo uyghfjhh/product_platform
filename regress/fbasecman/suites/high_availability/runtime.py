@@ -18,7 +18,7 @@ from framework.reporting.renderer import render_psql_table_from_pipe_text
 from lib.report_utils import render_psql_expanded_from_pipe_text
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
 
-from .cluster_ops import NodeController
+from products.fbasecman.environment.cluster_ops import NodeController
 from .console_parser import ConsoleSnapshot, parse_console_pipe_table
 from framework.execution.forensics import diagnose_crash
 
@@ -79,6 +79,7 @@ class HighAvailabilityRuntime(object):
 
         self.timestamps = {}
         self.report_steps = []
+        self._log_cursor = 0
 
         self.nodes = NodeController(self.env, self.logs_dir)
         self.fbasecman = FbasecmanProcess(
@@ -170,6 +171,18 @@ class HighAvailabilityRuntime(object):
             Path(__file__).parent / "assets" / "config" / "fbasecman_ha.conf"
         )
         content = template_path.read_text(encoding="utf-8")
+        hint_user = (
+            'user "qa_hint_user" {\n'
+            '    authentication "none"\n'
+            '    storage_user "postgres"\n'
+            '    group_names "qa_rep,qa_mmr"\n'
+            '    pool "transaction"\n'
+            '    pool_size 20\n'
+            '    pool_discard no\n'
+            '    rw_split_method "hint"\n'
+            '}\n\n'
+        )
+        content = content.replace('user "postgres" {', hint_user + 'user "postgres" {', 1)
 
         db_cfg = self.env.config["database"]
         ports = db_cfg["ports"]
@@ -207,6 +220,27 @@ class HighAvailabilityRuntime(object):
         return conf_file
 
     def start(self, extra_replacements=None):
+        self.nodes.ensure_all_running()
+        ports = self.env.config["database"]["ports"]
+        for primary_port, standby_name in (
+            (ports["mmr1"], "pg_240"),
+            (ports["mmr2"], "pg_250"),
+        ):
+            deadline = time.monotonic() + 30
+            state = None
+            while time.monotonic() < deadline:
+                state = self._query_scalar(
+                    primary_port,
+                    "SELECT state FROM pg_stat_replication WHERE application_name='%s';" % standby_name,
+                )
+                if state == "streaming":
+                    break
+                time.sleep(0.5)
+            if state != "streaming":
+                raise HighAvailabilityFailure(
+                    "standby %s did not reach streaming state on primary port %s: %r"
+                    % (standby_name, primary_port, state)
+                )
         self.ensure_baseline_table()
         conf = self.render_config(extra_replacements)
         self.fbasecman.start(conf)
@@ -365,13 +399,86 @@ class HighAvailabilityRuntime(object):
         self.last_client_output = output.strip()
         return rc, output.strip()
 
+    def client_psql_sequence(self, statements, user="qa_hint_user", db="qa_rep", check=True):
+        """Send separate Simple Query messages on one client connection."""
+        command = build_psql_command(
+            postgres_dir=self.env.config["local"]["postgres_dir"],
+            host="127.0.0.1", port=self.listen_port, user=user,
+            database=db, sql=statements[0], tuples_only=True,
+        )
+        for statement in statements[1:]:
+            command.extend(["-c", statement])
+        self.last_client_cmd = " ".join(command)
+        rc, output = self._execute_logged(
+            command, self.logs_dir / ("client_%d.log" % len(self.journal.steps)),
+            check=check,
+        )
+        self.last_client_output = output.strip()
+        return rc, output.strip()
+
+    def verify_hint_read(self, database, expected_port):
+        statements = (
+            "BEGIN READ ONLY;",
+            "SELECT inet_server_port()::text || '|' || pg_is_in_recovery()::text;",
+            "COMMIT;",
+        )
+        rc, output = self.client_psql_sequence(statements, db=database)
+        ports = self.env.config["database"]["ports"]
+        replica_ports = (ports["mmr1_standby1"], ports["mmr2_standby1"])
+        expected_line = "%s|%s" % (
+            expected_port, "true" if int(expected_port) in replica_ports else "false"
+        )
+        actual_lines = [line.strip() for line in output.splitlines()]
+        if rc != 0 or expected_line not in actual_lines:
+            raise HighAvailabilityFailure(
+                "hint read expected backend %s, got %s" % (expected_line, output)
+            )
+        return self.last_client_cmd, output
+
+    def verify_write_insert(self, database, expected_port, table="qa_case.orders"):
+        if table == "qa_case.orders":
+            row_id = int(time.time() * 1000000)
+            sql = (
+                "INSERT INTO qa_case.orders(id, value, note) "
+                "VALUES (%d, 1, 'ha-write-proof') "
+            ) % row_id
+        elif table == "public.t_test1":
+            row_id = int(time.time() * 1000) % 2000000000
+            sql = (
+                "INSERT INTO public.t_test1(id, name) "
+                "VALUES (%d, 'ha-write-proof') "
+            ) % row_id
+        else:
+            raise ValueError("unsupported write verification table: %s" % table)
+        sql += (
+            "RETURNING id::text || '|' || inet_server_port()::text || '|' || "
+            "pg_is_in_recovery()::text;"
+        )
+        rc, output = self.client_psql(sql, user="qa_hint_user", db=database)
+        expected_line = "%d|%s|false" % (row_id, expected_port)
+        if rc != 0 or expected_line not in [line.strip() for line in output.splitlines()]:
+            raise HighAvailabilityFailure(
+                "write expected %s, got %s" % (expected_line, output)
+            )
+        direct = self._query_scalar(
+            expected_port,
+            "SELECT id FROM %s WHERE id=%d;" % (table, row_id),
+        )
+        if direct != str(row_id):
+            raise HighAvailabilityFailure(
+                "write row %d not found on backend %s: %s" % (row_id, expected_port, direct)
+            )
+        return self.last_client_cmd, output, row_id, direct
+
     def extract_log_lines(self, patterns, max_lines=6):
-        """Extract matching lines from product log (fbasecman.log)."""
+        """Extract product log lines emitted since the preceding report step."""
         if not self.product_log.exists():
             return []
         matched = []
         try:
-            lines = self.product_log.read_text(encoding="utf-8", errors="replace").splitlines()
+            with self.product_log.open("rb") as log:
+                log.seek(self._log_cursor)
+                lines = log.read().decode("utf-8", errors="replace").splitlines()
             for raw_line in lines:
                 line = raw_line.strip()
                 if line and any(p.lower() in line.lower() for p in patterns):
@@ -436,6 +543,21 @@ class HighAvailabilityRuntime(object):
         evid_list = []
         if evidence:
             evid_list.append({"label": "证据", "text": str(evidence)})
+        else:
+            log_evidence = self.extract_log_lines(
+                ["probe", "route", "cluster", "node", "reload", "config", "primary", "standby"],
+                max_lines=8,
+            )
+            if log_evidence:
+                evid_list.append({
+                    "label": "产品日志原文（本步骤未指定筛选条件）",
+                    "text": "\n".join(log_evidence),
+                })
+            else:
+                evid_list.append({
+                    "label": "产品日志证据",
+                    "text": "本步骤运行期间未抓到匹配的产品日志；结论仅依据上方原始命令输出和字段校验。",
+                })
 
         step_obj = ReportStep(
             title=title,
@@ -451,6 +573,8 @@ class HighAvailabilityRuntime(object):
             coverage_check=str(coverage_check) if coverage_check is not None else None,
         )
         self.report_steps.append(step_obj)
+        if self.product_log.exists():
+            self._log_cursor = self.product_log.stat().st_size
         return step_obj
 
     def record_step(self, title, command, expected, actual, result):

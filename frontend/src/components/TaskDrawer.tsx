@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Button, Drawer, Empty, Select, Space, Tag, Typography } from 'antd';
 import { CloseCircleOutlined, PauseOutlined, PlayCircleOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
-import { ReactFlow, Background, Controls, type Edge, type Node } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
 
 import { api, post, type Event, type Task, statusColor } from '../api';
 import LogViewer from './LogViewer';
+import SceneReplay from './SceneReplay';
 
 type Props = { taskId: string | null; onClose: () => void };
 type LogResponse = { lines: string[]; available: boolean; path: string };
@@ -73,26 +72,6 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
   const current = events[position];
   const stepEvents = useMemo(() => events.filter((item) => item.event_type === 'step.started'), [events]);
   const selectedStep = current ? stepEvents.filter((item) => item.sequence <= current.sequence).length - 1 : -1;
-  const visibleStepEvents = stepEvents.slice(Math.max(0, selectedStep - 3), Math.max(8, selectedStep + 5));
-  const nodes: Node[] = visibleStepEvents.map((event, index) => {
-    const stepIndex = stepEvents.indexOf(event);
-    const isCurrent = stepIndex === selectedStep;
-    return {
-      id: String(event.sequence), position: { x: index * 192, y: 52 },
-      data: { label: `${stepIndex + 1}. ${String(event.payload.title || '执行步骤')}` },
-      style: {
-        width: 165, padding: 12, borderRadius: 6,
-        border: isCurrent ? '2px solid #167a68' : '1px solid #d9dfde',
-        background: isCurrent ? '#eaf4f1' : '#ffffff',
-        color: '#263434', fontSize: 13, textAlign: 'left',
-      },
-    };
-  });
-  const edges: Edge[] = nodes.slice(1).map((node, index) => ({
-    id: `edge-${index}`, source: nodes[index].id, target: node.id,
-    animated: playing && index === selectedStep - Math.max(0, selectedStep - 3) - 1,
-    style: { stroke: '#93aaa5' },
-  }));
 
   function seek(index: number) {
     setPlaying(false);
@@ -120,14 +99,9 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
         </div>
         {task.reason && <Alert type={task.status === 'SUCCEEDED' ? 'success' : 'warning'} message={task.reason} showIcon />}
         <section className="drawer-section">
-          <div className="section-heading"><Typography.Title level={5}>步骤回放</Typography.Title><Typography.Text type="secondary">{events.length ? `事件 ${position + 1} / ${events.length}` : '等待结构化事件'}</Typography.Text></div>
-          {stepEvents.length > 0 ? <>
-            <div className="flow-surface">
-              <ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
-                <Controls showInteractive={false} />
-                <Background gap={20} color="#e8eded" />
-              </ReactFlow>
-            </div>
+          <div className="section-heading"><Typography.Title level={5}>产品状态回放</Typography.Title><Typography.Text type="secondary">{events.length ? `事件 ${position + 1} / ${events.length}` : '等待结构化事件'}</Typography.Text></div>
+          <SceneReplay events={events} position={position} />
+          {events.length > 0 && <>
             <div className="replay-controls">
               <Button icon={<StepBackwardOutlined />} onClick={() => seek(position - 1)} disabled={position <= 0} aria-label="上一事件" />
               <Button type="primary" icon={playing ? <PauseOutlined /> : <PlayCircleOutlined />} onClick={() => { setFollow(false); if (position >= events.length - 1) setPosition(0); setPlaying(!playing); }}>{playing ? '暂停' : '播放'}</Button>
@@ -139,7 +113,7 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
               key={event.sequence} size="small" type={index === selectedStep ? 'primary' : 'default'}
               onClick={() => seek(events.findIndex((item) => item.sequence === event.sequence))}
             >{index + 1}. {String(event.payload.title || '步骤')}</Button>)}</div>
-          </> : <Empty description="该操作尚无步骤事件" />}
+          </>}
           {current && <div className="event-detail"><Typography.Text type="secondary">{new Date(current.recorded_at).toLocaleString('zh-CN')} · {current.event_type}</Typography.Text><pre>{JSON.stringify(current.payload, null, 2)}</pre></div>}
         </section>
         <section className="drawer-section">

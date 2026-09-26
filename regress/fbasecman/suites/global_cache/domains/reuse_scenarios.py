@@ -41,6 +41,8 @@ from suites.global_cache.manifest import (
     NOISE_PATTERNS,
     formal_case_items,
 )
+from suites.global_cache.waits import wait_target_entries_unref as _wait_target_entries_unref
+from suites.global_cache.domains.driver_cases import _append_driver_log
 from suites.global_cache.drivers import (
     compile_java as _compile_java,
     build_libpq_asset as _build_libpq_asset,

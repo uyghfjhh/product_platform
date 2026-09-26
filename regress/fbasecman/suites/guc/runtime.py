@@ -6,11 +6,15 @@ from datetime import datetime
 from pathlib import Path
 
 from framework.persistence.atomic import atomic_write_text
+from framework.clients.psql import build_psql_command
+from framework.execution.command import run_logged_command
 from framework.reporting import ReportCheck, ReportDocument, ReportStep, render_report
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime, _json_write
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
+# HaCommandFailure 是全框架通用的"用例失败"异常名，GUC 套件继续沿用。
+from suites.ha_commands.runtime import HaCommandFailure, _json_write
 
 
-class GucRuntime(HaCommandRuntime):
+class GucRuntime(FbasecmanCaseRuntime):
     """Runtime tailored for GUC synchronization, parsing, and session reuse tests."""
 
     def __init__(self, root, case):
@@ -20,6 +24,126 @@ class GucRuntime(HaCommandRuntime):
         self.overview_steps = []
         self.guc_steps = []
         self.all_checks = []
+        self._search_path_created_schemas = {}
+
+    def prepare_search_path_tables(self):
+        """Create distinct same-name rows on both MMR primaries for name resolution checks."""
+        ports = self.env.config["database"]["ports"]
+        host = self.env.config["database"]["mmr_host"]
+        statements = []
+        for schema, marker in (("public", "public"), ("postgres", "postgres"),
+                               ("schema1", "schema1"), ("schema2", "schema2")):
+            if schema != "public":
+                statements.append("CREATE SCHEMA IF NOT EXISTS %s" % schema)
+            statements.extend((
+                "CREATE TABLE IF NOT EXISTS %s.guc_search_path_probe (marker text PRIMARY KEY)" % schema,
+                "INSERT INTO %s.guc_search_path_probe VALUES ('%s') "
+                "ON CONFLICT (marker) DO NOTHING" % (schema, marker),
+            ))
+        sql = "; ".join(statements) + ";"
+        evidence = []
+        for port in (ports["mmr1"], ports["mmr2"]):
+            before_command = build_psql_command(
+                self.env.config["local"]["postgres_dir"], host, port,
+                "postgres", "postgres",
+                "SELECT nspname FROM pg_namespace WHERE nspname IN ('postgres','schema1','schema2');",
+                tuples_only=True,
+            )
+            before = run_logged_command(
+                before_command, self.logs_dir / ("search_path_schemas_%s.log" % port),
+                cwd=self.workdir,
+            )
+            if before.returncode != 0:
+                raise HaCommandFailure("cannot inspect search_path schemas on port %s: %s" %
+                                       (port, before.output))
+            existing = {line.strip() for line in before.output.splitlines()}
+            self._search_path_created_schemas[port] = tuple(
+                schema for schema in ("postgres", "schema1", "schema2")
+                if schema not in existing
+            )
+            command = build_psql_command(
+                self.env.config["local"]["postgres_dir"], host, port,
+                "postgres", "postgres", sql,
+            )
+            result = run_logged_command(
+                command, self.logs_dir / ("search_path_fixture_%s.log" % port),
+                cwd=self.workdir,
+            )
+            evidence.append("backend %s rc=%s\n%s" % (port, result.returncode, result.output))
+            if result.returncode != 0:
+                raise HaCommandFailure("search_path fixture setup failed on port %s: %s" %
+                                       (port, result.output))
+        return "准备 SQL:\n%s\n\n%s" % (sql, "\n\n".join(evidence))
+
+    def cleanup_search_path_tables(self):
+        ports = self.env.config["database"]["ports"]
+        host = self.env.config["database"]["mmr_host"]
+        sql = "; ".join(
+            "DROP TABLE IF EXISTS %s.guc_search_path_probe" % schema
+            for schema in ("public", "postgres", "schema1", "schema2")
+        ) + ";"
+        evidence = []
+        for port in (ports["mmr1"], ports["mmr2"]):
+            cleanup_sql = sql + " " + "; ".join(
+                "DROP SCHEMA IF EXISTS %s" % schema
+                for schema in self._search_path_created_schemas.get(port, ())
+            )
+            command = build_psql_command(
+                self.env.config["local"]["postgres_dir"], host, port,
+                "postgres", "postgres", cleanup_sql,
+            )
+            result = run_logged_command(
+                command, self.logs_dir / ("search_path_cleanup_%s.log" % port),
+                cwd=self.workdir,
+            )
+            evidence.append("backend %s rc=%s\n%s" % (port, result.returncode, result.output))
+            if result.returncode != 0:
+                raise HaCommandFailure("search_path fixture cleanup failed on port %s: %s" %
+                                       (port, result.output))
+        return "清理 SQL:\n%s\n\n%s" % (sql, "\n\n".join(evidence))
+
+    def verify_search_path_table(self, path_sql, expected_schema=None):
+        """Resolve an unqualified table through the proxy with the requested search_path."""
+        query = "SELECT marker || '|' || current_schemas(true)::text FROM guc_search_path_probe;"
+        sql = "SET search_path = %s; %s" % (path_sql, query)
+        if expected_schema is None:
+            schemas_sql = "SET search_path = %s; SELECT current_schemas(true)::text;" % path_sql
+            schemas_output = self.psql_business(
+                schemas_sql, "检查空 search_path 的有效 schema 列表",
+                "current_schemas(true) 不包含 public/postgres/schema1/schema2",
+                lambda out: "pg_catalog" in out and all(
+                    schema not in out for schema in ("public", "postgres", "schema1", "schema2")),
+            )
+            output = self.psql_business_error(
+                sql, "空 search_path 下未限定表名不可解析",
+                "未限定 guc_search_path_probe 应报 relation does not exist",
+                lambda out: "guc_search_path_probe" in out and "does not exist" in out,
+            )
+            expected = "relation guc_search_path_probe does not exist"
+            output = "current_schemas(true):\n%s\n\n未限定表查询:\n%s" % (schemas_output, output)
+        else:
+            output = self.psql_business(
+                sql, "验证 search_path 实际解析同名表",
+                "未限定表名应命中 %s.guc_search_path_probe" % expected_schema,
+                lambda out: any(line.strip().startswith(expected_schema + "|{") and
+                                expected_schema in line for line in out.splitlines())
+                and "(1 row)" in out,
+            )
+            expected = "%s 且 current_schemas(true) 包含 %s" % (expected_schema, expected_schema)
+        self.add_guc_step(
+            title="search_path 实际表名解析验证",
+            execution="psql -h 127.0.0.1 -p %s -U postgres -d mmr_group -c %r" %
+                      (self.listen_port, sql),
+            intermediate=output,
+            evidence=self.extract_guc_log_evidence([r"search_path", r"guc_search_path_probe"]),
+            expected="未限定表名解析结果: %s" % expected,
+            actual=output.strip(),
+            result="PASS",
+            checks=[ReportCheck(
+                title="search_path 决定真实表访问结果",
+                expected=expected, actual=output.strip(), result="PASS",
+            )],
+        )
 
     def render_conf(self, transform=None):
         def apply_guc_settings(content):
@@ -180,6 +304,78 @@ class GucRuntime(HaCommandRuntime):
             pass_reason = None
             failure_reason = reason or "GUC 测试步骤或检测项未达到预期。"
 
+        steps = list(self.guc_steps)
+        if status == "FAIL" and not any(s.result == "FAIL" for s in steps):
+            journal_steps = getattr(self.step_journal, "steps", [])
+            for item in journal_steps:
+                if item.get("result") == "FAIL" or item.get("status") == "FAIL":
+                    if any(s.title == item.get("title") for s in steps):
+                        continue
+                    exec_cmd = ""
+                    out_text = ""
+                    for ex in item.get("execution", []):
+                        if isinstance(ex, dict) and "text" in ex:
+                            t = ex["text"]
+                            if "\n\n" in t:
+                                parts = t.split("\n\n", 1)
+                                exec_cmd = parts[0]
+                                out_text = parts[1]
+                            elif t.startswith("$"):
+                                exec_cmd = t
+                            else:
+                                out_text = t
+                            break
+                    intermediate_list = []
+                    if out_text:
+                        intermediate_list.append({"label": "中间状态", "text": "执行输出:\n" + out_text})
+                    for im in item.get("intermediate", []):
+                        if isinstance(im, dict):
+                            intermediate_list.append(im)
+
+                    chk_actual = out_text.strip() if out_text else item.get("actual", reason or "未达到预期")
+                    chk = ReportCheck(
+                        title=item.get("title", "断言校验"),
+                        expected=item.get("expected", ""),
+                        actual=chk_actual,
+                        result="FAIL",
+                    )
+                    self.all_checks.append(chk)
+
+                    cov_num = len(steps) + 1
+                    step_cov_check = None
+                    if cov_num <= len(self.overview_steps):
+                        step_cov_check = self.overview_steps[cov_num - 1]
+
+                    step = ReportStep(
+                        title=item.get("title", "执行步骤"),
+                        execution=[{"label": "实际执行", "text": exec_cmd}] if exec_cmd else [],
+                        intermediate=intermediate_list,
+                        evidence=item.get("evidence", []),
+                        expected=item.get("expected", ""),
+                        actual=item.get("actual", reason or "未达到预期"),
+                        result="FAIL",
+                        checks=[chk],
+                        coverage=cov_num if cov_num <= len(self.coverage_items) else None,
+                        coverage_check=step_cov_check,
+                    )
+                    steps.append(step)
+
+            if not any(s.result == "FAIL" for s in steps):
+                fail_check = ReportCheck(
+                    title="用例执行断言",
+                    expected="用例全部步骤成功完成",
+                    actual=reason or "用例异常中止",
+                    result="FAIL",
+                )
+                self.all_checks.append(fail_check)
+                steps.append(ReportStep(
+                    title="用例执行异常中止",
+                    expected="所有操作成功完成",
+                    actual=reason or "执行未达预期中止",
+                    result="FAIL",
+                    checks=[fail_check],
+                ))
+
         doc = ReportDocument(
             target=self.case.target,
             status=status,
@@ -191,7 +387,7 @@ class GucRuntime(HaCommandRuntime):
             coverage_mapping=self.coverage_mapping,
             coverage_title="测试内容",
             overview_steps=self.overview_steps,
-            steps=self.guc_steps,
+            steps=steps,
             pass_reason=pass_reason,
             failure_reason=failure_reason,
         )

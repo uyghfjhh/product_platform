@@ -1,152 +1,100 @@
 # 公司产品公共管理平台 (product_platform)
 
-公司产品公共管理平台是统一面向公司各数据库与中间件产品的综合管理与自动化验证中枢。平台已深度融合 `fbasecman_regress_v2` 全量自动化测试套件与执行能力，并采用 `pgcluster` 引擎统一实现底层 14 节点双 MMR 高可用集群的拓扑编排与生命周期管理。
+公司产品公共管理平台是统一面向公司各数据库与中间件产品的综合管理与自动化验证中枢。平台深度融合 `fbasecman_regress_v2` 全量自动化测试套件,采用 `pgcluster` 引擎统一实现底层 14 节点双 MMR 高可用集群的拓扑编排与生命周期管理。
 
----
+**北极星**:一个产品接入零成本(适配器包、核心零修改)、功能覆盖测试到报告全链条、每条结论都有证据支撑的公司级产品平台。
 
-## 🌟 核心特性
+## 文档
 
-1. **多环境图形化编排 (pgcluster 引擎驱动)**
-   - 全面替代旧式写死端口与硬编码脚本的部署方式。
-   - 自动规划主从端口、数据目录与复制关系，支持在平台中维护与部署多个互不干扰的测试/验证环境。
-   - 一键执行集群创建 (`create`)、启动 (`start`)、停止 (`stop`)、重启 (`restart`)、状态探测 (`status`) 与清理 (`clean`)。
-   - 自动通过 `fbasecman_fixture` 模块初始化角色认证方式、库表视图、MMR 拓扑关系与测试上下文 (`test_context.yaml`)。
+| 文档 | 内容 |
+| --- | --- |
+| [docs/design.md](docs/design.md) | 设计文档:总体架构(第一部分)、能力升级路线图 P1–P7(第二部分)、关键决策(第三部分)、接口契约(第四部分)、前端与动画设计(第五部分)、新增依赖清单(第六部分) |
+| [docs/progress.md](docs/progress.md) | 实施进度、未完成项、历史教训与工作区约束 |
 
-2. **自动化测试与多环境绑定**
-   - 页面顶部支持全局切换“当前产品”与“绑定环境”，自动化测试任务与选定环境动态挂钩。
-   - 支持单用例执行、整套件执行、失败项快速重跑 (`failed`)。
-   - 支持导出标准 JUnit XML 与 HTML 交互式测试报告。
+## 核心特性
 
-3. **双轨使用模式 (CLI + Web)**
-   - **CLI 命令行 (`./run.sh`)**：完整保留所有原有回归测试命令，适合自动化流水线或终端工程师直接调用。
-   - **Web 控制台 (`./web.sh`)**：开箱即用的 Web 服务管理脚本，后台守护运行，**默认端口 8080**，无需常驻终端窗口。
+1. **多环境图形化编排(pgcluster 引擎)**:自动规划主从端口、数据目录与复制关系;一键创建/启动/停止/重启/状态/清理/体检/恢复集群;自动初始化角色认证、库表视图、MMR 拓扑与 `test_context.yaml`。
+2. **自动化测试与多环境绑定**:全局切换"当前产品"与"绑定环境";支持单用例、整套件、失败项快速重跑;导出标准 JUnit XML 与 HTML 报告。
+3. **双轨使用(CLI + Web)**:`run.sh` 完整保留回归命令(适合流水线);`web.sh` Web 控制台默认 8080,后台守护运行。
+4. **License 签发**:Python 重写的生成/下载/密钥管理,兼容既有产品格式,无后台申请队列。
+5. **AI 失败诊断**:证据溯源式诊断,引用不存在的证据即拒绝;AI 不修改确定性判定。
 
-4. **商务清晰简洁风 (Clean Business Style) 界面**
-   - 整体界面采用清爽商务绿与高对比度浅色设计（`#24816c` 主色调，白底卡片，微阴影），视觉层次明朗自然。
-   - 页面顶部提供指标统计胶囊（全部 / 通过 / 失败 / 未执行 / 通过率），支持一键点击筛选。
-   - 测试套件采用折叠卡片（Accordion）分块展示，各套件标明通过/失败状态标签，支持单组一键执行。
-   - 侧滑抽屉（Drawer）实时展示执行终端控制台与历史测试报告，无需跳转页面。
-
----
-
-## 📁 架构与目录结构
-
-```text
-product_platform/
-├── backend/                   # 平台核心后端服务
-│   └── platform_app/          # FastAPI 路由、SQLite 存储、任务调度、pgcluster 拓扑编排
-│       ├── fbasecman_profile.py   # 回归拓扑映射与 pgcluster.yaml 配置生成
-│       ├── fbasecman_fixture.py   # 业务夹具与 test_context.yaml 上下文初始化
-│       ├── config.py          # 平台全局路径与产品环境参数
-│       └── cli.py             # 后端主程序入口 (默认监听 8080)
-├── frontend/                  # 平台前端应用 (React 18 + TypeScript + Ant Design)
-│   ├── src/                   # 商务清晰简洁风页面与组件 (指标药丸、抽屉、折叠卡片)
-│   └── dist/                  # 生产静态资源包 (由 FastAPI 静态托管)
-├── products/                  # 平台管理的产品清单与适配器 (fbasecman, fbase-database)
-├── regress/                   # 自动化测试与回归体系 (各产品测试工程完全模块化隔离)
-│   └── fbasecman/             # fbasecman 产品回归测试全套套件 (原 fbasecman_regress_v2)
-│       ├── suites/            # 10 个测试套件 (rw_toggle, global_cache, handover...)
-│       ├── framework/         # 回归测试执行引擎与断言器
-│       ├── env/               # 拓扑与健康检查工具
-│       ├── lib/ & lib_jdbc/   # 依赖库与 JDBC Jar 包
-│       ├── tools/             # 测试 CLI 与辅助工具 (cli.py, doctor.py, clean.py...)
-│       ├── unit_tests/        # 单元测试 (269 项完整用例)
-│       ├── tests/             # rw_toggle 测试工件与脚本
-│       ├── output/            # 测试执行产物与报告
-│       ├── docs/              # 转测设计方案与历史问题记录
-│       ├── regress.yaml       # 回归测试主配置文件
-│       └── stable.yaml        # 常稳测试配置文件
-├── data/                      # 平台本地持久化数据 (platform.sqlite3, web.log, 部署方案)
-├── docs/                      # 平台总体架构与接口设计文档
-├── tests/                     # 平台自身服务接口与 License 单元测试
-├── run.sh                     # 平台统一 CLI 执行入口 (自动调度至各产品测试工具)
-├── web.sh                     # 平台 Web 控制台后台守护管理脚本 (start/stop/restart/setup)
-├── requirements.txt           # 平台 Python 核心依赖清单
-└── pyproject.toml             # 项目工程描述
-```
-
----
-
-## 🚀 快速上手
-
-### 1. Web 控制台管理 (`./web.sh`)
-
-平台 Web 服务通过独立的 `./web.sh` 脚本进行管理，默认端口为 **8080**：
+## 快速开始
 
 ```bash
-# 首次运行: 一键初始化专属虚拟环境并安装平台依赖 (可选，若当前环境缺少 uvicorn/fastapi)
-./web.sh setup
+# Web 控制台(默认 http://<IP>:8080)
+./web.sh setup      # 首次:初始化虚拟环境并安装依赖
+./web.sh start      # 启动(可带参数:./web.sh start 9000 0.0.0.0)
+./web.sh status | logs | restart | stop
 
-# 启动后台 Web 服务 (默认监听 0.0.0.0:8080)
-./web.sh start
-
-# 指定端口与 IP 启动 (例如使用 9000 端口)
-./web.sh start 9000 0.0.0.0
-
-# 查看服务运行状态与访问 URL
-./web.sh status
-
-# 实时跟踪服务运行日志
-./web.sh logs
-
-# 重启 Web 服务
-./web.sh restart
-
-# 停止 Web 服务
-./web.sh stop
-```
-
-启动成功后，在浏览器访问：`http://<服务器IP>:8080` 即可进入管理控制台。
-
-### 2. fbasecman 回归测试命令行 (`regress/fbasecman/run.sh`)
-
-回归测试体系已完全模块化封装于 `regress/fbasecman/` 目录下。可通过该目录下的 `run.sh` 执行所有回归测试与环境命令：
-
-```bash
+# fbasecman 回归测试 CLI
 cd regress/fbasecman
-
-# 检查运行环境与工具链依赖
-./run.sh doctor
-
-# 查看所有注册的测试套件与用例清单
-./run.sh show
-
-# 基于 pgcluster 自动部署 14 节点集群并初始化测试夹具
-./run.sh env setup
-
-# 查看集群当前各节点拓扑与健康状态
-./run.sh env status
-
-# 启停或重启集群
-./run.sh env start
-./run.sh env stop
-./run.sh env restart
-
-# 运行指定测试套件或单个用例
-./run.sh run rw_toggle
-./run.sh run rw_toggle.mmr_hint_switch
-
-# 仅重新运行上次执行失败的用例
-./run.sh run failed
-
-# 执行 269 项框架单元测试
-./run.sh test
-
-# 清理测试产物文件
+./run.sh doctor | show | env setup | env status | env start/stop/restart
+./run.sh run rw_toggle                # 套件
+./run.sh run rw_toggle.mmr_hint_switch # 单用例
+./run.sh run failed                   # 重跑失败项
+./run.sh test                         # 259 项框架单测
 ./run.sh clean --output
 ```
 
-> 提示：在平台根目录下，也可直接通过相对路径调用：`./regress/fbasecman/run.sh <命令>`。
+## 平台使用要点
 
+- **环境登记**:选择产品,填写环境 ID、主机、端口、数据库与用户;部署另填 pgcluster YAML 路径与目标(如 `mmr.fbasecman_regress`)。
+- **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
+- **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。
+- **License**:默认读取 `fly_dev/fd_licenser/keys` 的 v1.N 密钥;`PRODUCT_PLATFORM_LICENSE_KEYS`/`PRODUCT_PLATFORM_LICENSE_VENDOR` 可覆盖。旧格式兼容以目标产品验签为最终依据;自动测试只用临时密钥。
+- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/legacy_cman/<环境>/output/runs/`。SQLite 备份用在线备份工具或先停服务(WAL)。
 
----
+## 目录结构
 
-## 💡 开发与构建注意事项
+```text
+product_platform/
+├── backend/platform_app/          # 平台后端核心(FastAPI + SQLite + Huey)
+│   ├── api.py                      #   全部 HTTP API(待按领域拆分)
+│   ├── actions.py                  #   任务执行器:环境锁/子进程/取消/事件/结果发布
+│   ├── providers.py                #   产品提供者分发(待全部迁入适配器)
+│   ├── storage.py + migrations.py   #   SQLite 元数据门面 + 事务式 schema 迁移
+│   ├── queue.py + cli.py           #   Huey 队列;启动入口(API + 后台 consumer)
+│   ├── config.py + catalog.py      #   全局配置;产品目录
+│   ├── license.py                  #   License 生成与密钥管理(Python 重写)
+│   ├── diagnostics.py              #   AI 失败诊断(证据捆绑 + 引用防幻觉校验)
+│   ├── database.py + topology.py + scene.py   # SQL 查询;拓扑解析;场景动画事件
+│   └── product_adapters/fbasecman/  # 产品适配器(观测/产物/部署方案/夹具/旧运行器)
+├── frontend/src/                   # React 19 + TS + AntD 前端
+│   ├── views/                      #   部署/测试(多活·等保·fbasecman)/License 页面
+│   ├── components/                 #   TaskDrawer/LogViewer/ThreeTopologyView 等
+│   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
+├── products/                       # fbasecman 业务包(套件引用,待归位产品工程)
+├── regress/                        # 回归测试工程(产品测试资产 + 知识库语料)
+│   ├── fbasecman/                  #   fbasecman:framework(待剥离平台化)+10 套件+env+tools
+│   └── fbase/                      #   FBase:等保 mac + 多活 mmr 套件(自有框架,待接入平台框架)
+├── tests/                          # 平台自身测试(45 项 pytest)
+├── data/                           # 运行数据:platform.sqlite3/队列/profiles/报告产物
+├── docs/                           # design.md(设计文档)+ progress.md(进度)
+├── web.sh                          # Web 控制台管理(默认 8080)
+└── pyproject.toml + uv.lock         # Python 工程(uv 管理)
+```
 
-1. **Python 环境兼容性**
-   - 脚本 `run.sh` 与 `web.sh` 具备向下兼容探测机制，优先使用虚拟环境，其次依次检测 `python3.12`、`python3.11`、`python3.10`、`python3.9`、`python3.8`。
-   - 核心数据库交互（如业务夹具 `fbasecman_fixture.py`）采用系统原生 `psql` 管道驱动，避免外部数据库驱动包的系统库冲突。
+## 开发与构建
 
-2. **前端二次开发与构建**
-   - 前端代码位于 `frontend/` 目录。
-   - 修改前端代码后，需在 `frontend/` 目录下执行 `npm run build`，编译产物输出至 `frontend/dist/`，由 FastAPI 静态托管。
+```bash
+.venv/bin/python -m pytest               # 平台测试(45 项)
+regress/fbasecman/run.sh test            # 回归单测(259 项)
+cd frontend && npm run build            # 前端构建(含 tsc 检查)
+```
+
+全量验证 = 平台测试 + 回归单测 + 前端构建 + `git diff --check`。
+
+- 脚本向下兼容探测虚拟环境与 python3.12→3.8;业务夹具用系统 `psql` 管道,避免驱动冲突。
+- 前端改动需在 `frontend/` 执行 `npm run build`,产物输出 `frontend/dist/` 由 FastAPI 静态托管。
+- 新增依赖只在对应设计文档第六部分阶段安装,不引入浮动版本。
+
+## 会话工作规则(AI/开发必读)
+
+1. 工作树有大量未提交修改与未跟踪产物;**禁止 `git reset`、批量清理、删除 core/锁文件**;只编辑明确涉及的文件,编辑前先核对当前内容。
+2. **产品代码归 `backend/platform_app/product_adapters/<product>/`**;平台核心(`api.py`/`actions.py`/`providers.py`/`product_registry.py`/`config.py`)不得新增产品分支——解耦协议见设计文档第二部分 2.9,验收标准是"接入新产品只增适配器包、核心零修改"。
+3. AI 不修改确定性测试判定;报告解析不从展示文本猜测结论。
+4. 回归非 Web 逻辑**复用** `regress/fbasecman`,不在平台重写;部署统一 pgcluster,不回退旧 `env setup/start/stop/heal`。
+5. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
+6. 可能有**并行会话**同时修改本仓库;编辑前重新读文件,以当前内容为准。
+7. 每完成一个阶段:更新 `docs/progress.md`,跑全量验证;文档主张必须与代码事实核对。

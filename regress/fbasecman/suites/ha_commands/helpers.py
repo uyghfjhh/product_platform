@@ -2,10 +2,9 @@
 
 import time
 import os
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
+import stat
+import fcntl
+import re
 import sys
 import shlex
 from pathlib import Path

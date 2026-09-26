@@ -384,8 +384,6 @@ def run(root, target=None):
             _execute_case(rt)
             _assert_negative_logs(rt)
             rt.summary["status"] = "PASS"
-            success_count += 1
-            print("%-55s SUCCESS" % case.target, flush=True)
         except Exception as exc:
             rt.summary["status"] = "FAIL"
             issue_suffix = " [%s]" % case.issue_id if case.issue_id else ""
@@ -401,21 +399,39 @@ def run(root, target=None):
                     phase="assertion",
                 )
                 rt.summary["failed_step"] = dict(rt.step_records[-1])
-            core_info = rt.detect_new_core()
-            print("%-55s FAIL%s" % (case.target, issue_suffix), flush=True)
-            print("    reason: %s" % exc, flush=True)
-            if core_info is not None:
-                core_path, gdb_cmd = core_info
-                print("    core: %s" % core_path, flush=True)
-                print("    gdb : %s" % gdb_cmd, flush=True)
-            failures.append((case.target, rt.summary["reason"]))
         finally:
             rt.stop_fbasecman(best_effort=True, record=False)
+            core_info = rt.detect_new_core()
+            if core_info is not None:
+                core_path, gdb_cmd = core_info
+                reason = "fbasecman generated core dump during execution or shutdown: %s" % core_path
+                previous_reason = rt.summary.get("reason")
+                rt.summary["status"] = "FAIL"
+                rt.summary["reason"] = (
+                    "%s; %s" % (previous_reason, reason) if previous_reason else reason
+                )
+                rt.record_step(
+                    "产品进程崩溃检测",
+                    expected="用例执行及进程停止期间不产生 core dump。",
+                    actual=core_path,
+                    result="FAIL",
+                    phase="cleanup",
+                )
+                rt.summary["failed_step"] = dict(rt.step_records[-1])
+                print("    core: %s" % core_path, flush=True)
+                print("    gdb : %s" % gdb_cmd, flush=True)
             rt.capture_core_log_evidence()
             rt.finish()
             rt.write_summary()
             rt.write_report()
             rt.prune_artifacts()
+            if rt.summary["status"] == "PASS":
+                success_count += 1
+                print("%-55s SUCCESS" % case.target, flush=True)
+            else:
+                print("%-55s FAIL" % case.target, flush=True)
+                print("    reason: %s" % rt.summary.get("reason", "unknown"), flush=True)
+                failures.append((case.target, rt.summary.get("reason", "unknown")))
 
     print("-------------------------------------------------------------------------------------", flush=True)
     print("Total:", flush=True)
@@ -427,3 +443,4 @@ def run(root, target=None):
         for target_name, reason in failures:
             lines.append("  - %s: %s" % (target_name, reason))
         raise GlobalCacheFailure("\n".join(lines))
+    return True

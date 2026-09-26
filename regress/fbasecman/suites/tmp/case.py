@@ -17,9 +17,5 @@ class TmpCase(HaCommandCase):
             notes=notes,
             topology=topology,
             report_groups=("mmr_group",),
+            suite_id="tmp",
         )
-        self.suite_name = "tmp"
-
-    @property
-    def target(self):
-        return "tmp.%s" % self.name

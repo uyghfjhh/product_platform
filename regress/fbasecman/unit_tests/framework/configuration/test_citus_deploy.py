@@ -2,8 +2,8 @@ import unittest
 from types import SimpleNamespace
 
 from framework.configuration import ConfigurationError, validate_config
-from env.mmr import build_mmr_setup_script
-from env.replication import build_replication_setup_script
+from products.fbasecman.environment.mmr import build_mmr_setup_script
+from products.fbasecman.environment.replication import build_replication_setup_script
 
 
 def _base_valid_config():

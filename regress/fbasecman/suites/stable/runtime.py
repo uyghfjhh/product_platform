@@ -421,7 +421,7 @@ class StableRuntime(object):
         return result.returncode, result.output
 
     def health(self):
-        from env.health import check_environment
+        from products.fbasecman.environment.health import check_environment
         values = check_environment(self.cfg.runtime_config, self.runner, verbose=False)
         ok = (values.get("mmr_non_active") == "0" and
               values.get("rep_streaming") == "2")

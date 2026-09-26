@@ -22,6 +22,27 @@ def _wait_candidate(rt, group_name, node_name, present=True, timeout=15):
     return last_snap
 
 
+def _wait_standby_readiness(rt, node_key="A1", timeout=20):
+    """Wait until a restarted standby has reached consistent recovery state."""
+    _, port = rt.nodes.nodes[node_key]
+    deadline = time.time() + timeout
+    last_output = ""
+    while time.time() < deadline:
+        rc, output = rt.nodes._run_cmd(
+            '%s/bin/psql -h 127.0.0.1 -p %d -U %s -d postgres -tAc "SELECT 1;"'
+            % (rt.nodes.pg_dir, port, rt.nodes.user),
+            "pg_ready_%s.log" % node_key,
+        )
+        last_output = output
+        if rc == 0 and output.strip() == "1":
+            return
+        time.sleep(0.5)
+    raise ConsoleAssertionError(
+        "standby %s did not reach consistent recovery state within %ss: %s"
+        % (node_key, timeout, last_output)
+    )
+
+
 def run_core_13_monitor_confirm(rt):
     """CORE-13: Monitor failure and recovery debounce and confirmation cycle."""
     rt.coverage_items = [
@@ -50,6 +71,8 @@ def run_core_13_monitor_confirm(rt):
     snap_base = rt.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="基线状态检查")
     snap_base.assert_candidate_present("test_mmr1_s1", candidate_type="READ")
     snap_base.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
+    snap_base.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                            candidate_type="READ", route_status="AVAILABLE")
     rt.add_step(
         title="探活基线检查",
         coverage="1",
@@ -109,6 +132,12 @@ def run_core_13_monitor_confirm(rt):
     recovered_endpoint = snap_debounce_recovered.find_one(node_name="test_mmr1_s1")
     if recovered_endpoint.get("connect_status") != "ONLINE" or recovered_endpoint.get("fault_count") != "0":
         raise ConsoleAssertionError("Debounce counters did not reset after A1 recovery")
+    snap_debounce_fault.assert_fields({"node_name": "test_mmr1_s1"},
+                                      connect_status="ONLINE", retry_phase="DOWN_CONFIRMING")
+    snap_debounce_recovered.assert_fields({"node_name": "test_mmr1_s1"},
+                                          connect_status="ONLINE", retry_phase="UP_STABLE")
+    snap_deb.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                           candidate_type="READ", route_status="AVAILABLE")
     rt.add_step(
         title="故障防抖清零重置",
         coverage="2",
@@ -147,6 +176,12 @@ def run_core_13_monitor_confirm(rt):
     if snap_fault_endpoint is None or int(
             snap_fault_endpoint.find_one(node_name="test_mmr1_s1").get("fault_count", "0") or 0) < 3:
         raise ConsoleAssertionError("Monitor fault_count did not reach threshold 3")
+    snap_fault_endpoint.assert_fields({"node_name": "test_mmr1_s1"},
+                                      connect_status="OFFLINE", retry_phase="DOWN_STABLE",
+                                      topology_state="VALID_DEGRADED")
+    snap_fail.assert_fields({"user_name": "qa_hint_user", "candidate_type": "READ"},
+                            candidate_node="", route_status="UNAVAILABLE",
+                            unavailable_reason="NO_READ_CANDIDATE")
     rt.mark_time("T3_endpoint_fault_confirmed")
     deadline = time.time() + 15
     snap_clusters = None
@@ -156,6 +191,21 @@ def run_core_13_monitor_confirm(rt):
         if row_site_a.get("topology_state") == "VALID_DEGRADED":
             break
         time.sleep(0.5)
+    snap_clusters.assert_fields({"cluster_name": "site_a"}, topology_state="VALID_DEGRADED")
+    snap_clusters.assert_fields({"cluster_name": "site_b"}, topology_state="VALID")
+    other_before = rt.admin_psql("SHOW ENDPOINT_MONITOR test_mmr2_s1;")
+    other_seq = int(other_before.find_one(node_name="test_mmr2_s1")["probe_seq"])
+    deadline = time.monotonic() + 15
+    other_after = other_before
+    while time.monotonic() < deadline:
+        other_after = rt.admin_psql("SHOW ENDPOINT_MONITOR test_mmr2_s1;")
+        if int(other_after.find_one(node_name="test_mmr2_s1")["probe_seq"]) > other_seq:
+            break
+        time.sleep(0.25)
+    if int(other_after.find_one(node_name="test_mmr2_s1")["probe_seq"]) <= other_seq:
+        raise ConsoleAssertionError("site_b probe did not advance during site_a failure")
+    other_after.assert_fields({"node_name": "test_mmr2_s1"}, connect_status="ONLINE",
+                              topology_state="VALID")
 
     remaining_nodes = [r.get("candidate_node", "") for r in snap_fail.records if r.get("candidate_node")]
     rt.add_step(
@@ -164,8 +214,9 @@ def run_core_13_monitor_confirm(rt):
         coverage_check="验证故障确认与剔除",
         action="通过 SSH 持续停止远程从库 test_mmr1_s1 (A1)，等待 monitor 探测连续失败超过阈值 (3 次)",
         command=stop_fail_transcript,
-        intermediate="SHOW ENDPOINT_MONITOR test_mmr1_s1:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s\n\nSHOW CLUSTERS:\n%s" % (
-            snap_fault_endpoint.format_table(), snap_fail.format_table(), snap_clusters.format_table()
+        intermediate="SHOW ENDPOINT_MONITOR test_mmr1_s1:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s\n\nSHOW CLUSTERS:\n%s\n\nsite_b 探测前后:\n%s\n%s" % (
+            snap_fault_endpoint.format_table(), snap_fail.format_table(), snap_clusters.format_table(),
+            other_before.format_table(), other_after.format_table()
         ),
         evidence="\n".join(rt.extract_log_lines(["test_mmr1_s1", "fail", "degraded", "remove", "topology changed"], max_lines=6)),
         expected="连续探测失败达到阈值后，从库 test_mmr1_s1 (A1) 彻底从只读候选剔除；site_a 拓扑降级为 VALID_DEGRADED",
@@ -192,8 +243,15 @@ def run_core_13_monitor_confirm(rt):
     # Step 5: Sustained recovery
     rt.nodes.start_node("A1")
     start_rec_transcript = rt.nodes.last_operation_transcript
+    _wait_standby_readiness(rt, "A1")
     refresh_rec = rt.admin_psql("REFRESH CLUSTER site_a;", title="刷新拓扑")
     snap_rec = _wait_candidate(rt, "qa_rep", "test_mmr1_s1", present=True, timeout=18)
+    snap_rec.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                           candidate_type="READ", effective_grouprole="replica",
+                           route_status="AVAILABLE")
+    recovered_monitor = rt.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
+    recovered_monitor.assert_fields({"node_name": "test_mmr1_s1"},
+                                    connect_status="ONLINE", fault_count="0", retry_phase="UP_STABLE")
     rt.mark_time("T5_recovery_completed")
     rt.add_step(
         title="持续成功达到阈值确认恢复",
@@ -201,7 +259,7 @@ def run_core_13_monitor_confirm(rt):
         coverage_check="验证恢复确认与重新准入",
         action="通过 SSH 启动远程从库 test_mmr1_s1 (A1)，执行 REFRESH CLUSTER site_a 刷新探测",
         command="%s\n\n%s" % (start_rec_transcript, rt.console_result(refresh_rec)),
-        intermediate=snap_rec.format_table(),
+        intermediate="%s\n\n%s" % (recovered_monitor.format_table(), snap_rec.format_table()),
         evidence="\n".join(rt.extract_log_lines(["test_mmr1_s1", "recovered", "topology changed", "router update", "active"], max_lines=6)),
         expected="持续探测成功达到阈值后，从库 test_mmr1_s1 (A1) 重新入围只读候选列表，route_status=AVAILABLE",
         actual="从库 test_mmr1_s1 (A1) 已自动重新准入只读候选列表，route_status=AVAILABLE",
@@ -270,6 +328,8 @@ def run_core_14_rep_standby_failure(rt):
         ],
     )
 
+    baseline_read_command, baseline_read_output = rt.verify_hint_read("qa_rep", a1_port)
+
     # Step 3: Stop A1
     rt.mark_time("T1_stop_replica")
     rt.nodes.stop_node("A1", immediate=True)
@@ -277,26 +337,45 @@ def run_core_14_rep_standby_failure(rt):
     _wait_candidate(rt, "qa_rep", "test_mmr1_s1", present=False, timeout=15)
     rt.mark_time("T3_fault_confirmed")
 
-    # Verify write continues to A0
-    rc_w, out_w = rt.client_psql("SELECT 100;", db="qa_rep")
-    if rc_w != 0:
-        raise ConsoleAssertionError("Write traffic failed after standby stop!")
+    read_command, read_output = rt.verify_hint_read("qa_rep", rt.env.config["database"]["ports"]["mmr1"])
+    write_command, write_output, row_id, direct_output = rt.verify_write_insert(
+        "qa_rep", rt.env.config["database"]["ports"]["mmr1"]
+    )
 
     snap_route = rt.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查备库故障后路由回退")
     snap_route.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
     snap_route.assert_field({"candidate_node": "test_mmr1"}, "route_status", "AVAILABLE")
     snap_route.assert_candidate_absent("test_mmr1_s1")
+    snap_route.assert_fields({"user_name": "qa_hint_user", "candidate_type": "READ"},
+                             candidate_node="", route_status="UNAVAILABLE",
+                             unavailable_reason="NO_READ_CANDIDATE")
+    fault_deadline = time.monotonic() + 12
+    fault_monitor = None
+    while time.monotonic() < fault_deadline:
+        fault_monitor = rt.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
+        if fault_monitor.find_one(node_name="test_mmr1_s1").get("connect_status") == "OFFLINE":
+            break
+        time.sleep(0.25)
+    fault_monitor.assert_fields({"node_name": "test_mmr1_s1"},
+                                connect_status="OFFLINE", retry_phase="DOWN_STABLE",
+                                topology_state="VALID_DEGRADED")
+    fault_row = fault_monitor.find_one(node_name="test_mmr1_s1")
+    if int(fault_row["fault_count"]) < int(fault_row["max_retries"]):
+        raise ConsoleAssertionError("A1 was removed before failure threshold")
     rt.add_step(
         title="备机故障写持续主库，读安全回退",
         coverage="2",
         coverage_check="验证备机宕机后写正常且读回退",
         action="通过 SSH 停止远程从库 A1 (%s:%s) 并直连代理发送写流量测试" % (rt.nodes.host, a1_port),
-        command="%s\n\n客户端写验证:\n%s\n返回码: %s\n输出: %s" % (
-            stop_transcript, rt.last_client_cmd, rc_w, out_w),
-        intermediate=snap_route.format_table(),
+        command="%s\n\n故障前只读事务:\n%s\n%s\n\n故障后只读事务:\n%s\n%s\n\n"
+                "故障后写入:\n%s\n%s\n直连 A0 核对 id=%d: %s" % (
+            stop_transcript, baseline_read_command, baseline_read_output,
+            read_command, read_output, write_command, write_output, row_id, direct_output),
+        intermediate="%s\n\n%s" % (fault_monitor.format_table(), snap_route.format_table()),
         evidence="\n".join(rt.extract_log_lines(["test_mmr1_s1", "stop", "fallback", "route"], max_lines=6)),
         expected="写操作正常成功，从库 A1 剔除出读候选，主库 A0 兜底提供读写服务",
-        actual="写成功 (SELECT 100 成功返回)，A1 剔除生效，A0 route_status=AVAILABLE",
+        actual="READ ONLY 事务从 A1(%s) 回退 A0(%s)；INSERT RETURNING 命中 A0，直连查到 id=%d" %
+               (a1_port, rt.env.config["database"]["ports"]["mmr1"], row_id),
         result="PASS",
         checks=[
             ReportCheck(
@@ -313,6 +392,14 @@ def run_core_14_rep_standby_failure(rt):
                 ),
                 result="PASS",
             ),
+            ReportCheck(
+                title="hint 读事务及真实写入落点",
+                expected="故障前 READ ONLY=%s；故障后 READ ONLY/INSERT=%s" %
+                         (a1_port, rt.env.config["database"]["ports"]["mmr1"]),
+                actual="故障前 %s；故障后 %s；写入 %s；直连核对 %s" %
+                       (baseline_read_output, read_output, write_output, direct_output),
+                result="PASS",
+            ),
         ],
     )
 
@@ -326,13 +413,23 @@ def run_core_14_rep_standby_failure(rt):
     snap_rec = rt.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查备库恢复后路由重新入围")
     snap_rec.assert_field({"candidate_node": "test_mmr1_s1"}, "candidate_type", "READ")
     snap_rec.assert_field({"candidate_node": "test_mmr1_s1"}, "route_status", "AVAILABLE")
+    snap_rec.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                           effective_grouprole="replica", candidate_type="READ",
+                           route_status="AVAILABLE")
+    recovered_monitor = rt.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
+    recovered_monitor.assert_fields({"node_name": "test_mmr1_s1"},
+                                    connect_status="ONLINE", fault_count="0",
+                                    retry_phase="UP_STABLE")
+    recovered_read_command, recovered_read_output = rt.verify_hint_read("qa_rep", a1_port)
     rt.add_step(
         title="备机恢复重新承担读",
         coverage="3",
         coverage_check="验证备机恢复后重新准入承担读流量",
         action="通过 SSH 重新启动远程备库 A1 并刷新探测",
-        command="%s\n\n%s" % (start_transcript, rt.console_result(refresh_rec)),
-        intermediate=snap_rec.format_table(),
+        command="%s\n\n%s\n\n恢复后只读事务:\n%s\n%s" % (
+            start_transcript, rt.console_result(refresh_rec),
+            recovered_read_command, recovered_read_output),
+        intermediate="%s\n\n%s" % (recovered_monitor.format_table(), snap_rec.format_table()),
         evidence="\n".join(rt.extract_log_lines(["test_mmr1_s1", "recovered", "AVAILABLE"], max_lines=6)),
         expected="备库 A1 恢复 AVAILABLE 状态并重新入围承接只读",
         actual="A1 重新入围只读候选列表，route_status=AVAILABLE",
@@ -392,12 +489,27 @@ def run_core_15_rep_primary_failure(rt):
     snap_rep.assert_field({"candidate_type": "WRITE"}, "route_status", "UNAVAILABLE")
     snap_rep.assert_field({"candidate_type": "WRITE"}, "unavailable_reason", "NO_VERIFIED_WRITE_TARGET")
     snap_rep.assert_field({"candidate_type": "READ", "candidate_node": "test_mmr1_s1"}, "route_status", "AVAILABLE")
+    snap_rep.assert_fields({"user_name": "qa_hint_user", "candidate_type": "WRITE"},
+                           candidate_node="", route_status="UNAVAILABLE",
+                           unavailable_reason="NO_VERIFIED_WRITE_TARGET")
+    snap_rep.assert_fields({"user_name": "qa_hint_user", "candidate_type": "READ"},
+                           candidate_node="test_mmr1_s1", effective_grouprole="replica",
+                           route_status="AVAILABLE")
+    read_command, read_output = rt.verify_hint_read(
+        "qa_rep", rt.env.config["database"]["ports"]["mmr1_standby1"])
+    write_rc, write_output = rt.client_psql(
+        "INSERT INTO qa_case.orders(id, value, note) VALUES (%d, 1, 'rejected-primary-down');" %
+        int(time.time() * 1000000), user="qa_hint_user", db="qa_rep", check=False)
+    write_command = rt.last_client_cmd
+    if write_rc == 0 or not write_output:
+        raise ConsoleAssertionError("Primary-down write was not explicitly rejected")
     rt.add_step(
         title="主库故障路由降级断言",
         coverage="1、2、3",
         coverage_check="验证主库宕机后写阻断与备库只读维持",
         action="通过 SSH 停止远程主库 A0 (%s:%s)，不执行 PARTED 也不执行 PROMOTE" % (rt.nodes.host, a0_port),
-        command=stop_transcript,
+        command="%s\n\n只读事务:\n%s\n%s\n\n写请求拒绝:\n%s\nrc=%s\n%s" % (
+            stop_transcript, read_command, read_output, write_command, write_rc, write_output),
         intermediate="SHOW CLUSTERS:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s" % (
             snap_clusters.format_table(), snap_rep.format_table()
         ),
@@ -439,6 +551,8 @@ def run_core_15_rep_primary_failure(rt):
     snap_route_rec = rt.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="主库恢复后检查写路由")
     snap_route_rec.assert_field({"candidate_node": "test_mmr1", "candidate_type": "WRITE"}, "route_status", "AVAILABLE")
     snap_route_rec.assert_field({"candidate_node": "test_mmr1", "candidate_type": "WRITE"}, "is_write_target", "true")
+    snap_route_rec.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                                 candidate_type="WRITE", route_status="AVAILABLE")
     rt.add_step(
         title="主库恢复集群就绪",
         coverage="4",
@@ -502,6 +616,8 @@ def run_core_18_balance_single_failure(rt):
     stop_b0_transcript = rt.nodes.last_operation_transcript
     _wait_candidate(rt, "qa_bal_rw", "test_mmr2", present=False, timeout=15)
     snap_bal_rw = rt.admin_psql("SHOW GROUP_ROUTING qa_bal_rw;")
+    snap_bal_rw.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_app_user"},
+                              candidate_type="ROUTE", route_status="AVAILABLE")
     rt.add_step(
         title="Balance RW 主库故障重选",
         coverage="1",
@@ -548,6 +664,8 @@ def run_core_18_balance_single_failure(rt):
     snap_bal_ro.assert_candidate_present("test_mmr1_s1")
     snap_bal_ro.assert_candidate_absent("test_mmr1")
     snap_bal_ro.assert_candidate_absent("test_mmr2")
+    snap_bal_ro.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_app_user"},
+                              candidate_type="ROUTE", route_status="AVAILABLE")
     rt.add_step(
         title="Balance RO 单备故障严禁回退主库",
         coverage="2",
@@ -580,13 +698,19 @@ def run_core_18_balance_single_failure(rt):
     snap_all_dead.assert_candidate_present("test_mmr2")
     snap_all_dead.assert_candidate_absent("test_mmr1_s1")
     snap_all_dead.assert_candidate_absent("test_mmr2_s1")
+    for node in ("test_mmr1", "test_mmr2"):
+        snap_all_dead.assert_fields({"candidate_node": node, "user_name": "qa_app_user"},
+                                    candidate_type="ROUTE", route_status="AVAILABLE")
+    single_read = rt.admin_psql("SHOW GROUP_ROUTING qa_single_ro;")
+    single_read.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_app_user"},
+                              candidate_type="ROUTE", route_status="AVAILABLE")
     rt.add_step(
         title="Balance RO 全备死回退主库",
         coverage="3",
         coverage_check="验证全备机不可用后降级主库只读兜底",
         action="通过 SSH 同时停止 A1 与 B1 两个备机",
         command=stop_a1_transcript,
-        intermediate=snap_all_dead.format_table(),
+        intermediate="%s\n\n%s" % (snap_all_dead.format_table(), single_read.format_table()),
         evidence="\n".join(rt.extract_log_lines(["qa_bal_ro", "fallback", "primary"], max_lines=4)),
         expected="全备机不可用时降级由主库承接只读",
         actual="回退降级生效，主库准入 RO 候选",
@@ -614,6 +738,12 @@ def run_core_18_balance_single_failure(rt):
     _wait_candidate(rt, "qa_bal_ro", "test_mmr1_s1", present=True, timeout=18)
     _wait_candidate(rt, "qa_bal_ro", "test_mmr2_s1", present=True, timeout=18)
     snap_recovered = rt.admin_psql("SHOW GROUP_ROUTING qa_bal_ro;")
+    for node in ("test_mmr1_s1", "test_mmr2_s1"):
+        snap_recovered.assert_fields({"candidate_node": node, "user_name": "qa_app_user"},
+                                     candidate_type="ROUTE", effective_grouprole="replica",
+                                     route_status="AVAILABLE")
+    snap_recovered.assert_candidate_absent("test_mmr1")
+    snap_recovered.assert_candidate_absent("test_mmr2")
     rt.add_step(
         title="恢复全节点健康",
         coverage="4",
@@ -637,4 +767,35 @@ def run_core_18_balance_single_failure(rt):
                 result="PASS",
             )
         ],
+    )
+
+    rt.nodes.stop_node("A0", immediate=True)
+    stop_a0 = rt.nodes.last_operation_transcript
+    _wait_candidate(rt, "qa_single_rw", "test_mmr1", present=False)
+    single_unavailable = rt.admin_psql("SHOW GROUP_ROUTING qa_single_rw;")
+    single_unavailable.assert_fields({"user_name": "qa_app_user"}, candidate_node="",
+                                     route_status="UNAVAILABLE", unavailable_reason="NO_ROUTE_CANDIDATE")
+    single_unavailable.assert_candidate_absent("test_mmr2")
+    client_rc, client_output = rt.client_psql("SELECT 1;", db="qa_single_rw", check=False)
+    client_command = rt.last_client_cmd
+    if client_rc == 0:
+        raise ConsoleAssertionError("single_rw accepted a request without its only primary")
+    rt.nodes.start_node("A0")
+    start_a0 = rt.nodes.last_operation_transcript
+    refresh_a0 = rt.admin_psql("REFRESH CLUSTER site_a;")
+    restored_single = _wait_candidate(rt, "qa_single_rw", "test_mmr1", present=True, timeout=18)
+    restored_single.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_app_user"},
+                                  candidate_type="ROUTE", route_status="AVAILABLE")
+    restored_single.assert_candidate_absent("test_mmr2")
+    rt.add_step(
+        title="Single RW 唯一主库隔离与恢复",
+        command="%s\n\n%s\nrc=%s\n%s\n\n%s\n%s" % (
+            stop_a0, client_command, client_rc, client_output, start_a0,
+            rt.console_result(refresh_a0)),
+        intermediate="故障时:\n%s\n\n恢复后:\n%s" % (
+            single_unavailable.format_table(), restored_single.format_table()),
+        evidence="\n".join(rt.extract_log_lines(["site_a", "test_mmr1", "topology"], max_lines=6)),
+        expected="A0 故障时 NO_ROUTE_CANDIDATE 且业务请求失败；恢复后只准入 A0",
+        actual="故障请求 rc=%s；恢复后唯一候选 test_mmr1/ROUTE/AVAILABLE" % client_rc,
+        result="PASS",
     )

@@ -2,6 +2,8 @@
 
 import time
 import os
+import stat
+import re
 try:
     import fcntl
 except ImportError:

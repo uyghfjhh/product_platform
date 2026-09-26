@@ -6,10 +6,11 @@ from pathlib import Path
 
 from framework.execution.command import run_logged_command
 from framework.reporting import ReportCheck, ReportStep
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
+from suites.ha_commands.runtime import HaCommandFailure
 
 
-class RwToggleRuntime(HaCommandRuntime):
+class RwToggleRuntime(FbasecmanCaseRuntime):
     def __init__(self, root, case):
         super(RwToggleRuntime, self).__init__(root, case)
         self.driver_dir = self.workdir / "driver"

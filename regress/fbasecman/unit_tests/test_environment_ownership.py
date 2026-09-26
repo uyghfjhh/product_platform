@@ -3,10 +3,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import subprocess
 
-from env.ownership import (
+from products.fbasecman.environment.ownership import (
     EnvironmentOwnershipError, build_cleanup_plan, cleanup_script,
 )
-from env.cluster import ClusterManager
+from products.fbasecman.environment.cluster import ClusterManager
 from framework.configuration.loader import RegressionConfig
 from framework.execution.locking import ExclusiveFileLock
 
@@ -110,11 +110,11 @@ class EnvironmentOwnershipTest(unittest.TestCase):
 
     def test_topology_scripts_use_strict_error_handling(self):
         root = Path(__file__).resolve().parents[1]
-        for relative, prefix in (("env/mmr.py", "$MMR_POSTGRES_DIR"),
-                                 ("env/replication.py", "$REP_POSTGRES_DIR")):
+        for relative, prefix in (("products/fbasecman/environment/mmr.py", "$MMR_POSTGRES_DIR"),
+                                 ("products/fbasecman/environment/replication.py", "$REP_POSTGRES_DIR")):
             text = (root / relative).read_text(encoding="utf-8")
             self.assertIn("set -euo pipefail", text)
-            if relative == "env/mmr.py":
+            if relative == "products/fbasecman/environment/mmr.py":
                 self.assertIn('"$PG/bin/psql" -v ON_ERROR_STOP=1', text)
             else:
                 self.assertNotIn(prefix + "/bin/psql -p", text)

@@ -28,6 +28,8 @@ class ExampleCase(CaseSpec):
 
 `manifest.py` 提供无副作用的用例列表；默认可执行列表应排除 `enabled=False` 的用例。`suite.py` 提供 `run(root, target=None)` 和可选的 `show()`。`run` 必须返回布尔值、非负退出码或 `CaseResult`；成功返回 `True` 或 `0`，失败返回 `False`、非零退出码或抛出异常。不要省略返回值，否则会被判为失败。单用例执行时，`target` 是点号后的用例名。
 
+如果用例执行方式是“创建 Runtime → 进入上下文 → 调用执行器 → 写报告”，可使用 `framework.suites.runner.run_runtime_case()` 处理执行、异常和初始化失败报告，再用 `run_cases()` 汇总结果。需要故障诊断、额外锁或特殊清理的套件可保留自己的 `run_case()` 实现。
+
 ```python
 from framework.suites import SuitePlugin
 from .manifest import case_items

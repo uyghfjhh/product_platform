@@ -1,1 +1,0 @@
-"""Client support tests."""

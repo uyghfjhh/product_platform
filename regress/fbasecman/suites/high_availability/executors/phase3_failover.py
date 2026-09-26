@@ -39,6 +39,8 @@ def run_core_16_rep_failover(rt):
     snap_part.assert_candidate_absent("test_mmr1")
     snap_mem = rt.admin_psql("SHOW GROUP_MEMBERS;", title="检查隔离后成员状态")
     snap_mem.assert_field({"node_name": "test_mmr1", "group_name": "qa_rep"}, "state", "parted")
+    snap_mem.assert_fields({"node_name": "test_mmr1", "group_name": "qa_rep"},
+                           config_status="parted", group_role="primary")
 
     rt.add_step(
         title="旧主库隔离与剔除",
@@ -93,26 +95,30 @@ def run_core_16_rep_failover(rt):
     snap_route.assert_field({"candidate_node": "test_mmr1_s1"}, "is_write_target", "true")
     snap_route.assert_field({"candidate_node": "test_mmr1_s1"}, "candidate_type", "WRITE")
     snap_route.assert_field({"candidate_node": "test_mmr1_s1"}, "route_status", "AVAILABLE")
+    snap_route.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                             effective_grouprole="primary", candidate_type="WRITE",
+                             is_write_target="true", route_status="AVAILABLE")
     rt.mark_time("T3_new_primary_confirmed")
 
-    # Step 3.1: Verify write traffic hits new primary A1 (10012)
-    rc_w, out_w = rt.client_psql("SELECT inet_server_port();", db="qa_rep")
-    if rc_w != 0 or out_w != a1_port:
-        raise ConsoleAssertionError("Expected write traffic to hit new primary A1 (%s), got %s" % (a1_port, out_w))
+    write_command, write_output, row_id, direct_output = rt.verify_write_insert(
+        "qa_rep", int(a1_port)
+    )
 
     rt.add_step(
         title="新主库升主与识别",
         coverage="2",
         coverage_check="验证新主库升主、路由识别与物理落点穿透",
         action="通过 SSH 执行 pg_ctl promote A1 (%s)，执行 REFRESH CLUSTER site_a 并直连代理端口发送写入流量验证实际落点" % a1_port,
-        command="%s\n\n%s\n\n客户端写验证:\n%s\n返回码: %s\n输出: %s" % (
-            promote_transcript, rt.console_result(refresh_promote), rt.last_client_cmd, rc_w, out_w),
+        command="%s\n\n%s\n\n客户端 INSERT RETURNING:\n%s\n输出: %s\n直连 A1 核对 id=%d: %s" % (
+            promote_transcript, rt.console_result(refresh_promote),
+            write_command, write_output, row_id, direct_output),
         intermediate="SHOW CLUSTERS:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s" % (
             snap_cluster.format_table(), snap_route.format_table()
         ),
         evidence="\n".join(rt.extract_log_lines(["site_a", "test_mmr1_s1", "primary", "promote", "route"], max_lines=6)),
         expected="A1 识别为新主库，is_write_target=true，route_status=AVAILABLE，物理写请求穿透命中 %s 端口" % a1_port,
-        actual="test_mmr1_s1 晋升为主库，写目标已切换，客户端写入真实落点为 %s" % a1_port,
+        actual="test_mmr1_s1 晋升为主库，INSERT RETURNING 端口为 %s，直连确认 id=%d" %
+               (a1_port, row_id),
         result="PASS",
         checks=[
             ReportCheck(
@@ -129,8 +135,8 @@ def run_core_16_rep_failover(rt):
             ),
             ReportCheck(
                 title="物理写流量穿透落点验证",
-                expected="SELECT inet_server_port(); 返回 %s" % a1_port,
-                actual="实际连接端口=%s" % out_w,
+                expected="INSERT RETURNING 端口为 %s，直连可查到新行" % a1_port,
+                actual="代理返回=%s；直连行=%s" % (write_output, direct_output),
                 result="PASS",
             ),
         ],
@@ -154,6 +160,13 @@ def run_core_16_rep_failover(rt):
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "effective_state", "active")
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "candidate_type", "READ")
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "route_status", "AVAILABLE")
+    snap_rec.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                           effective_grouprole="replica", candidate_type="READ",
+                           route_status="AVAILABLE")
+    recovered_row = rt._query_scalar(int(a0_port),
+                                     "SELECT id FROM qa_case.orders WHERE id=%d;" % row_id)
+    if recovered_row != str(row_id):
+        raise ConsoleAssertionError("Failover write %d was not visible on rebuilt A0" % row_id)
     rt.mark_time("T5_failover_rebuild_completed")
 
     rt.add_step(
@@ -166,7 +179,7 @@ def run_core_16_rep_failover(rt):
         intermediate=snap_rec.format_table(),
         evidence="\n".join(rt.extract_log_lines(["test_mmr1", "active", "replica", "AVAILABLE"], max_lines=6)),
         expected="A0 恢复为 active 读节点，candidate_type=READ，route_status=AVAILABLE",
-        actual="A0 成功作为从库重新准入只读候选",
+        actual="A0 成功作为从库重新准入只读候选，直连可见切换期间写入 id=%s" % recovered_row,
         result="PASS",
         checks=[
             ReportCheck(
@@ -196,6 +209,15 @@ def run_core_16_rep_failover(rt):
     cleanup_clusters.assert_field({"cluster_name": "site_a"}, "current_primary", "test_mmr1")
     cleanup_routes.assert_field({"candidate_node": "test_mmr1", "candidate_type": "WRITE"}, "route_status", "AVAILABLE")
     cleanup_routes.assert_field({"candidate_node": "test_mmr1_s1", "candidate_type": "READ"}, "route_status", "AVAILABLE")
+    cleanup_routes.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                                  effective_grouprole="primary", is_write_target="true")
+    cleanup_routes.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                                  effective_grouprole="replica", is_write_target="false")
+    for label, port in (("A0", a0_port), ("A1", a1_port)):
+        direct = rt._query_scalar(int(port),
+                                  "SELECT id FROM qa_case.orders WHERE id=%d;" % row_id)
+        if direct != str(row_id):
+            raise ConsoleAssertionError("Failover write %d missing on restored %s" % (row_id, label))
     rt.add_step(
         title="恢复原始复制拓扑基线",
         action="将 A0 恢复为主库、A1 从 A0 重建为流复制备库，并恢复节点 ACTIVE",
@@ -236,11 +258,33 @@ def run_core_17_mmr_write_center_failover(rt):
     rt.start()
     rt.nodes.ensure_all_running()
 
+    for node_name, port in (("A0", a0_port), ("B0", b0_port)):
+        subscription_state = rt._query_scalar(
+            int(port),
+            "SELECT srsubstate FROM pg_subscription_rel "
+            "WHERE srrelid='public.t_test1'::regclass LIMIT 1;",
+        )
+        if subscription_state != "r":
+            raise ConsoleAssertionError(
+                "MMR test table is not subscription-ready on %s: %s" %
+                (node_name, subscription_state)
+            )
+        rt.add_step(
+            title="%s MMR 数据同步基线" % node_name,
+            command="SELECT srsubstate FROM pg_subscription_rel "
+                    "WHERE srrelid='public.t_test1'::regclass LIMIT 1;",
+            expected="public.t_test1 在 %s 的订阅状态为 r" % node_name,
+            actual="srsubstate=%s" % subscription_state,
+            result="PASS",
+        )
+
     # Step 1: Initial baseline (A0 is write target, write_source=WRITE_CLUSTER)
     snap_init = rt.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
     snap_init.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
     snap_init.assert_field({"candidate_node": "test_mmr1"}, "write_source", "WRITE_CLUSTER")
     snap_init.assert_write_target_count(1, user_name="postgres")
+    snap_init.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                            candidate_type="WRITE", route_status="AVAILABLE")
     rt.add_step(
         title="MMR 初始写中心检查",
         coverage="1",
@@ -287,11 +331,18 @@ def run_core_17_mmr_write_center_failover(rt):
     snap_drift.assert_field({"candidate_node": "test_mmr2"}, "fallback_reason", "WRITE_CLUSTER_UNAVAILABLE")
     snap_drift.assert_field({"candidate_node": "test_mmr2"}, "effective_state", "promoted")
     snap_drift.assert_field({"candidate_node": "test_mmr2"}, "effective_grouprole", "write-leader")
+    for user in ("qa_app_user", "qa_hint_user", "postgres"):
+        snap_drift.assert_write_target_count(1, user_name=user)
+        snap_drift.assert_fields({"candidate_node": "test_mmr2", "user_name": user},
+                                 candidate_type="WRITE", route_status="AVAILABLE")
+        snap_drift.assert_fields({"candidate_node": "test_mmr2_s1", "user_name": user},
+                                 candidate_type="READ", route_status="AVAILABLE")
+        if snap_drift.find_rows(candidate_node="test_mmr1", user_name=user):
+            raise ConsoleAssertionError("Faulted A0 remained an MMR route candidate")
 
-    # Verify write traffic on promoted center B0 (port 10021)
-    rc_w, out_w = rt.client_psql("SELECT inet_server_port();", db="qa_mmr")
-    if rc_w != 0 or out_w != b0_port:
-        raise ConsoleAssertionError("Expected write traffic to hit B0 (%s), got %s" % (b0_port, out_w))
+    write_command, write_output, row_id, direct_output = rt.verify_write_insert(
+        "qa_mmr", int(b0_port), table="public.t_test1"
+    )
     rt.mark_time("T3_write_drift_published")
 
     rt.add_step(
@@ -299,12 +350,12 @@ def run_core_17_mmr_write_center_failover(rt):
         coverage="2、3",
         coverage_check="验证原写中心故障后自动漂移与全局单写目标",
         action="通过 SSH 停止 A0 (%s:%s)，等待路由自动漂移并通过客户端验证写入落点" % (rt.nodes.host, a0_port),
-        command="%s\n\n客户端写验证:\n%s\n返回码: %s\n输出: %s" % (
-            stop_a0_transcript, rt.last_client_cmd, rc_w, out_w),
+        command="%s\n\n客户端 INSERT RETURNING:\n%s\n输出: %s\n直连 B0 核对 id=%d: %s" % (
+            stop_a0_transcript, write_command, write_output, row_id, direct_output),
         intermediate=snap_drift.format_table(),
         evidence="\n".join(rt.extract_log_lines(["qa_mmr", "drift", "promoted", "fallback", "test_mmr2"], max_lines=6)),
         expected="B0 成为唯一写中心，write_source=PROMOTED_CLUSTER，fallback_reason=WRITE_CLUSTER_UNAVAILABLE，物理落点 %s" % b0_port,
-        actual="漂移成功，字段全部吻合且物理写入真实命中 %s" % b0_port,
+        actual="漂移成功，INSERT RETURNING 命中 %s 且直连 B0 查到 id=%d" % (b0_port, row_id),
         result="PASS",
         checks=[
             ReportCheck(
@@ -321,8 +372,8 @@ def run_core_17_mmr_write_center_failover(rt):
             ),
             ReportCheck(
                 title="物理写流量穿透命中 B0",
-                expected="SELECT inet_server_port(); 返回 %s" % b0_port,
-                actual="实际连接端口=%s" % out_w,
+                expected="INSERT RETURNING 端口为 %s，直连可查到新行" % b0_port,
+                actual="代理返回=%s；直连行=%s" % (write_output, direct_output),
                 result="PASS",
             ),
         ],
@@ -339,6 +390,28 @@ def run_core_17_mmr_write_center_failover(rt):
         time.sleep(1)
         rt.admin_psql("REFRESH CLUSTER site_a;")
 
+    sync_deadline = time.monotonic() + 25
+    recovered_row = None
+    while time.monotonic() < sync_deadline:
+        recovered_row = rt._query_scalar(
+            int(a0_port), "SELECT id FROM public.t_test1 WHERE id=%d;" % row_id
+        )
+        if recovered_row == str(row_id):
+            break
+        time.sleep(1)
+    if recovered_row != str(row_id):
+        raise ConsoleAssertionError(
+            "B0 write id=%d was not visible on recovered A0 within 25s" % row_id
+        )
+    rt.add_step(
+        title="原写中心恢复后数据核对",
+        action="直连 A0 查询 B0 故障接管期间写入的唯一主键",
+        command="SELECT id FROM public.t_test1 WHERE id=%d;" % row_id,
+        expected="A0 可查询到 B0 写入的 id=%d" % row_id,
+        actual="A0 查询结果=%s" % recovered_row,
+        result="PASS",
+    )
+
     # Step 5: Manual switch via SET NODE WRITE ... IN GROUP qa_mmr
     refresh_a0 = rt.admin_psql("REFRESH CLUSTER site_a;")
     set_write = rt.admin_psql("SET NODE WRITE test_mmr2 IN GROUP qa_mmr;", title="人工命令锁定写中心为 B0")
@@ -348,7 +421,9 @@ def run_core_17_mmr_write_center_failover(rt):
 
     # Group isolation check: other groups untouched
     snap_rep = rt.admin_psql("SHOW GROUP_ROUTING qa_rep;")
-    snap_rep.assert_field({"cluster_name": "site_a"}, "group_name", "qa_rep")
+    snap_rep.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                           candidate_type="WRITE", is_write_target="true",
+                           route_status="AVAILABLE")
 
     rt.add_step(
         title="人工 SET NODE WRITE 锁定与组隔离",

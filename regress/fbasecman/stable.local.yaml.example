@@ -1,0 +1,40 @@
+# Local overrides for stable.yaml. Copy this file to stable.local.yaml.
+# Keep these roots and ports distinct from regress.yaml. They are the only
+# directories that ./stable.sh env clean is allowed to remove.
+fbasecman:
+  fbasecman_bin: /path/to/fbasecman
+  license_dir: /path/to/license
+  read_port: 26432
+  write_port: 27432
+
+database:
+  mmr_host: 192.168.x.x
+  rep_host: 192.168.x.x
+  mmr_pg_user: postgres
+  rep_pg_user: postgres
+  mmr_postgres_dir: /path/to/postgresql
+  rep_postgres_dir: /path/to/postgresql
+  mmr_data_root: /path/to/stable_mmr_pgdata
+  rep_data_root: /path/to/stable_rep_pgdata
+  ports:
+    mmr1: 12011
+    mmr1_standby1: 12012
+    mmr1_standby2: 12013
+    mmr1_standby3: 12014
+    mmr2: 12021
+    mmr2_standby1: 12022
+    mmr2_standby2: 12023
+    mmr2_standby3: 12024
+    rep_primary: 12051
+    rep_standby1: 12052
+    rep_standby2: 12053
+
+local:
+  postgres_dir: /path/to/postgresql
+  jdbc_lib_dir: lib_jdbc
+
+stable:
+  pgbench_duration: 40m
+  jdbc_duration: 20m
+  jdbc:
+    short_conn_clients: 100

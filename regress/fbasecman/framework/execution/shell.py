@@ -80,6 +80,7 @@ class LoggedShellRunner(object):
         connect_timeout = max(1, min(10, int(timeout or self.default_timeout)))
         command = [
             "ssh", "-F", "/dev/null", "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=no",
             "-o", "ConnectTimeout=%s" % connect_timeout,
             "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
             "%s@%s" % (user, host), "bash", "-se",

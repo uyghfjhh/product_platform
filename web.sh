@@ -68,7 +68,7 @@ is_platform_process() {
             return 0
         fi
     fi
-    return 0
+    return 1
 }
 
 # 获取当前正在运行的 Web 服务 PID
@@ -200,13 +200,28 @@ do_stop() {
 
     echo "正在停止平台 Web 服务 (PID: $pid)..."
 
-    # 首先发送 SIGTERM 请求正常退出
-    kill -TERM "$pid" 2>/dev/null || true
+    local pgid
+    pgid="$(ps -o pgid= -p "$pid" | tr -d '[:space:]')"
+    local owns_group=false
+    if [ "$pgid" = "$pid" ]; then
+        owns_group=true
+    fi
+
+    # setsid 启动的 API 和 Huey consumer 共享专属进程组。
+    if [ "$owns_group" = true ]; then
+        kill -TERM -- "-$pid" 2>/dev/null || true
+    else
+        local worker_pids
+        worker_pids="$(pgrep -P "$pid" -f 'huey.bin.huey_consumer platform_app.queue.huey' || true)"
+        for worker in $worker_pids; do kill -TERM "$worker" 2>/dev/null || true; done
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
 
     # 等待进程平稳退出 (最多 5 秒)
     local stopped=false
     for _ in $(seq 1 10); do
-        if ! kill -0 "$pid" 2>/dev/null; then
+        if { [ "$owns_group" = true ] && ! kill -0 -- "-$pid" 2>/dev/null; } ||
+           { [ "$owns_group" = false ] && ! kill -0 "$pid" 2>/dev/null; }; then
             stopped=true
             break
         fi
@@ -214,9 +229,14 @@ do_stop() {
     done
 
     # 若进程未在超时时间内退出，则强制 SIGKILL
-    if [ "$stopped" = false ] && kill -0 "$pid" 2>/dev/null; then
+    if [ "$stopped" = false ]; then
         echo "⚠️  服务未在预期内停止，正在发送强制终止信号 (SIGKILL)..."
-        kill -9 "$pid" 2>/dev/null || true
+        if [ "$owns_group" = true ]; then
+            kill -KILL -- "-$pid" 2>/dev/null || true
+        else
+            for worker in $worker_pids; do kill -KILL "$worker" 2>/dev/null || true; done
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
         sleep 0.5
     fi
 
@@ -301,4 +321,3 @@ case "$COMMAND" in
         exit 1
         ;;
 esac
-

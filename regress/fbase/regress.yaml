@@ -1,0 +1,94 @@
+postgres:
+  # 默认使用当前环境的 PGHOME，也可以直接填写绝对路径。
+  home: ${PGHOME}
+  # setup 会将 license 复制到每个数据库目录下。
+  license_file: /home/postgres/license/license.dat
+
+clusters:
+  mac:
+    plugins:
+      # plugins 中的扩展会在该集群每个节点创建。
+      fb_license:
+        preload: false
+      fbase_mac:
+        # 以下配置只在对应专项用例中使用，不影响普通环境 setup。
+        tde_key_command: ""
+        tlcp_cert_dir: ""
+        ssl_cert_dir: ""
+        gb18030_locale: zh_CN.gb18030
+
+    postgresql:
+      config_template: templates/postgresql.conf
+      hba_template: templates/pg_hba.conf
+      settings:
+        max_prepared_transactions: 2
+        password_encryption: sm3
+        log_statement: all
+        log_min_messages: info
+        fdb.enable_audit: 1
+        fdb.enable_mac: "on"
+        fdb.separate_user: "on"
+        fdb.password_mode: level
+        fdb.password_rule: 4
+        fdb.password_change_interval: 15
+        fdb.failed_user_auth_times: 5
+        fdb.account_auto_thaw_time: 30
+
+    nodes:
+      mac_primary: { host: 127.0.0.1, port: 15432, data_dir: /home/postgres/pgdata/mac1 }
+      mac_standby: { host: 127.0.0.1, port: 15433, data_dir: /home/postgres/pgdata/mac2 }
+      logical_subscriber: { host: 127.0.0.1, port: 15434, data_dir: /home/postgres/pgdata/mac3 }
+
+    groups:
+      streaming:
+        primary: mac_primary
+        standbys: [mac_standby]
+      logical:
+        database: postgres
+        publisher: mac_primary
+        publication_name: fbase_regress_pub
+        subscribers:
+          logical_subscriber: { subscription_name: fbase_regress_sub, slot_name: fbase_regress_slot }
+
+  mmr:
+    plugins:
+      fb_license:
+        preload: false
+      fdd_mmr:
+        enabled_databases: [postgres]
+        node_options: { failover: true, streaming: parallel, two_phase: true }
+        join_options: { wait_for_completion: true, synchronize_structure: all, precheck: table_exist_error }
+
+    postgresql:
+      config_template: templates/postgresql.conf
+      hba_template: templates/pg_hba.conf
+      settings:
+        log_min_messages: log
+        log_statement: all
+        logical_decoding_work_mem: 64MB
+        max_logical_replication_workers: 8
+        max_parallel_apply_workers_per_subscription: 2
+        max_sync_workers_per_subscription: 2
+        max_replication_slots: 10
+        max_wal_senders: 12
+        max_worker_processes: 16
+        max_prepared_transactions: 200
+        fdd.log_conflicts_to_table: true
+        fdd.search_dead_tup_time_interval: 30000
+
+    nodes:
+      mmr1_primary: { host: 127.0.0.1, port: 10011, data_dir: /home/postgres/pgdata/mmr1 }
+      mmr1_standby: { host: 127.0.0.1, port: 10012, data_dir: /home/postgres/pgdata/mmr1_standby }
+      mmr2_primary: { host: 127.0.0.1, port: 10021, data_dir: /home/postgres/pgdata/mmr2 }
+      mmr2_standby: { host: 127.0.0.1, port: 10022, data_dir: /home/postgres/pgdata/mmr2_standby }
+      mmr3_primary: { host: 127.0.0.1, port: 10031, data_dir: /home/postgres/pgdata/mmr3 }
+      mmr3_standby: { host: 127.0.0.1, port: 10032, data_dir: /home/postgres/pgdata/mmr3_standby }
+
+    groups:
+      mmr:
+        group_name: fbase_regress_mmr
+        members:
+          mmr1: { primary: mmr1_primary, standbys: [mmr1_standby] }
+          mmr2: { primary: mmr2_primary, standbys: [mmr2_standby] }
+          mmr3: { primary: mmr3_primary, standbys: [mmr3_standby] }
+

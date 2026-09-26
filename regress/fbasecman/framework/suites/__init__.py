@@ -1,5 +1,8 @@
-"""Test suite registry and discovery abstractions."""
+"""Test-suite contracts, registry and discovery abstractions."""
 
-from .registry import SuiteDefinition, SuiteRegistry, get_default_registry
+from .contracts import CaseResult, CaseSpec, SuitePlugin
+from .registry import SuiteRegistry
 
-__all__ = ["SuiteDefinition", "SuiteRegistry", "get_default_registry"]
+__all__ = [
+    "CaseResult", "CaseSpec", "SuitePlugin", "SuiteRegistry",
+]

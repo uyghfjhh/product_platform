@@ -802,8 +802,9 @@ class HandoverRuntime(object):
         script = (
             '{pg_dir}/bin/pg_ctl -D {standby_dir} stop -m immediate || true; '
             'rm -rf {standby_dir}; mkdir -p {standby_dir}; chmod 700 {standby_dir}; '
-            '{pg_dir}/bin/pg_basebackup -h 127.0.0.1 -U replicator -p {primary_port} -w -F p -P -X stream -R -D {standby_dir}; '
+            '{pg_dir}/bin/pg_basebackup -h 127.0.0.1 -U replicator -p {primary_port} -w -F p -P -X stream -R -c fast -D {standby_dir}; '
             'sed -i "/^primary_conninfo = / s/\'$/ application_name={app_name}\'/" {standby_dir}/postgresql.auto.conf; '
+            'sed -i "/^primary_slot_name/d" {standby_dir}/postgresql.auto.conf {standby_dir}/pgcluster.conf 2>/dev/null || true; '
             'echo "port={standby_port}" >> {standby_dir}/postgresql.conf; '
             '{pg_dir}/bin/pg_ctl -D {standby_dir} -l {standby_dir}/logfile start'
         ).format(

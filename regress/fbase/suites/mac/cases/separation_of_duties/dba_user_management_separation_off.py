@@ -1,0 +1,82 @@
+from framework.assertions import command_succeeds, output_contains, rows_equal, sql_fails
+from framework.steps import sql_step
+from suites.mac.cases.separation_of_duties.common import separation_requirements
+
+
+CASE = {
+    "id": "mac.separation_of_duties.dba_user_management_separation_off",
+    "name": "三权分立关闭时 DBA 用户管理权限",
+    "document": "三权分立功能转测.md",
+    "section": "5.3.1.1",
+    "known_issue": "D-006",
+    "group": "separation_of_duties",
+    "fixtures": [
+        "cluster",
+        {"type": "settings", "user": "sso", "setup": False,
+         "values": {"fdb.separate_user": "off"}, "apply": "reload",
+         "purpose": "恢复三权分立开关的用例前状态"},
+    ],
+    "requirements": separation_requirements(roles=["sso", "sao"], require_enabled=False),
+    "prerequisites": [
+        "mac 集群已由平台创建并处于运行状态",
+        "fbase_mac 已创建并预加载",
+        "数据库初始化角色 sso、sao 存在",
+        "SSO 有权设置并重载 fdb.separate_user",
+    ],
+    "steps": [
+        sql_step("SSO 关闭三权分立机制", "sso", "ALTER SYSTEM SET fdb.separate_user = off",
+                 "ALTER SYSTEM 执行成功", command_succeeds()),
+        {"type": "cluster_action", "title": "重载三权分立配置", "action": "reload",
+         "expected": "reload 执行成功", "assertion": command_succeeds()},
+        sql_step("确认三权分立已关闭", "postgres", "SHOW fdb.separate_user", "返回 off",
+                 rows_equal([["off"]])),
+        sql_step("DBA 创建普通用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_plain; ROLLBACK",
+                 "创建成功且事务回滚后不保留用户",
+                 output_contains("BEGIN", "CREATE ROLE", "ROLLBACK")),
+        sql_step("DBA 创建带 CREATEROLE 特权的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_createrole CREATEROLE; ROLLBACK",
+                 "创建成功且事务回滚后不保留用户",
+                 output_contains("BEGIN", "CREATE ROLE", "ROLLBACK")),
+        sql_step("DBA 创建带密码的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_password PASSWORD 'Aa123456'; ROLLBACK",
+                 "创建成功且事务回滚后不保留用户",
+                 output_contains("BEGIN", "CREATE ROLE", "ROLLBACK")),
+        sql_step("DBA 不能创建与 SSO 建立成员关系的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_role_sso ROLE sso; ROLLBACK",
+                 "执行失败，不能关联等保管理员", sql_fails("related to mac administrators")),
+        sql_step("DBA 不能创建与 SAO 建立成员关系的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_role_sao ROLE sao; ROLLBACK",
+                 "执行失败，不能关联等保管理员", sql_fails("related to mac administrators")),
+        sql_step("DBA 不能创建可管理 SSO 的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_admin_sso ADMIN sso; ROLLBACK",
+                 "执行失败，不能关联等保管理员", sql_fails("related to mac administrators")),
+        sql_step("DBA 不能创建可管理 SAO 的用户", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_admin_sao ADMIN sao; ROLLBACK",
+                 "执行失败，不能关联等保管理员", sql_fails("related to mac administrators")),
+        sql_step("DBA 可修改普通用户 CREATEDB 属性", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_alter; ALTER USER fbase_regress_off_alter CREATEDB; "
+                 "SELECT rolcreatedb FROM pg_roles WHERE rolname = 'fbase_regress_off_alter'; ROLLBACK",
+                 "返回 true，且事务回滚后不保留属性修改",
+                 output_contains("BEGIN", "CREATE ROLE", "ALTER ROLE", "t", "ROLLBACK")),
+        sql_step("DBA 可修改普通用户密码", "postgres",
+                 "BEGIN; CREATE USER fbase_regress_off_password_alter; "
+                 "ALTER USER fbase_regress_off_password_alter PASSWORD 'A1a123456'; ROLLBACK",
+                 "返回 ALTER ROLE，且事务回滚后不保留密码修改",
+                 output_contains("BEGIN", "CREATE ROLE", "ALTER ROLE", "ROLLBACK")),
+        sql_step("DBA 不能修改 SSO 的 CREATEROLE 属性", "postgres",
+                 "BEGIN; ALTER USER sso CREATEROLE; ROLLBACK",
+                 "转测文档 5.3.1.1 要求：除无密码时设置初始密码外，DBA 不能对 SSO 执行任何 ALTER；"
+                 "CREATEROLE 必须失败。若产品错误放行，事务仍会回滚。",
+                 sql_fails("only sso can change itself's configurations"),
+                 continue_on_failure=True),
+        sql_step("DBA 不能修改 SAO 的 CREATEROLE 属性", "postgres",
+                 "BEGIN; ALTER USER sao CREATEROLE; ROLLBACK",
+                 "转测文档 5.3.1.1 要求：除无密码时设置初始密码外，DBA 不能对 SAO 执行任何 ALTER；"
+                 "CREATEROLE 必须失败。若产品错误放行，事务仍会回滚。",
+                 sql_fails("only sao can change itself's configurations"),
+                 continue_on_failure=True),
+    ],
+    "teardown": "settings fixture 恢复 fdb.separate_user 并 reload；所有普通用户创建和修改均在事务中回滚。"
+                "当前环境中 SSO、SAO 已有密码，文档中“无密码时 DBA 可设置初始密码”的条件分支不在本用例中伪造。",
+}

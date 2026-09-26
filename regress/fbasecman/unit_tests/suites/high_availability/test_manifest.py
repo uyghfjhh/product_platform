@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from suites.high_availability import suite
-from suites.high_availability.cluster_ops import NodeController
+from products.fbasecman.environment.cluster_ops import NodeController
 from suites.high_availability.console_parser import (
     ConsoleAssertionError,
     ConsoleSnapshot,

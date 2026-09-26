@@ -12,10 +12,10 @@ class SanitizerTest(unittest.TestCase):
         with patch("framework.environment.sanitizer.load_regression_config", return_value=env), \
              patch("framework.environment.sanitizer.create_environment_provider") as create:
             create.return_value.heal.side_effect = RuntimeError("cluster cannot start")
-            self.assertEqual(
-                {"status": "FAILED", "reason": "cluster cannot start"},
-                preflight_health_check(Path("/repo")),
-            )
+            result = preflight_health_check(Path("/repo"))
+            self.assertEqual("FAILED", result["status"])
+            self.assertEqual("cluster cannot start", result["reason"])
+            self.assertIn("status_text", result["diagnostics"])
             create.return_value.heal.side_effect = None
             create.return_value.heal.return_value = {
                 "health": {"mmr_streaming": "UNAVAILABLE: connection refused"}

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -13,15 +14,30 @@ from pydantic import BaseModel, Field
 
 from .actions import ACTIONS, TERMINAL, actions_for_environment
 from .catalog import get_product, list_products
-from .cman_artifacts import case_artifacts, case_log, export_source_report, recent_case_statuses
 from .config import Settings, load_settings
 from .database import execute_query, list_columns, list_objects
-from .discovery import discover_cases
-from .fbasecman_profile import legacy_root, profile_paths, save_profile
-from .license import LicenseInput, generate, options
+from .discovery import discover_cases, validate_target
+from .license import (
+    LicenseInput,
+    change_key_password,
+    delete_key,
+    generate,
+    generate_key,
+    key_metadata,
+    options,
+    revoke_key,
+)
+from .product_adapters.fbasecman import (
+    case_artifacts,
+    case_log,
+    export_source_report,
+    legacy_root,
+    profile_paths,
+    recent_case_statuses,
+    save_profile,
+)
 from .storage import ConflictError, Store
 from .topology import configured_topology, observed_status
-
 
 IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
 TARGET = re.compile(r"^[A-Za-z0-9_.,:-]{1,160}$")
@@ -58,6 +74,20 @@ class FbasecmanProfileInput(BaseModel):
     mmr1_port: int = Field(default=15011, ge=1024, le=65500)
     data_root: str = Field(default="/home/postgres/product_platform/fbasecman_regress")
     license_file: str = Field(default="/home/postgres/license/license.dat")
+
+
+class LicenseKeyCreateInput(BaseModel):
+    version: str = Field(pattern=r"^1\.[1-9][0-9]*$")
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class LicenseKeyPasswordInput(BaseModel):
+    old_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+
+class LicenseKeyDeleteInput(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
 
 
 def public_task(task: dict) -> dict:
@@ -105,9 +135,52 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
             for item_id, root, entry in items
         ]
 
+    @app.get("/api/v1/diagnostics/availability")
+    def diagnostic_availability():
+        return {
+            "configured": bool(os.environ.get("OPENAI_API_KEY")),
+            "model": os.environ.get("PRODUCT_PLATFORM_AI_MODEL", "gpt-6-astra"),
+        }
+
     @app.get("/api/v1/licenses/options")
     def license_options():
         return options(settings)
+
+    @app.get("/api/v1/licenses/keys/{version}")
+    def license_key_metadata(version: str):
+        try:
+            return key_metadata(settings, version)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys")
+    def license_key_generate(payload: LicenseKeyCreateInput):
+        try:
+            return generate_key(settings, payload.version, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys/{version}/password")
+    def license_key_password(version: str, payload: LicenseKeyPasswordInput):
+        try:
+            return change_key_password(settings, version, payload.old_password, payload.new_password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/licenses/keys/{version}")
+    def license_key_delete(version: str, payload: LicenseKeyDeleteInput):
+        try:
+            delete_key(settings, version, payload.password)
+            return {"deleted": version}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys/{version}/revoke")
+    def license_key_revoke(version: str, payload: LicenseKeyDeleteInput):
+        try:
+            return revoke_key(settings, version, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/v1/licenses/generate")
     def generate_license(request: LicenseInput):
@@ -153,6 +226,12 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if updated is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         return updated
+
+    @app.delete("/api/v1/environments/{environment_id}")
+    def delete_environment(environment_id: str):
+        if not store.delete_environment(environment_id):
+            raise HTTPException(status_code=404, detail="环境不存在")
+        return {"status": "ok", "deleted": environment_id}
 
     @app.get("/api/v1/environments/{environment_id}/actions")
     def environment_actions(environment_id: str):
@@ -356,24 +435,29 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
             raise HTTPException(
                 status_code=422, detail="FBase 测试需要 mac 或 mmr 集群"
             )
-        if item.action == "tests.fbasecman":
-            valid = {case["target"] for case in discover_cases(settings, "fbasecman")}
-            valid.update({case.split(".", 1)[0] for case in valid})
-            valid.add("failed")
-            if target not in valid:
-                raise HTTPException(status_code=422, detail="未知 fbasecman 用例或套件")
-        task = store.create_task(
+        if item.action in {"tests.fbasecman", "tests.fbase"}:
+            product_id = environment["product_id"]
+            if not validate_target(settings, product_id, target):
+                detail = "未知 fbasecman 用例或套件" if item.action == "tests.fbasecman" else "未知 FBase 测试目标"
+                raise HTTPException(status_code=422, detail=detail)
+        if item.action == "diagnostics.analyze" and store.get_result(
+            environment["product_id"], environment["id"], target,
+            item.parameters.get("profile", "default"),
+        ) is None:
+            raise HTTPException(status_code=404, detail="当前环境没有该测试目标的结果")
+        task, created = store.create_task_once(
             item.environment_id,
             item.action,
             target,
             item.parameters,
             item.submission_key,
         )
-        try:
-            enqueuer(task["id"])
-        except Exception as exc:
-            store.transition_task(task["id"], ("QUEUED",), "FAILED", reason="任务入队失败")
-            raise HTTPException(status_code=503, detail="任务入队失败") from exc
+        if created:
+            try:
+                enqueuer(task["id"])
+            except Exception as exc:
+                store.finish_task(task["id"], ("QUEUED",), "FAILED", "任务入队失败")
+                raise HTTPException(status_code=503, detail="任务入队失败") from exc
         return public_task(task)
 
     @app.get("/api/v1/operations")
@@ -453,6 +537,16 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if store.get_environment(environment_id) is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         return store.list_results(environment_id)
+
+    @app.get("/api/v1/environments/{environment_id}/diagnostics/{target}")
+    def diagnosis(environment_id: str, target: str, profile: str = "default"):
+        environment = store.get_environment(environment_id)
+        if environment is None:
+            raise HTTPException(status_code=404, detail="环境不存在")
+        value = store.get_diagnosis(environment["product_id"], environment_id, target, profile)
+        if value is None:
+            raise HTTPException(status_code=404, detail="尚无 AI 诊断")
+        return value
 
     if settings.frontend_dist.is_dir():
         app.mount(

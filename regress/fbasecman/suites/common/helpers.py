@@ -2,7 +2,6 @@
 
 
 import concurrent.futures
-import json
 import os
 import re
 import shlex
@@ -15,7 +14,8 @@ from framework.clients.psql import build_psql_command
 from framework.configuration import load_regression_config
 from framework.execution.command import run_logged_command
 from framework.reporting import ReportCheck, ReportDocument, ReportStep, render_report
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
+from suites.ha_commands.runtime import HaCommandFailure
 from .manifest import COMMON_CASES, case_items, find_case, validate_manifest
 
 
@@ -123,7 +123,7 @@ def _has_chinese(text):
     return any('\u4e00' <= char <= '\u9fff' for char in text)
 
 
-class CommonRuntime(HaCommandRuntime):
+class CommonRuntime(FbasecmanCaseRuntime):
     """Execution context and high-quality report generation for the common suite."""
 
     def __init__(self, root, case):
@@ -333,9 +333,8 @@ class CommonRuntime(HaCommandRuntime):
             "reason": reason,
             "source_sections": self.case.source_sections,
         }
-        (self.run_root / "summary.json").write_text(
-            json.dumps(summary_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
-        )
+        from framework.persistence.atomic import write_json
+        write_json(self.run_root / "summary.json", summary_data)
 
 
 

@@ -1,0 +1,62 @@
+ port  
+-------
+ 10011
+(1 row)
+
+ inet_server_addr 
+------------------
+ 192.168.0.15
+(1 row)
+
+INSERT 0 1
+INSERT 0 1
+ id | name 
+----+------
+ 12 | name
+(1 row)
+
+ id | name 
+----+------
+ 13 | name
+(1 row)
+
+SET
+ port  
+-------
+ 10012
+(1 row)
+
+ inet_server_addr 
+------------------
+ 192.168.0.15
+(1 row)
+
+ id | name 
+----+------
+  1 | name
+(1 row)
+
+psql:switch_test.sql:22: ERROR:  cannot execute INSERT in a read-only transaction
+psql:switch_test.sql:24: ERROR:  cannot execute DELETE in a read-only transaction
+ pg_sleep 
+----------
+ 
+(1 row)
+
+SET
+ port  
+-------
+ 10011
+(1 row)
+
+ inet_server_addr 
+------------------
+ 192.168.0.15
+(1 row)
+
+ id | name 
+----+------
+ 12 | name
+(1 row)
+
+DELETE 2

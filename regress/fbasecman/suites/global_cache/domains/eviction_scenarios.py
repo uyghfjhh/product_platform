@@ -59,7 +59,13 @@ from suites.global_cache.drivers import (
 from suites.global_cache.paths import asset_path as _global_cache_asset_path
 
 from suites.global_cache.domains.common_assertions import _stats_change_text
-from suites.global_cache.domains.driver_cases import _run_libpq_case, _append_driver_log
+from suites.global_cache.domains.driver_cases import (
+    _run_libpq_case,
+    _append_driver_log,
+    _assert_unnamed_overwrite,
+)
+from suites.global_cache.domains.capacity import ps_limit_replacements as _ps_limit_replacements
+from suites.global_cache.waits import wait_target_entries_unref as _wait_target_entries_unref
 def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_state):
     global_limit = int(rt.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
     backend_limit = int(rt.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))

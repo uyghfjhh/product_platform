@@ -1,0 +1,358 @@
+=== Test 1.1 ===
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_1_1_1 的结果 ===
+id=111 name=read_1_1_1 
+=== 查询 name = read_1_1_2 的结果 ===
+id=112 name=read_1_1_2 
+=== 查询 name = read_1_1_3 的结果 ===
+id=113 name=read_1_1_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+
+=== Test 1.2 ===
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_1_2_1 的结果 ===
+id=121 name=read_1_2_1 
+=== 查询 name = read_1_2_2 的结果 ===
+id=122 name=read_1_2_2 
+=== 查询 name = read_1_2_3 的结果 ===
+id=123 name=read_1_2_3 
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+
+=== Test 1.3 ===
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_1_3_1 的结果 ===
+id=131 name=read_1_3_1 
+=== 查询 name = read_1_3_2 的结果 ===
+id=132 name=read_1_3_2 
+=== 查询 name = read_1_3_3 的结果 ===
+id=133 name=read_1_3_3 
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+
+=== Test 2.1 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=2101, 影响行数=1
+插入 id=2102, 影响行数=1
+插入 id=2103, 影响行数=1
+删除 name=write_2_1_1, 影响行数=1
+删除 name=write_2_1_2, 影响行数=1
+删除 name=write_2_1_3, 影响行数=1
+
+=== Test 2.2 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=2201, 影响行数=1
+插入 id=2202, 影响行数=1
+插入 id=2203, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_2_2_1, 影响行数=1
+删除 name=write_2_2_2, 影响行数=1
+删除 name=write_2_2_3, 影响行数=1
+
+=== Test 2.3 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=2301, 影响行数=1
+插入 id=2302, 影响行数=1
+插入 id=2303, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_2_3_1, 影响行数=1
+删除 name=write_2_3_2, 影响行数=1
+删除 name=write_2_3_3, 影响行数=1
+
+=== Test 3.1 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=3101, 影响行数=1
+插入 id=3102, 影响行数=1
+插入 id=3103, 影响行数=1
+删除 name=write_3_1_1, 影响行数=1
+删除 name=write_3_1_2, 影响行数=1
+删除 name=write_3_1_3, 影响行数=1
+
+=== Test 3.2 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=3201, 影响行数=1
+插入 id=3202, 影响行数=1
+插入 id=3203, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_3_2_1, 影响行数=1
+删除 name=write_3_2_2, 影响行数=1
+删除 name=write_3_2_3, 影响行数=1
+
+=== Test 3.3 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=3301, 影响行数=1
+插入 id=3302, 影响行数=1
+插入 id=3303, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_3_3_1, 影响行数=1
+删除 name=write_3_3_2, 影响行数=1
+删除 name=write_3_3_3, 影响行数=1
+
+=== Test 4.1 ===
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_4_1_1 的结果 ===
+id=411 name=read_4_1_1 
+=== 查询 name = read_4_1_2 的结果 ===
+id=412 name=read_4_1_2 
+=== 查询 name = read_4_1_3 的结果 ===
+id=413 name=read_4_1_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=4101, 影响行数=1
+插入 id=4102, 影响行数=1
+插入 id=4103, 影响行数=1
+删除 name=write_4_1_1, 影响行数=1
+删除 name=write_4_1_2, 影响行数=1
+删除 name=write_4_1_3, 影响行数=1
+
+=== Test 4.2 ===
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_4_2_1 的结果 ===
+id=421 name=read_4_2_1 
+=== 查询 name = read_4_2_2 的结果 ===
+id=422 name=read_4_2_2 
+=== 查询 name = read_4_2_3 的结果 ===
+id=423 name=read_4_2_3 
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=4201, 影响行数=1
+插入 id=4202, 影响行数=1
+插入 id=4203, 影响行数=1
+删除 name=write_4_2_1, 影响行数=1
+删除 name=write_4_2_2, 影响行数=1
+删除 name=write_4_2_3, 影响行数=1
+
+=== Test 4.3 ===
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_4_3_1 的结果 ===
+id=431 name=read_4_3_1 
+=== 查询 name = read_4_3_2 的结果 ===
+id=432 name=read_4_3_2 
+=== 查询 name = read_4_3_3 的结果 ===
+id=433 name=read_4_3_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=4301, 影响行数=1
+插入 id=4302, 影响行数=1
+插入 id=4303, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_4_3_1, 影响行数=1
+删除 name=write_4_3_2, 影响行数=1
+删除 name=write_4_3_3, 影响行数=1
+
+=== Test 4.4 ===
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_4_4_1 的结果 ===
+id=441 name=read_4_4_1 
+=== 查询 name = read_4_4_2 的结果 ===
+id=442 name=read_4_4_2 
+=== 查询 name = read_4_4_3 的结果 ===
+id=443 name=read_4_4_3 
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=4401, 影响行数=1
+插入 id=4402, 影响行数=1
+插入 id=4403, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_4_4_1, 影响行数=1
+删除 name=write_4_4_2, 影响行数=1
+删除 name=write_4_4_3, 影响行数=1
+
+=== Test 5.1 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=5101, 影响行数=1
+插入 id=5102, 影响行数=1
+插入 id=5103, 影响行数=1
+删除 name=write_5_1_1, 影响行数=1
+删除 name=write_5_1_2, 影响行数=1
+删除 name=write_5_1_3, 影响行数=1
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_5_1_1 的结果 ===
+id=511 name=read_5_1_1 
+=== 查询 name = read_5_1_2 的结果 ===
+id=512 name=read_5_1_2 
+=== 查询 name = read_5_1_3 的结果 ===
+id=513 name=read_5_1_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+
+=== Test 5.2 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=5201, 影响行数=1
+插入 id=5202, 影响行数=1
+插入 id=5203, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_5_2_1, 影响行数=1
+删除 name=write_5_2_2, 影响行数=1
+删除 name=write_5_2_3, 影响行数=1
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_5_2_1 的结果 ===
+id=521 name=read_5_2_1 
+=== 查询 name = read_5_2_2 的结果 ===
+id=522 name=read_5_2_2 
+=== 查询 name = read_5_2_3 的结果 ===
+id=523 name=read_5_2_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+
+=== Test 5.3 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=5301, 影响行数=1
+插入 id=5302, 影响行数=1
+插入 id=5303, 影响行数=1
+删除 name=write_5_3_1, 影响行数=1
+删除 name=write_5_3_2, 影响行数=1
+删除 name=write_5_3_3, 影响行数=1
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_5_3_1 的结果 ===
+id=531 name=read_5_3_1 
+=== 查询 name = read_5_3_2 的结果 ===
+id=532 name=read_5_3_2 
+=== 查询 name = read_5_3_3 的结果 ===
+id=533 name=read_5_3_3 
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+
+=== Test 5.4 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=5401, 影响行数=1
+插入 id=5402, 影响行数=1
+插入 id=5403, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_5_4_1, 影响行数=1
+删除 name=write_5_4_2, 影响行数=1
+删除 name=write_5_4_3, 影响行数=1
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_5_4_1 的结果 ===
+id=541 name=read_5_4_1 
+=== 查询 name = read_5_4_2 的结果 ===
+id=542 name=read_5_4_2 
+=== 查询 name = read_5_4_3 的结果 ===
+id=543 name=read_5_4_3 
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+
+=== Test 6.1 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=6101, 影响行数=1
+插入 id=6102, 影响行数=1
+插入 id=6103, 影响行数=1
+删除 name=write_6_1_1, 影响行数=1
+删除 name=write_6_1_2, 影响行数=1
+删除 name=write_6_1_3, 影响行数=1
+读节点切换成功，当前为读节点 non-writer-leader,ip端口为: 192.168.0.15:10021
+=== 查询 name = read_6_1_1 的结果 ===
+id=611 name=read_6_1_1 
+=== 查询 name = read_6_1_2 的结果 ===
+id=612 name=read_6_1_2 
+=== 查询 name = read_6_1_3 的结果 ===
+id=613 name=read_6_1_3 
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+
+=== Test 6.2 ===
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+插入 id=6201, 影响行数=1
+插入 id=6202, 影响行数=1
+插入 id=6203, 影响行数=1
+写节点切换成功，当前为写节点 write-leader,ip端口为:  192.168.0.15:10011
+删除 name=write_6_2_1, 影响行数=1
+删除 name=write_6_2_2, 影响行数=1
+删除 name=write_6_2_3, 影响行数=1
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 name = read_6_2_1 的结果 ===
+id=621 name=read_6_2_1 
+=== 查询 name = read_6_2_2 的结果 ===
+id=622 name=read_6_2_2 
+=== 查询 name = read_6_2_3 的结果 ===
+id=623 name=read_6_2_3 
+读节点切换成功，当前为读节点 replica,ip端口为: 192.168.0.15:10012
+=== 查询 id < 1 的结果 ===
+=== 查询 id < 2 的结果 ===
+id=1 name=name 
+=== 查询 id < 3 的结果 ===
+id=1 name=name 
+id=2 name=name 
+共用同一个服务端连接
+
+=== heartTest start ===
+execute sql: SELECT 10086
+query result: 10086
+execute sql: SELECT 10086
+query result: 10086
+execute sql: SELECT 10086
+query result: 10086
+switch to READ ONLY transaction
+execute sql: SELECT 10086
+query result: 10086
+execute sql: SELECT 10086
+query result: 10086
+execute sql: SELECT 10086
+query result: 10086
+heartTest commit done
+=== heartTest end ===
