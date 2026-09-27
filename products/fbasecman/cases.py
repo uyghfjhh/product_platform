@@ -8,6 +8,7 @@ from platform_regress import Blocked
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                         SqlParseExtendedProtocolCase,
                                         JdbcConsoleHaCommandsCase)
+from products.fbasecman.native import SetNodeWriteIdempotentCase
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -84,6 +85,7 @@ NATIVE_CASES = {
     "sql_parse.heartbeat_bind_unsupported": HeartbeatBindCase("binary"),
     "ha_commands.sql_parse_extended_protocol": SqlParseExtendedProtocolCase(),
     "ha_commands.jdbc_console_ha_commands": JdbcConsoleHaCommandsCase(),
+    "ha_commands.set_node_write_idempotent": SetNodeWriteIdempotentCase(),
 }
 CASES = {item["target"]: NATIVE_CASES.get(
     item["target"], LegacyCmanCase(item["target"])) for item in CASE_METADATA}

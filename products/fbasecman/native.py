@@ -335,6 +335,39 @@ class JdbcConsoleHaCommandsCase:
         return True
 
 
+class SetNodeWriteIdempotentCase:
+    """Native platform host for the idempotent SET NODE WRITE case."""
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        before = config.read_bytes()
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        def query(sql):
+            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
+                                    "-p", str(port), "-U", "admin", "-d", "console",
+                                    "-c", sql], timeout_seconds=30)
+        initial = query("SHOW GROUP_ROUTING mmr_group;")
+        command = query("SET NODE WRITE pg_2 IN GROUP mmr_group;")
+        after = query("SHOW GROUP_ROUTING mmr_group;")
+        unchanged = config.read_bytes() == before
+        output = "\n".join((initial.stdout, command.stdout, after.stdout))
+        passed = (initial.returncode == 0 and command.returncode == 0 and after.returncode == 0
+                  and all(item in initial.stdout for item in ("pg_cluster_2", "pg_2", "write-leader"))
+                  and ("SET NODE" in command.stdout or "NO CONFIG CHANGE" in command.stdout)
+                  and "ERROR" not in command.stdout and unchanged
+                  and all(item in after.stdout for item in ("mmr_group", "active", "pg_cluster_2", "pg_2", "write-leader")))
+        context.attach_text("set-node-write-output.txt", output)
+        context.step("idempotent-verdict", "核对 SET NODE WRITE 幂等命令",
+                     status="PASS" if passed else "FAIL",
+                     details={"config_unchanged": unchanged, "output": output})
+        if not passed:
+            raise AssertionError("SET NODE WRITE 幂等用例与旧判定不一致")
+        return True
+
+
 class SavepointRecoveryCase:
     """Native Extended Query savepoint recovery verification."""
 

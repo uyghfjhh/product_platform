@@ -147,6 +147,7 @@ class FbasecmanProvider:
                 "sql_parse.heartbeat_bind_unsupported",
                 "ha_commands.sql_parse_extended_protocol",
                 "ha_commands.jdbc_console_ha_commands",
+                "ha_commands.set_node_write_idempotent",
             }
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():

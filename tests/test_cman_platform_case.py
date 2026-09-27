@@ -86,3 +86,8 @@ def test_savepoint_protocol_case_is_native():
 def test_jdbc_console_case_is_native():
     module = load_cases()
     assert type(module.CASES["ha_commands.jdbc_console_ha_commands"]).__name__ == "JdbcConsoleHaCommandsCase"
+
+
+def test_set_node_write_idempotent_case_is_native():
+    module = load_cases()
+    assert type(module.CASES["ha_commands.set_node_write_idempotent"]).__name__ == "SetNodeWriteIdempotentCase"
