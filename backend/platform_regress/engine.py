@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import time
 import uuid
@@ -87,6 +88,7 @@ class CaseContext:
         self._sql_sequence = 0
         self._evidence: list[str] = []
         self._cleanup_actions: list[Callable[[], None]] = []
+        self._processes: list[subprocess.Popen] = []
         output_dir.mkdir(parents=True, exist_ok=True)
         # The directory contains only the current result. A rerun starts a new
         # event sequence; previous attachments remain unreferenced until pruned.
@@ -325,6 +327,105 @@ class CaseContext:
         })
         self.check_cancel()
         return result
+
+    def tcp_exchange(self, host: str, port: int, payload: bytes = b"",
+                     *, timeout_seconds: float = 5,
+                     expected_bytes: int | None = None,
+                     until_eof: bool = False) -> bytes:
+        """Exchange bytes with a product endpoint and retain the response."""
+        if not host or not 1 <= port <= 65535:
+            raise ValueError("协议端点无效")
+        self.check_cancel()
+        started = time.monotonic()
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds) as connection:
+                connection.settimeout(timeout_seconds)
+                if payload:
+                    connection.sendall(payload)
+                chunks = []
+                received = 0
+                while not until_eof and (expected_bytes is None or received < expected_bytes):
+                    chunk = connection.recv(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    received += len(chunk)
+                    if expected_bytes is None:
+                        break
+                if until_eof:
+                    while True:
+                        chunk = connection.recv(65536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                data = b"".join(chunks)
+        except OSError as exc:
+            self.emit("protocol.failed", {"host": host, "port": port, "reason": str(exc)})
+            raise
+        reference = self.attach_text(
+            f"protocol-{self._sql_sequence + 1}.json",
+            json.dumps({"host": host, "port": port, "sent_bytes": len(payload),
+                        "received_bytes": len(data), "duration_seconds": time.monotonic() - started,
+                        "response_hex": data.hex()}, ensure_ascii=False, indent=2) + "\n")
+        self.emit("protocol.finished", {"host": host, "port": port,
+                                         "received_bytes": len(data), "evidence": reference})
+        return data
+
+    def tcp_probe(self, host: str, port: int, payload: bytes = b"",
+                  *, timeout_seconds: float = 5) -> bytes:
+        """Compatibility name for a one-response TCP exchange."""
+        return self.tcp_exchange(host, port, payload, timeout_seconds=timeout_seconds)
+
+    def start_process(self, argv: list[str], *, cwd: Path | None = None,
+                      env: dict[str, str] | None = None,
+                      ready_host: str | None = None, ready_port: int | None = None,
+                      timeout_seconds: float = 30) -> subprocess.Popen:
+        """Start a product-owned executable and stop it during SDK cleanup."""
+        if not argv or any(not item for item in argv):
+            raise ValueError("进程参数无效")
+        self.check_cancel()
+        log_path = self.output_dir / "process.log"
+        log_path = self.output_dir / ("process-%d.log" % (len(self._processes) + 1))
+        log_handle = log_path.open("a", encoding="utf-8")
+        try:
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=log_handle, stderr=subprocess.STDOUT,
+                                       start_new_session=True, text=True)
+        except Exception:
+            log_handle.close()
+            raise
+        self._processes.append(process)
+        self.defer_cleanup(lambda: self._stop_process(process, log_handle))
+        self.emit("process.started", {"executable": Path(argv[0]).name, "pid": process.pid})
+        deadline = time.monotonic() + timeout_seconds
+        if ready_host and ready_port:
+            while time.monotonic() < deadline:
+                self.check_cancel()
+                if process.poll() is not None:
+                    raise RuntimeError(f"产品进程提前退出: rc={process.returncode}")
+                try:
+                    with socket.create_connection((ready_host, ready_port), timeout=0.2):
+                        self.emit("process.ready", {"pid": process.pid,
+                                                     "host": ready_host, "port": ready_port})
+                        return process
+                except OSError:
+                    time.sleep(0.1)
+            raise TimeoutError(f"产品进程未在 {timeout_seconds:g} 秒内就绪")
+        return process
+
+    @staticmethod
+    def _stop_process(process: subprocess.Popen, log_handle) -> None:
+        """Terminate the complete process group and close its log safely."""
+        try:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+        finally:
+            log_handle.close()
 
 
 class RegressionEngine:

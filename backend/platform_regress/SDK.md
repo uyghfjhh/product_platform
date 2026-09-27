@@ -21,6 +21,11 @@ class VerifyCluster(ProductCase):
 环境节点由平台绑定的 pgcluster 环境注入，产品代码不创建 PostgreSQL
 数据目录，也不负责环境生命周期。
 
+需要验证产品自身 TCP 协议的用例可以使用 `start_process()` 启动产品二进制，
+由 SDK 等待监听端口并在用例结束时停止整个进程组；`tcp_probe()` 负责
+协议字节交换并归档收发内容。产品仍负责配置文件和协议断言，平台负责运行
+隔离、取消、进程回收和统一证据。
+
 ## 结果和失败语义
 
 - `True` 表示业务 PASS，`False` 或断言异常表示 FAIL。

@@ -318,3 +318,28 @@ def test_fixture_cleanup_runs_when_case_fails(tmp_path, monkeypatch):
     result = RegressionEngine().run(FailingCase(), context)
     assert result.verdict == "FAIL"
     assert calls == ["cleanup"]
+
+
+def test_platform_process_and_tcp_protocol_lifecycle(tmp_path):
+    import socket
+    import time
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()
+    source = (
+        "import socket,sys\n"
+        "s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n"
+        "s.bind(('127.0.0.1',int(sys.argv[1]))); s.listen()\n"
+        "while True:\n"
+        " c,_=s.accept(); data=c.recv(1024); c.sendall(b'ACK:'+data); c.close()\n"
+    )
+    context = CaseContext("demo.protocol", tmp_path)
+    process = context.start_process([sys.executable, "-c", source, str(port)],
+                                    ready_host="127.0.0.1", ready_port=port)
+    response = context.tcp_exchange("127.0.0.1", port, b"probe", expected_bytes=9)
+    assert response == b"ACK:probe"
+    context.cleanup_fixtures()
+    assert process.poll() is not None
+    assert any("protocol-" in item for item in context.evidence)
