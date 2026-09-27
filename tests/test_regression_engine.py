@@ -343,3 +343,4 @@ def test_platform_process_and_tcp_protocol_lifecycle(tmp_path):
     context.cleanup_fixtures()
     assert process.poll() is not None
     assert any("protocol-" in item for item in context.evidence)
+    assert any(item.endswith("process-1.log") for item in context.evidence)

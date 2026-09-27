@@ -89,6 +89,7 @@ class CaseContext:
         self._evidence: list[str] = []
         self._cleanup_actions: list[Callable[[], None]] = []
         self._processes: list[subprocess.Popen] = []
+        self._process_logs: list[Path] = []
         output_dir.mkdir(parents=True, exist_ok=True)
         # The directory contains only the current result. A rerun starts a new
         # event sequence; previous attachments remain unreferenced until pruned.
@@ -115,6 +116,12 @@ class CaseContext:
             except Exception as exc:
                 errors.append(str(exc))
         self._cleanup_actions.clear()
+        for index, path in enumerate(self._process_logs, 1):
+            if path.is_file():
+                try:
+                    self.attach_file(f"process-{index}.log", path)
+                except Exception as exc:
+                    errors.append(f"无法归档产品进程日志: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -386,6 +393,7 @@ class CaseContext:
         self.check_cancel()
         log_path = self.output_dir / "process.log"
         log_path = self.output_dir / ("process-%d.log" % (len(self._processes) + 1))
+        self._process_logs.append(log_path)
         log_handle = log_path.open("a", encoding="utf-8")
         try:
             process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
