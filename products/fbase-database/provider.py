@@ -23,6 +23,9 @@ SHARED_ENGINE_TARGETS = frozenset({
     "mac.separation_of_duties.dba_metadata_index_restrictions",
     "mac.separation_of_duties.dba_metadata_sequence_restrictions",
     "mac.separation_of_duties.dba_metadata_view_restrictions",
+    "mac.separation_of_duties.dba_security_configuration_restrictions",
+    "mac.tlcp.server_client_generation",
+    "mmr.node_function_control.two_phase_change_unsupported",
 })
 
 

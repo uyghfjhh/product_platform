@@ -2,8 +2,6 @@
 
 import time
 from pathlib import Path
-
-from framework.configuration import load_regression_config
 from platform_regress.suites.contracts import SuiteRunResult
 
 
@@ -26,8 +24,7 @@ def run_runtime_case(root, case, runtime_type, executors, pass_reason,
             except Exception:
                 runtime.stop()
         else:
-            env = load_regression_config(Path(root))
-            run_root = env.output_dir / "runs" / case.suite_id / case.name
+            run_root = Path(root) / "output" / "runs" / case.suite_id / case.name
             run_root.mkdir(parents=True, exist_ok=True)
             report = (
                 "Test: %s\nStatus: FAIL\nSummary: %s\nFailure: %s\n"

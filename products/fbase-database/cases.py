@@ -276,6 +276,29 @@ class MmrReadOnlyDeclarativeCase:
         return True
 
 
+class DeclarativeSqlCase:
+    """Execute a catalog case whose complete contract is platform SQL steps.
+
+    This is intentionally strict: only a plain cluster fixture, postgres
+    connections and SDK-supported SQL assertions qualify.  Cases needing
+    settings, roles, sessions or cluster actions remain explicit product
+    implementations until those fixture protocols are available in the SDK.
+    """
+
+    def __init__(self, definition):
+        self.definition = definition
+
+    def setup(self, context):
+        nodes = sorted({step["node"].split(":")[-1]
+                        for step in self.definition["steps"]})
+        require_nodes(context, nodes)
+
+    def run(self, context):
+        for index, step in enumerate(self.definition["steps"], 1):
+            run_sql_step(context, step, index, step["node"].split(":")[-1])
+        return True
+
+
 def load_mmr_read_only_cases():
     path = Path(__file__).parent / "regression" / "cases.json"
     definitions = {case["id"]: case for case in json.loads(path.read_text(encoding="utf-8"))["cases"]}
@@ -295,6 +318,29 @@ def load_mmr_read_only_cases():
 
 
 MMR_READ_ONLY_CASES = load_mmr_read_only_cases()
+
+
+def load_native_sql_cases():
+    """Batch-register only cases fully expressible by the platform SDK."""
+    path = Path(__file__).parent / "regression" / "cases.json"
+    definitions = {case["id"]: case for case in json.loads(
+        path.read_text(encoding="utf-8"))["cases"]}
+    supported = {"rows_equal", "output_contains_text", "sql_error", "sql_fails",
+                 "command_succeeds"}
+    selected = {}
+    for target, definition in definitions.items():
+        steps = definition.get("steps") or []
+        if (definition.get("fixtures") != ["cluster"] or not steps
+                or any(step.get("type") != "sql"
+                       or step.get("user", "postgres") != "postgres"
+                       or step.get("assertion", {}).get("type") not in supported
+                       for step in steps)):
+            continue
+        selected[target] = definition
+    return selected
+
+
+NATIVE_SQL_CASES = load_native_sql_cases()
 
 
 class LegacyFbaseCase:
@@ -361,6 +407,8 @@ CASES = {
 }
 CASES.update({target: MacMetadataDenialCase(case) for target, case in MAC_METADATA_DENIALS.items()})
 CASES.update({target: MmrReadOnlyDeclarativeCase(case) for target, case in MMR_READ_ONLY_CASES.items()})
+CASES.update({target: DeclarativeSqlCase(case) for target, case in NATIVE_SQL_CASES.items()
+              if target not in CASES})
 EXPORTED_TARGETS = {
     case["id"] for case in json.loads(
         (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8")

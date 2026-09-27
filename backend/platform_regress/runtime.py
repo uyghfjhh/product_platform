@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-
 from platform_regress.evidence import EvidenceStep, StepJournal
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.locking import ExclusiveFileLock
@@ -70,23 +68,27 @@ class CaseRuntime(object):
     lock_name = None
 
     def __init__(self, root, case, platform_context: RegressionContext | None = None):
-        # Compatibility loader is imported only when a product explicitly
-        # instantiates this runtime; importing platform_regress stays product-neutral.
-        from framework.configuration import load_regression_config
         self.root = Path(root)
         self.case = case
         self.platform_context = platform_context
-        self.env = load_regression_config(self.root)
-        # 环境上下文缺失说明 env setup 没跑过，直接失败并给出可操作提示
-        if not self.env.test_context_file.exists():
-            raise self.failure_class(
-                "missing %s, run ./run.sh env setup first" % self.env.test_context_file)
-        self.context = yaml.safe_load(
-            self.env.test_context_file.read_text(encoding="utf-8")) or {}
+        self.env = None
+        self.context = {}
+        if platform_context is not None:
+            self.context = {
+                "environment_id": platform_context.environment.id,
+                "product_id": platform_context.environment.product_id,
+                "deployment_target": platform_context.environment.deployment_target,
+                "host": platform_context.environment.host,
+                "port": platform_context.environment.port,
+                "database_name": platform_context.environment.database_name,
+                "database_user": platform_context.environment.database_user,
+            }
         self.suite_id = (getattr(case, "suite_name", None)
                          or getattr(case, "suite_id", None) or "suite")
         # 每次用例运行重建目录，保证报告工件不混入上一次结果
-        self.run_root = self.env.output_dir / "runs" / self.suite_id / case.name
+        output_root = (platform_context.output_dir if platform_context is not None
+                       else self.root / "output")
+        self.run_root = output_root / "runs" / self.suite_id / case.name
         if self.run_root.exists():
             shutil.rmtree(str(self.run_root))
         self.workdir = self.run_root / "workdir"
