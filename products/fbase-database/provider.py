@@ -30,6 +30,8 @@ SHARED_ENGINE_TARGETS = frozenset({
     "mac.separation_of_duties.role_membership_restrictions",
     "mac.separation_of_duties.sao_role_membership_restrictions",
     "mac.separation_of_duties.sso_role_membership_restrictions",
+    "mac.mac.table_creation_and_grants",
+    "mac.separation_of_duties.dba_object_privilege_separation",
 })
 
 

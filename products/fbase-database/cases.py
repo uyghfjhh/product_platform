@@ -299,14 +299,16 @@ class DeclarativeSqlCase:
         return True
 
 
-class RoleFixtureSqlCase(DeclarativeSqlCase):
-    """Platform-native SQL case with a disposable PostgreSQL role fixture."""
+class FixtureSqlCase(DeclarativeSqlCase):
+    """Platform-native SQL case with disposable role/table fixtures."""
 
     def setup(self, context):
         super().setup(context)
         node = self.definition["steps"][0]["node"].split(":")[-1]
         for fixture in self.definition.get("fixtures", [])[1:]:
             if fixture.get("type") != "roles":
+                if fixture.get("type") == "table":
+                    context.defer_drop_table(node, fixture["name"])
                 continue
             for role in fixture.get("create", []):
                 attributes = "LOGIN" if role.get("login") else role.get("attributes", "")
@@ -346,8 +348,9 @@ def load_native_sql_cases():
         steps = definition.get("steps") or []
         fixtures = definition.get("fixtures") or []
         valid_fixture = fixtures == ["cluster"] or (
-            len(fixtures) == 2 and fixtures[0] == "cluster"
-            and isinstance(fixtures[1], dict) and fixtures[1].get("type") == "roles"
+            len(fixtures) >= 2 and fixtures[0] == "cluster"
+            and all(isinstance(item, dict) and item.get("type") in {"roles", "table"}
+                    for item in fixtures[1:])
         )
         if (not valid_fixture or not steps
                 or any(step.get("type") != "sql"
@@ -360,10 +363,8 @@ def load_native_sql_cases():
 
 
 NATIVE_SQL_CASES = load_native_sql_cases()
-ROLE_FIXTURE_TARGETS = frozenset(
-    target for target, definition in NATIVE_SQL_CASES.items()
-    if len(definition.get("fixtures", [])) == 2
-)
+FIXTURE_TARGETS = frozenset(target for target, definition in NATIVE_SQL_CASES.items()
+                             if len(definition.get("fixtures", [])) > 1)
 
 
 class LegacyFbaseCase:
@@ -431,9 +432,9 @@ CASES = {
 CASES.update({target: MacMetadataDenialCase(case) for target, case in MAC_METADATA_DENIALS.items()})
 CASES.update({target: MmrReadOnlyDeclarativeCase(case) for target, case in MMR_READ_ONLY_CASES.items()})
 CASES.update({target: DeclarativeSqlCase(case) for target, case in NATIVE_SQL_CASES.items()
-              if target not in CASES and target not in ROLE_FIXTURE_TARGETS})
-CASES.update({target: RoleFixtureSqlCase(NATIVE_SQL_CASES[target])
-              for target in ROLE_FIXTURE_TARGETS if target not in CASES})
+              if target not in CASES and target not in FIXTURE_TARGETS})
+CASES.update({target: FixtureSqlCase(NATIVE_SQL_CASES[target])
+              for target in FIXTURE_TARGETS if target not in CASES})
 EXPORTED_TARGETS = {
     case["id"] for case in json.loads(
         (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8")

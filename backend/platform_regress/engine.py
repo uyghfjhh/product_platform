@@ -141,6 +141,12 @@ class CaseContext:
         self.sql(node, f"CREATE ROLE {name}{suffix}")
         self.defer_cleanup(lambda: self.sql(node, f"DROP ROLE IF EXISTS {name}"))
 
+    def defer_drop_table(self, node: str, name: str) -> None:
+        """Register cleanup for a table declared by a catalog fixture."""
+        if not name.replace("_", "").isalnum():
+            raise ValueError("表名无效")
+        self.defer_cleanup(lambda: self.sql(node, f"DROP TABLE IF EXISTS {name}"))
+
     def emit(self, kind: str, payload: dict[str, Any]) -> None:
         """Append one ordered fact before clients can observe the event."""
         self._sequence += 1
