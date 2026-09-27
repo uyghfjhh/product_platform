@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/generate-product-frontends.mjs",
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/generate-product-frontends.mjs && tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:browser": "node tests/browser-smoke.mjs"
   },

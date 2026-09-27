@@ -19,20 +19,37 @@ class Settings:
     license_vendor: str
 
     @property
+    def platform_dir(self) -> Path:
+        """Control-plane state; legacy data root is used for old test fixtures."""
+        candidate = self.data_dir / "platform"
+        return candidate if candidate.is_dir() else self.data_dir
+
+    @property
+    def environment_dir(self) -> Path:
+        """Environment profiles and evidence, separate from control state."""
+        candidate = self.data_dir / "environments"
+        return candidate if candidate.is_dir() else self.data_dir
+
+    @property
     def license_config(self) -> Path:
         return self.license_key_dir.parent / "config.json"
 
     @property
     def database(self) -> Path:
-        return self.data_dir / "platform.sqlite3"
+        return self.platform_dir / "platform.sqlite3"
 
     @property
     def queue_database(self) -> Path:
-        return self.data_dir / "queue.sqlite3"
+        return self.platform_dir / "queue.sqlite3"
 
     @property
     def frontend_dist(self) -> Path:
         return ROOT / "frontend" / "dist"
+
+    @property
+    def products_root(self) -> Path:
+        """Installed product packages discovered by the modern catalog."""
+        return ROOT / "products"
 
 
 def load_settings() -> Settings:
@@ -52,7 +69,7 @@ def load_settings() -> Settings:
         fbasecman_regress_root=Path(
             os.environ.get(
                 "PRODUCT_PLATFORM_CMAN_REGRESS_ROOT",
-                ROOT / "regress" / "fbasecman" if (ROOT / "regress" / "fbasecman").is_dir() else ROOT,
+                ROOT / "products" / "fbasecman" / "regression" / "legacy",
             )
         )
         .expanduser()
@@ -60,9 +77,7 @@ def load_settings() -> Settings:
         fbase_regress_root=Path(
             os.environ.get(
                 "PRODUCT_PLATFORM_FBASE_REGRESS_ROOT",
-                ROOT / "regress" / "fbase"
-                if (ROOT / "regress" / "fbase").is_dir()
-                else fly_root / "postgresql_for_fbase_dev" / "fbase_regress",
+                ROOT / "products" / "fbase-database" / "regression" / "legacy",
             )
         )
         .expanduser()

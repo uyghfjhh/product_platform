@@ -1,0 +1,48 @@
+id: fbase-database
+title: FBase 数据库
+plugin_api: v1
+provider: provider.py
+source:
+  env: PRODUCT_PLATFORM_FBASE_SOURCE_ROOT
+  default: ../../../postgresql_for_fbase_dev
+versions:
+  - id: "1.8"
+capabilities:
+  deployment: database-cluster
+  database: postgresql-compatible
+  tests: fbase-regression
+  diagnostics: fbase-diagnostics
+  license: fd-licenser
+test_profiles:
+  - id: mmr
+    title: 多活回归测试
+    suites: [mmr]
+    deployment_targets: ["mmr.*"]
+  - id: mac
+    title: 等保回归测试
+    suites: [mac]
+    deployment_targets: ["streaming.mac"]
+actions:
+  - id: database.check
+    title: 检查数据库连接
+    capability: database
+  - id: tests.fbase
+    title: 运行 FBase 用例
+    capability: tests
+    changes_environment: true
+    validate_target: true
+    parameters:
+      required: [cluster]
+      properties:
+        cluster:
+          type: string
+          enum: [mac, mmr]
+  - id: diagnostics.analyze
+    title: AI 分析当前测试结果
+    capability: diagnostics
+cli:
+  run: cli/run.sh
+license:
+  product_code: fbase
+  allowed_versions:
+    - "1.8"

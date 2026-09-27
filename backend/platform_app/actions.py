@@ -16,12 +16,10 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Settings
+from .config import ROOT, Settings
 from .diagnostics import diagnose
-from .event_contracts import SceneObservationError
-from .product_adapters.fbasecman import CaseProgressObserver, sync_current_results
-from .product_registry import DEPLOYMENT_ACTIONS, get_product_spec
-from .providers import command_for, observe_database, observe_runtime
+from .product_catalog import ProductManifestError, discover_products
+from .providers import command_for, observe_database, provider_for
 from .scene import (
     emit_action,
     emit_configured_scene,
@@ -32,6 +30,14 @@ from .scene import (
 from .storage import Store
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}
+
+# These lifecycle operations belong to the platform database deployment engine.
+DEPLOYMENT_ACTIONS = frozenset({
+    "deployment.validate", "deployment.status", "deployment.health",
+    "deployment.doctor", "deployment.heal", "deployment.create",
+    "deployment.start", "deployment.stop", "deployment.restart",
+    "deployment.clean", "deployment.failover", "deployment.rejoin",
+})
 
 
 @dataclass(frozen=True)
@@ -58,35 +64,47 @@ ACTIONS = {
         Action("deployment.clean", "清理集群", "deployment", True),
         Action("deployment.failover", "主备故障切换", "deployment", True),
         Action("deployment.rejoin", "重建旧主节点", "deployment", True),
-        Action("tests.fbasecman", "运行 fbasecman 用例", "tests", True),
-        Action("tests.prepare_fbasecman", "准备 fbasecman 测试夹具", "tests", True),
-        Action("tests.fbase", "运行 FBase 用例", "tests", True),
-        Action("stability.fbasecman", "运行 fbasecman 常稳", "stability", True),
         Action("diagnostics.analyze", "AI 分析当前测试结果", "diagnostics"),
     )
 }
 
 
-def actions_for_environment(environment: dict) -> list[dict]:
-    product = get_product_spec(environment["product_id"])
-    if product is None:
+def actions_for_environment(environment: dict, settings: Settings) -> list[dict]:
+    """Return actions declared by the installed product package.
+
+    Deployment lifecycle actions are platform capabilities and are added when
+    the installed product declares deployment and has a configuration.
+    """
+    try:
+        manifest = discover_products(settings.products_root).get(environment["product_id"])
+    except ProductManifestError as exc:
+        raise RuntimeError(f"产品目录校验失败: {exc}") from exc
+    if manifest is None:
         return []
-    allowed = set(product.actions)
-    if environment.get("deployment_config") and "deployment" in product.capabilities:
-        allowed.update(DEPLOYMENT_ACTIONS)
-    result = []
-    for action in ACTIONS.values():
-        if action.id not in allowed:
-            continue
-        result.append(
-            {
-                "id": action.id,
-                "title": action.title,
-                "capability": action.capability,
-                "changes_environment": action.changes_environment,
-            }
-        )
-    return result
+    declared = {item.id: item for item in manifest.actions}
+    if environment.get("deployment_config") and "deployment" in manifest.capabilities:
+        declared.update({item.id: item for item in ACTIONS.values() if item.id in DEPLOYMENT_ACTIONS})
+    return [
+        {"id": item.id, "title": item.title, "capability": item.capability,
+         "changes_environment": item.changes_environment}
+        for item in (declared[action_id] for action_id in sorted(declared))
+    ]
+
+
+def action_for_environment(settings: Settings, environment: dict, action_id: str) -> Action | None:
+    """Resolve current action metadata from the installed product declaration."""
+    allowed = next(
+        (item for item in actions_for_environment(environment, settings) if item["id"] == action_id),
+        None,
+    )
+    if allowed is None:
+        return None
+    if action_id in ACTIONS:
+        return ACTIONS[action_id]
+    return Action(
+        allowed["id"], allowed["title"], allowed["capability"],
+        allowed["changes_environment"],
+    )
 
 
 @contextmanager
@@ -114,7 +132,7 @@ def command_for_task(
     return spec.command, spec.cwd
 
 
-def _check_database(store: Store, task_id: str, environment: dict) -> None:
+def _check_database(store: Store, settings: Settings, task_id: str, environment: dict) -> None:
     host, port = environment["host"], environment["port"]
     store.add_event(
         task_id, "step.started", {"title": "探测数据库连接", "host": host, "port": port}
@@ -130,7 +148,7 @@ def _check_database(store: Store, task_id: str, environment: dict) -> None:
         {"title": "TCP 端口可连接", "host": host, "port": port, "state": "reachable"},
     )
 
-    for observation in observe_database(environment):
+    for observation in observe_database(settings, environment):
         store.add_event(task_id, "observation.captured", {
             "title": "数据库 SQL 可用" if observation.kind == "sql.version" else observation.kind,
             **observation.details, "state": observation.state,
@@ -141,7 +159,7 @@ def _check_database(store: Store, task_id: str, environment: dict) -> None:
 
 def _run_command(
     store: Store, task_id: str, command: list[str], cwd: Path,
-    changes_environment: bool, observer: CaseProgressObserver | None = None,
+    changes_environment: bool, observer=None,
 ) -> tuple[bool, str]:
     # 子进程组用于终止整条命令链；stdout/stderr 原样追加到本次证据文件。
     log_dir = store.path.parent / "operations"
@@ -159,9 +177,9 @@ def _run_command(
     )
     with log_path.open("w", encoding="utf-8") as log:
         env = os.environ.copy()
+        env["PRODUCT_PLATFORM_TASK_ID"] = task_id
         current_pp = env.get("PYTHONPATH", "")
-        repo_root = store.path.parent.parent
-        paths_to_add = [str(cwd), str(repo_root / "regress" / "fbasecman"), str(repo_root / "backend"), str(repo_root)]
+        paths_to_add = [str(cwd), str(ROOT / "backend"), str(ROOT)]
         env["PYTHONPATH"] = ":".join(p for p in paths_to_add if Path(p).is_dir()) + ((":" + current_pp) if current_pp else "")
         process = subprocess.Popen(
             command,
@@ -264,11 +282,14 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
     if environment is None:
         store.finish_task(task_id, ("RUNNING",), "FAILED", "环境已不存在")
         return
-    action = ACTIONS[task["action"]]
+    action = action_for_environment(settings, environment, task["action"])
+    if action is None:
+        store.finish_task(task_id, ("RUNNING",), "FAILED", "产品或动作已不可用")
+        return
     parameters = json.loads(task["parameters"])
     execution_finished = False
     try:
-        lock = nullcontext() if action.id == "diagnostics.analyze" else environment_lock(settings.data_dir, environment["id"])
+        lock = nullcontext() if action.id == "diagnostics.analyze" else environment_lock(settings.platform_dir, environment["id"])
         with lock:
             if action.id == "diagnostics.analyze":
                 result = store.get_result(environment["product_id"], environment["id"],
@@ -284,7 +305,7 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
             elif action.id == "database.check":
                 emit_configured_scene(store, settings, task_id, environment)
                 emit_action(store, task_id, environment, action.id, task["target"], "started")
-                _check_database(store, task_id, environment)
+                _check_database(store, settings, task_id, environment)
                 emit_action(store, task_id, environment, action.id, task["target"], "finished", True)
                 success, reason = True, "连接正常"
             else:
@@ -292,9 +313,12 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
                 command, cwd = command_for_task(
                     settings, environment, task["action"], task["target"], parameters
                 )
-                observer = (CaseProgressObserver(settings, environment["id"],
-                                                task["target"], time.time())
-                            if action.id == "tests.fbasecman" else None)
+                provider = provider_for(settings, environment["product_id"])
+                observer_factory = getattr(provider, "progress_observer", None)
+                observer = (
+                    observer_factory(settings, environment, action.id, task["target"], time.time())
+                    if callable(observer_factory) else None
+                )
                 emit_action(store, task_id, environment, action.id, task["target"], "started")
                 try:
                     success, reason = _run_command(
@@ -305,18 +329,9 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
                     emit_action(store, task_id, environment, action.id, task["target"], "finished")
                     raise
                 emit_action(store, task_id, environment, action.id, task["target"], "finished", success)
-                if action.id == "tests.fbase" and success:
-                    try:
-                        for observation in observe_runtime(settings, environment):
-                            emit_observation(
-                                store, task_id,
-                                observation.details.get("entity_id", endpoint_id(environment)),
-                                observation.state, observation.kind, observation.details,
-                            )
-                    except Exception as exc:  # noqa: BLE001 - observation cannot change test verdict
-                        store.add_event(task_id, "scene.observation.error", SceneObservationError(
-                            source="product.runtime", message=str(exc),
-                        ).model_dump())
+                after_command = getattr(provider, "after_command", None)
+                if callable(after_command):
+                    after_command(store, settings, environment, task_id, action.id, success)
                 if action.id.startswith("deployment.") and action.id != "deployment.validate":
                     emit_pgcluster_status(store, settings, task_id, environment)
         execution_finished = True
@@ -330,27 +345,10 @@ def run_task(store: Store, settings: Settings, task_id: str) -> None:
 
         # Publish the current result before the task becomes terminal. Readers
         # should never observe "finished" while still seeing the prior result.
-        if action.id == "tests.fbasecman":
-            count = sync_current_results(
-                store, settings, environment, task["target"],
-                current["started_at"] or current["created_at"],
-            )
-            if count == 0:
-                reason = "本次没有生成可核对的用例报告；见命令日志"
-                store.put_result(
-                    environment["product_id"], environment["id"], task["target"],
-                    parameters.get("profile", "default"), "ERROR", reason,
-                    str(settings.data_dir / "operations" / (task_id + ".log")),
-                )
-                if terminal == "SUCCEEDED":
-                    terminal = "FAILED"
-        elif action.id == "tests.fbase":
-            store.put_result(
-                environment["product_id"], environment["id"], task["target"],
-                parameters.get("profile", "default"),
-                "PASS" if terminal == "SUCCEEDED" else "ERROR", reason,
-                str(settings.data_dir / "operations" / (task_id + ".log")),
-            )
+        if action.capability == "tests":
+            publisher = getattr(provider_for(settings, environment["product_id"]), "publish_result", None)
+            if callable(publisher):
+                terminal, reason = publisher(store, settings, environment, current, terminal, reason)
     except Exception as exc:  # noqa: BLE001 - persist any worker failure as a terminal task
         terminal = (
             "RECOVERY_REQUIRED"

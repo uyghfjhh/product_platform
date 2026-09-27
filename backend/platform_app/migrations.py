@@ -2,7 +2,7 @@
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 V1 = (
     """CREATE TABLE IF NOT EXISTS environments (
@@ -80,7 +80,19 @@ V2 = (
     "CREATE INDEX IF NOT EXISTS diagnoses_environment_idx ON diagnoses(environment_id)",
 )
 
-MIGRATIONS = {1: V1, 2: V2}
+V3 = (
+    """CREATE TABLE IF NOT EXISTS regression_bindings (
+        product_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (product_id, profile_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS regression_bindings_environment_idx "
+    "ON regression_bindings(environment_id)",
+)
+
+MIGRATIONS = {1: V1, 2: V2, 3: V3}
 
 
 def migrate(connection: sqlite3.Connection) -> None:

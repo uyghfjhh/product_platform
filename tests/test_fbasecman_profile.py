@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from platform_app.api import create_app
 from platform_app.config import Settings
-from platform_app.product_adapters.fbasecman.profile import profile_paths
+from products.fbasecman.deployment.profile import profile_paths
 from platform_app.topology import configured_topology
 
 
@@ -17,8 +17,8 @@ def settings_for(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
         pgcluster_root=fly_root / "pgcluster",
-        fbasecman_regress_root=repo_root / "regress" / "fbasecman",
-        fbase_regress_root=repo_root / "regress" / "fbase",
+        fbasecman_regress_root=repo_root / "products" / "fbasecman" / "regression" / "legacy",
+        fbase_regress_root=repo_root / "products" / "fbase-database" / "regression" / "legacy",
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )
@@ -33,7 +33,7 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     }).raise_for_status()
     created = client.post("/api/v1/environments/cman-profile/fbasecman-profile", json={
         "mmr1_port": 15011,
-        "data_root": "/home/postgres/product_platform/fbasecman_regress/cman-profile",
+        "data_root": "/home/postgres/fbasecman_regress_v2_mmr/cman-profile",
         "license_file": "/home/postgres/license/license.dat",
     })
     assert created.status_code == 200, created.text
@@ -43,6 +43,9 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     environment = client.get("/api/v1/environments/cman-profile").json()
     assert environment["deployment_config"] == str(profile)
     assert environment["deployment_target"] == "mmr.fbasecman_regress"
+    client.put("/api/v1/regression-bindings/fbasecman/cman", json={
+        "environment_id": "cman-profile",
+    }).raise_for_status()
     graph = configured_topology(settings, environment)
     assert len(graph["nodes"]) == 14
     assert len(graph["edges"]) == 13
@@ -53,12 +56,12 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     })
     assert foreign.status_code == 422
     assert "不属于当前环境" in foreign.json()["detail"]
-    backend_dir = Path(__file__).resolve().parent.parent / "backend"
+    repo_root = Path(__file__).resolve().parent.parent
     check = subprocess.run([
-        sys.executable, "-m", "platform_app.product_adapters.fbasecman.legacy_runner",
+        sys.executable, "-m", "products.fbasecman.regression.run",
         "--source", str(settings.fbasecman_regress_root),
         "--override", str(override), "--check-profile", "guc",
-    ], cwd=backend_dir, capture_output=True, text=True, timeout=60)
+    ], cwd=repo_root, capture_output=True, text=True, timeout=60)
     assert check.returncode == 0, check.stdout + check.stderr
     assert not (settings.data_dir / "legacy_cman" / "cman-profile" / "output" / "env" / "test_context.yaml").exists()
     case_task = client.post("/api/v1/operations", json={

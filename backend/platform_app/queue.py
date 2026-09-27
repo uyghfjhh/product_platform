@@ -8,7 +8,7 @@ from .storage import Store
 
 
 settings = load_settings()
-settings.data_dir.mkdir(parents=True, exist_ok=True)
+settings.platform_dir.mkdir(parents=True, exist_ok=True)
 huey = SqliteHuey(
     "product-platform", filename=str(settings.queue_database), results=False
 )

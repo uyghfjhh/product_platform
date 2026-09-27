@@ -8,11 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .actions import ACTIONS, TERMINAL, actions_for_environment
+from .actions import TERMINAL, action_for_environment, actions_for_environment
+from .product_catalog import ProductManifestError, discover_products, validate_parameters
 from .catalog import get_product, list_products
 from .config import Settings, load_settings
 from .database import execute_query, list_columns, list_objects
@@ -27,15 +28,7 @@ from .license import (
     options,
     revoke_key,
 )
-from .product_adapters.fbasecman import (
-    case_artifacts,
-    case_log,
-    export_source_report,
-    legacy_root,
-    profile_paths,
-    recent_case_statuses,
-    save_profile,
-)
+from .product_routes import register_product_routes
 from .storage import ConflictError, Store
 from .topology import configured_topology, observed_status
 
@@ -64,16 +57,14 @@ class OperationInput(BaseModel):
     acknowledge_change: bool = False
 
 
+class RegressionBindingInput(BaseModel):
+    environment_id: str = Field(pattern=IDENTIFIER)
+
+
 class QueryInput(BaseModel):
     sql: str = Field(min_length=1, max_length=200000)
     max_rows: int = Field(default=200, ge=1, le=1000)
     port: int | None = Field(default=None, ge=1, le=65535)
-
-
-class FbasecmanProfileInput(BaseModel):
-    mmr1_port: int = Field(default=15011, ge=1024, le=65500)
-    data_root: str = Field(default="/home/postgres/product_platform/fbasecman_regress")
-    license_file: str = Field(default="/home/postgres/license/license.dat")
 
 
 class LicenseKeyCreateInput(BaseModel):
@@ -100,6 +91,25 @@ def public_task(task: dict) -> dict:
 def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     settings = settings or load_settings()
     store = Store(settings.database)
+    # Bind existing environments only when a product profile has exactly one
+    # compatible deployed topology. Ambiguous choices remain user decisions.
+    try:
+        installed = discover_products(settings.products_root)
+        for manifest in installed.values():
+            for profile in manifest.test_profiles:
+                if store.get_regression_binding(manifest.id, profile.id):
+                    continue
+                candidates = [environment for environment in store.list_environments()
+                              if environment["product_id"] == manifest.id
+                              and profile.accepts(environment["deployment_target"],
+                                                  profile.suites[0], profile.id)]
+                if len(candidates) == 1:
+                    try:
+                        store.put_regression_binding(manifest.id, profile.id, candidates[0]["id"])
+                    except ConflictError:
+                        pass
+    except ProductManifestError:
+        pass
     if enqueuer is None:
         from .queue import execute
 
@@ -117,7 +127,11 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
 
     @app.get("/api/v1/health")
     def health():
-        return {"status": "ok", "storage": "sqlite", "data_dir": str(settings.data_dir)}
+        return {
+            "status": "ok", "storage": "sqlite",
+            "platform_dir": str(settings.platform_dir),
+            "environment_dir": str(settings.environment_dir),
+        }
 
     @app.get("/api/v1/products")
     def products():
@@ -203,6 +217,27 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     def environments():
         return store.list_environments()
 
+    @app.get("/api/v1/regression-bindings")
+    def regression_bindings():
+        return store.list_regression_bindings()
+
+    @app.put("/api/v1/regression-bindings/{product_id}/{profile_id}")
+    def bind_regression(product_id: str, profile_id: str, item: RegressionBindingInput):
+        manifest = discover_products(settings.products_root).get(product_id)
+        profile = next((value for value in manifest.test_profiles if value.id == profile_id), None) if manifest else None
+        environment = store.get_environment(item.environment_id)
+        if profile is None or environment is None or environment["product_id"] != product_id:
+            raise HTTPException(status_code=422, detail="产品、测试 profile 或环境不匹配")
+        if not profile.accepts(environment["deployment_target"], profile.suites[0], profile.id):
+            raise HTTPException(status_code=422, detail="环境拓扑不适用于该回归测试")
+        return store.put_regression_binding(product_id, profile_id, item.environment_id)
+
+    @app.delete("/api/v1/regression-bindings/{product_id}/{profile_id}")
+    def unbind_regression(product_id: str, profile_id: str):
+        if not store.delete_regression_binding(product_id, profile_id):
+            raise HTTPException(status_code=404, detail="回归绑定不存在")
+        return {"status": "ok"}
+
     @app.post("/api/v1/environments", status_code=201)
     def add_environment(item: EnvironmentInput):
         if not get_product(item.product_id, settings):
@@ -238,7 +273,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         value = store.get_environment(environment_id)
         if value is None:
             raise HTTPException(status_code=404, detail="环境不存在")
-        return actions_for_environment(value)
+        return actions_for_environment(value, settings)
 
     @app.get("/api/v1/environments/{environment_id}/topology")
     def environment_topology(environment_id: str):
@@ -259,83 +294,6 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
             return observed_status(settings, value)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/api/v1/environments/{environment_id}/fbasecman-profile")
-    def fbasecman_profile(environment_id: str):
-        value = store.get_environment(environment_id)
-        if value is None or value["product_id"] != "fbasecman":
-            raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
-        deployment, override = profile_paths(settings, environment_id)
-        context = legacy_root(settings, environment_id) / "output" / "env" / "test_context.yaml"
-        return {"generated": deployment.is_file() and override.is_file(),
-                "deployment_config": str(deployment), "test_override": str(override),
-                "context_ready": context.is_file()}
-
-    @app.post("/api/v1/environments/{environment_id}/fbasecman-profile")
-    def create_fbasecman_profile(environment_id: str, item: FbasecmanProfileInput):
-        value = store.get_environment(environment_id)
-        if value is None or value["product_id"] != "fbasecman":
-            raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
-        try:
-            path, _ = save_profile(settings, value, **item.model_dump())
-            candidate = {**value, "deployment_config": str(path),
-                         "deployment_target": "mmr.fbasecman_regress", "port": item.mmr1_port}
-            configured_topology(settings, candidate)
-        except (ValueError, OSError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        store.update_environment(environment_id, candidate)
-        return fbasecman_profile(environment_id)
-
-    @app.get("/api/v1/fbasecman/cases/{target}/artifacts")
-    def fbasecman_case_artifacts(target: str, environment_id: str | None = None):
-        if environment_id and store.get_environment(environment_id) is None:
-            raise HTTPException(status_code=404, detail="环境不存在")
-        try:
-            return case_artifacts(settings, target, environment_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/api/v1/fbasecman/case-statuses")
-    def fbasecman_case_statuses(environment_id: str | None = None):
-        if environment_id and store.get_environment(environment_id) is None:
-            raise HTTPException(status_code=404, detail="环境不存在")
-        try:
-            return recent_case_statuses(settings, environment_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/api/v1/fbasecman/environments/{environment_id}/reports/{format_name}")
-    def fbasecman_export(environment_id: str, format_name: str):
-        environment = store.get_environment(environment_id)
-        if environment is None or environment["product_id"] != "fbasecman":
-            raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
-        try:
-            content = export_source_report(settings, environment_id, format_name)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (ValueError, RuntimeError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        filename = "fbasecman-junit.xml" if format_name == "junit" else "fbasecman-report.html"
-        media = "application/xml" if format_name == "junit" else "text/html"
-        return Response(content=content, media_type=media,
-                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-
-    @app.get("/api/v1/fbasecman/cases/{target}/logs")
-    def fbasecman_case_log(
-        target: str,
-        filename: str,
-        environment_id: str | None = None,
-        last_lines: int = Query(default=500, ge=1, le=5000),
-    ):
-        if environment_id and store.get_environment(environment_id) is None:
-            raise HTTPException(status_code=404, detail="环境不存在")
-        try:
-            return case_log(settings, target, filename, environment_id=environment_id,
-                            last_lines=last_lines)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/cases")
     def cases(product_id: str):
@@ -402,10 +360,22 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if environment is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         if item.action not in {
-            action["id"] for action in actions_for_environment(environment)
+            action["id"] for action in actions_for_environment(environment, settings)
         }:
             raise HTTPException(status_code=422, detail="当前环境不支持该操作")
-        action = ACTIONS[item.action]
+        action = action_for_environment(settings, environment, item.action)
+        if action is None:
+            raise HTTPException(status_code=422, detail="当前环境不支持该操作")
+        try:
+            manifest = discover_products(settings.products_root).get(environment["product_id"])
+            declared = next(
+                (value for value in (manifest.actions if manifest else ()) if value.id == item.action),
+                None,
+            )
+            if declared is not None:
+                validate_parameters(declared, item.parameters)
+        except ProductManifestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         if action.changes_environment and not item.acknowledge_change:
             raise HTTPException(status_code=422, detail="请确认本次操作会修改环境")
         target = item.target or (
@@ -428,18 +398,17 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
                 raise HTTPException(status_code=422, detail="操作目标不属于当前环境拓扑")
             if item.action in {"deployment.validate", "deployment.create", "deployment.health", "deployment.clean"} and target != environment["deployment_target"]:
                 raise HTTPException(status_code=422, detail="该操作只能作用于当前集群")
-        if item.action == "tests.fbase" and item.parameters.get("cluster") not in {
-            "mac",
-            "mmr",
-        }:
-            raise HTTPException(
-                status_code=422, detail="FBase 测试需要 mac 或 mmr 集群"
-            )
-        if item.action in {"tests.fbasecman", "tests.fbase"}:
-            product_id = environment["product_id"]
-            if not validate_target(settings, product_id, target):
-                detail = "未知 fbasecman 用例或套件" if item.action == "tests.fbasecman" else "未知 FBase 测试目标"
-                raise HTTPException(status_code=422, detail=detail)
+        if declared is not None and declared.validate_target:
+            if not validate_target(settings, environment["product_id"], target):
+                raise HTTPException(status_code=422, detail="未知产品测试目标")
+        if declared is not None and declared.capability == "tests" and manifest.test_profiles:
+            requested_profile = item.parameters.get("cluster")
+            matches = [profile for profile in manifest.test_profiles
+                       if profile.accepts(environment["deployment_target"], target,
+                                          requested_profile)]
+            if not any((binding := store.get_regression_binding(manifest.id, profile.id))
+                       and binding["environment_id"] == environment["id"] for profile in matches):
+                raise HTTPException(status_code=422, detail="测试目标未绑定当前产品环境或测试 profile")
         if item.action == "diagnostics.analyze" and store.get_result(
             environment["product_id"], environment["id"], target,
             item.parameters.get("profile", "default"),
@@ -518,7 +487,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         task = store.get_task(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="任务不存在")
-        path = settings.data_dir / "operations" / (task_id + ".log")
+        path = settings.platform_dir / "operations" / (task_id + ".log")
         if not path.is_file():
             return {"lines": [], "path": str(path), "available": False}
         # 日志按后缀行数读取，前端保留原文与等级高亮的独立表示。
@@ -538,6 +507,43 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
             raise HTTPException(status_code=404, detail="环境不存在")
         return store.list_results(environment_id)
 
+    def archived_result(environment_id: str, target: str, profile: str) -> tuple[Path, dict]:
+        environment = store.get_environment(environment_id)
+        if environment is None:
+            raise HTTPException(status_code=404, detail="环境不存在")
+        if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", target):
+            raise HTTPException(status_code=404, detail="结果不存在")
+        result = store.get_result(environment["product_id"], environment_id, target, profile)
+        base = (settings.environment_dir / "regression" / environment_id / target).resolve()
+        if result is None or Path(result["artifact_dir"]).resolve() != base:
+            raise HTTPException(status_code=404, detail="平台归档结果不存在")
+        try:
+            payload = json.loads((base / "result.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="平台归档结果不存在") from exc
+        if payload.get("target") != target or not isinstance(payload.get("evidence"), list):
+            raise HTTPException(status_code=404, detail="平台归档结果无效")
+        return base, payload
+
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/evidence")
+    def result_evidence(environment_id: str, target: str, profile: str = "default"):
+        _, payload = archived_result(environment_id, target, profile)
+        return {"target": target, "execution_id": payload.get("execution_id"),
+                "verdict": payload.get("verdict"), "evidence": payload["evidence"]}
+
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/evidence/{reference:path}")
+    def result_evidence_file(environment_id: str, target: str, reference: str,
+                             profile: str = "default"):
+        base, payload = archived_result(environment_id, target, profile)
+        if reference not in payload["evidence"]:
+            raise HTTPException(status_code=404, detail="证据不存在")
+        candidate = (base / reference).resolve()
+        if not candidate.is_relative_to(base) or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="证据不存在")
+        return FileResponse(candidate, media_type="application/octet-stream",
+                            filename=candidate.name,
+                            headers={"X-Content-Type-Options": "nosniff"})
+
     @app.get("/api/v1/environments/{environment_id}/diagnostics/{target}")
     def diagnosis(environment_id: str, target: str, profile: str = "default"):
         environment = store.get_environment(environment_id)
@@ -547,6 +553,8 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if value is None:
             raise HTTPException(status_code=404, detail="尚无 AI 诊断")
         return value
+
+    register_product_routes(app, settings, store)
 
     if settings.frontend_dist.is_dir():
         app.mount(

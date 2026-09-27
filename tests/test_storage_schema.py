@@ -10,7 +10,7 @@ def test_store_records_schema_version(tmp_path):
     with sqlite3.connect(store.path) as connection:
         assert connection.execute(
             "SELECT value FROM schema_meta WHERE key='schema_version'"
-        ).fetchone() == ("2",)
+        ).fetchone() == ("3",)
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name='tasks_environment_status_idx'"
         ).fetchone() == ("tasks_environment_status_idx",)
@@ -47,7 +47,7 @@ def test_v1_database_upgrades_without_losing_data(tmp_path):
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT value FROM schema_meta WHERE key='schema_version'"
-        ).fetchone() == ("2",)
+        ).fetchone() == ("3",)
 
 
 def test_failed_migration_rolls_back_schema_and_version(tmp_path, monkeypatch):

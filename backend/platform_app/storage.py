@@ -65,6 +65,77 @@ class Store:
                 ).fetchone()
             )
 
+    def list_regression_bindings(self) -> list[dict]:
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT product_id,profile_id,environment_id,updated_at "
+                "FROM regression_bindings ORDER BY product_id,profile_id"
+            )]
+
+    def get_regression_binding(self, product_id: str, profile_id: str) -> dict | None:
+        with self.connect() as connection:
+            return self._dict(connection.execute(
+                "SELECT product_id,profile_id,environment_id,updated_at "
+                "FROM regression_bindings WHERE product_id=? AND profile_id=?",
+                (product_id, profile_id),
+            ).fetchone())
+
+    def put_regression_binding(self, product_id: str, profile_id: str,
+                               environment_id: str) -> dict:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            environment = connection.execute(
+                "SELECT product_id FROM environments WHERE id=?", (environment_id,)
+            ).fetchone()
+            if environment is None or environment["product_id"] != product_id:
+                raise ConflictError("回归测试只能绑定所属产品的环境")
+            previous = connection.execute(
+                "SELECT environment_id FROM regression_bindings WHERE product_id=? AND profile_id=?",
+                (product_id, profile_id),
+            ).fetchone()
+            affected = {environment_id}
+            if previous:
+                affected.add(previous["environment_id"])
+            for affected_id in affected:
+                active = connection.execute(
+                    "SELECT 1 FROM tasks WHERE environment_id=? "
+                    "AND status IN ('QUEUED','RUNNING','CANCELLING') LIMIT 1",
+                    (affected_id,),
+                ).fetchone()
+                if active:
+                    raise ConflictError("环境仍有未结束任务，暂不能变更回归绑定")
+            connection.execute(
+                "INSERT INTO regression_bindings(product_id,profile_id,environment_id,updated_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(product_id,profile_id) DO UPDATE SET "
+                "environment_id=excluded.environment_id,updated_at=excluded.updated_at",
+                (product_id, profile_id, environment_id, now()),
+            )
+            connection.commit()
+        return self.get_regression_binding(product_id, profile_id) or {}
+
+    def delete_regression_binding(self, product_id: str, profile_id: str) -> bool:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT environment_id FROM regression_bindings WHERE product_id=? AND profile_id=?",
+                (product_id, profile_id),
+            ).fetchone()
+            if existing is None:
+                return False
+            active = connection.execute(
+                "SELECT 1 FROM tasks WHERE environment_id=? "
+                "AND status IN ('QUEUED','RUNNING','CANCELLING') LIMIT 1",
+                (existing["environment_id"],),
+            ).fetchone()
+            if active:
+                raise ConflictError("环境仍有未结束任务，暂不能解除回归绑定")
+            connection.execute(
+                "DELETE FROM regression_bindings WHERE product_id=? AND profile_id=?",
+                (product_id, profile_id),
+            )
+            connection.commit()
+        return True
+
     def put_environment(self, payload: dict) -> dict:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")

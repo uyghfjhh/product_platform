@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .config import Settings
-from .product_registry import get_product_spec
+from .product_catalog import discover_products
 from .storage import Store
 
 
@@ -56,8 +56,8 @@ def _redact(value: str) -> str:
 
 
 def _source_root(settings: Settings, product_id: str) -> Path | None:
-    spec = get_product_spec(product_id)
-    return spec.source_root() if spec else None
+    product = discover_products(settings.products_root).get(product_id)
+    return product.source_root if product else None
 
 
 def _git(root: Path, *args: str) -> str | None:

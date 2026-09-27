@@ -1,6 +1,38 @@
 # 实现进度
 
-更新:2026-09-25(下午修订)。当前实施目标以本文件与 [设计文档](design.md) 为准(P1–P7 阶段与能力方案见其第二部分;新增依赖版本与阶段见其第六部分)。原会话交接文档 HANDOFF.md 的持久内容已并入本文(目标边界、历史教训、未完成项、工作区约束),原文件已删除。
+更新:2026-09-26。当前目标架构和实施路线以 [设计文档 v3](design.md) 为准。本文保留历史讨论和实现快照；其中出现的旧 `regress/`、`product_adapters/` 路径仅是历史记录，不代表当前目录结构。
+
+## 2026-09-26:目标架构重定
+
+- 用户确认:数据库集群部署、回归测试框架和 License 签发是平台公共能力；产品代码以 `products/<id>/` 为唯一接入单元。
+- 首期部署只支持数据库集群，不做非数据库服务部署 demo。多活、等保、FBase 和 fbasecman 共用平台部署与回归内核。
+- License 以 `fd_licenser` 的跨产品格式为参考:一份文件可授权多个产品，平台统一管理密钥、签名和格式兼容，产品仅声明授权编码和规则。
+- v3 设计摆脱旧框架和旧目录的长期兼容约束；旧源码只作为业务知识和迁移材料。当前代码尚未按新设计实现，不能把本次文档重写视为阶段完成。
+
+## 2026-09-26:产品包接入第一阶段
+
+- 新增 manifest 解析与产品目录发现；fbasecman、FBase 已有产品 manifest，fbasecman 提供回归、常稳和 fixture 的产品包入口。现有实现仍依赖旧回归资产，尚未完成代码归位。
+- 产品列表和环境动作已以已安装 manifest 为唯一来源；移除产品 manifest 后不再允许新建环境或任务，已有环境保留可读。删除行为有 API 契约测试。
+- 动作执行 Provider、产品专属 API、结果发布和 License 产品选项仍有硬编码/旧配置，离“新增一个产品包、核心零修改”还有明显差距。CLI 产品包入口当前仍是过渡包装，不代表迁移完成。
+- License 新签发选项已改为从已安装产品 manifest 汇总，并在签名前核对授权编码、版本和重复项；移除产品包后不能继续签发该产品。旧 License 的格式兼容测试仍使用 C 校验器。Provider 执行和产品专属 API 尚未完成迁移。
+- Provider 固定产品映射已改为加载 `products/<id>/adapter.py`，用第三个临时产品验证仅新增产品目录即可进入执行分发，删除 manifest 后执行被拒。现有 fbasecman/FBase Provider 类仍位于平台 `providers.py` 并由产品 adapter 过渡绑定；业务实现归位和 API 产品端点归位尚未完成。
+- fbasecman/FBase Provider 类与各自的用例发现脚本现已迁入产品 `adapter.py`；平台 `providers.py` 只保留通用契约、隔离发现工具、pgcluster 命令和产品包分发。fbasecman 观测、部署 profile、fixture 和报告产物解析已移入产品目录；PostgreSQL 复制观测抽到平台公共模块。旧适配器路径保留薄兼容导出。全量回归资产、产品专属 API 与结果发布解耦仍未完成。
+- fbasecman 的 profile、报告、用例状态和日志 HTTP 端点已迁入产品 `router.py`；平台扫描已安装产品包并装配可选路由。临时第三产品验证只加产品目录即可提供端点，移除 manifest 后重建应用端点消失。平台 API 的测试目标校验、任务结果发布、全量回归资产和前端产品组件仍需解耦。
+- 测试目标校验由 manifest 的 `validate_target` 声明控制；`ACTIONS` 只保留平台公共动作，产品动作从 manifest 动态解析。第三个临时产品验证了新增动作通过 HTTP 提交并由 Worker 真实执行，无需修改核心动作表。fbasecman/FBase 的进度观察、额外观测和当前结果发布已下沉到 Provider 可选钩子，任务终态仍由平台控制。旧回归框架和部分场景观测尚未平台化。
+- 新增 `backend/platform_regress/` 的公共用例目录契约并接入 `/cases`：产品发现结果统一校验套件归属、重复目标和字段类型。真实 fbasecman 211 个、FBase 228 个用例均通过。当前只完成目录契约，fixture、执行、判定和报告仍由两套旧框架负责。
+- 公共 `RegressionEngine` 已提供 setup/run/cleanup 生命周期、PASS/FAIL/BLOCKED/ERROR/CANCELLED 判定、独立清理结论、步骤事件、附件和原子 `result.json`；`platform_regress.cli` 可在隔离进程运行产品 `cases.py`。临时第三产品已通过 Web 提交、Worker 执行、Provider 发布当前结果的完整路径。现有 fbasecman/FBase 211/228 个真实用例尚未迁入新 SDK，旧框架仍承载它们。
+- FBase 149 项框架单测改用其真实入口 `python -m unittest discover` 验证；MMR 自动化参考源码可通过 `FBASE_MMR_AUTOTEST_SOURCE` 指定，默认读取相邻 `postgresql_for_fbase_dev/mmr-autotest`。参考源码不存在时该项明确 skip，不伪称覆盖核对通过。
+- 公共引擎的重复运行会生成新的 `execution_id`、重置事件序列并只引用本次附件；Worker 将任务 ID 传给 CLI，结果发布必须匹配本次任务，缺失/陈旧结果写 ERROR 覆盖旧 PASS。首条真实 FBase 用例 `mmr.installation.runtime_prerequisites` 已迁入产品 `cases.py` 和公共 SQL SDK：从 pgcluster 拓扑选择 mmr1/mmr2 主节点，执行原有只读配置、扩展和成员断言；无拓扑时通过 Web/Worker 路径发布 BLOCKED。其余 227 项 FBase 用例和 fbasecman 211 项仍走旧框架。
+- 真实 `fbase-mmr` 专用环境验收该迁移用例：任务 `7293e1ae-ab47-486a-a943-173a6cf14695` 判定 FAIL，mmr1 的 `log_destination` 实测为 `stderr`，旧用例要求 `stderr,csvlog`。本次 23 条事件序列连续、5 个 SQL 附件存在、清理 PASS；这是环境配置与既有预期不符，未放宽断言或修改集群。
+- 第二条真实 FBase 用例 `mmr.cluster_verification.basic` 已迁入公共引擎，覆盖 mmr1/mmr2/mmr3 本地状态、全集群状态和差异为空的原有 9 个步骤。`fbase-mmr` 专用三节点环境执行任务 `33b819cc-831c-4c7d-9893-1df066fb6dd6` 判定 PASS；9 个业务步骤、12 次 SQL、12 个附件和事件序列均已核对。FBase 目录仍为 228 个唯一目标，其中 2 个由新引擎执行，其他 226 个仍由旧框架执行。
+- 用户指出顶层 `products/` 与 `regress/` 并存违背“一个产品一个目录”。已把两套回归工程机械移动到 `products/fbase-database/regression/legacy/`、`products/fbasecman/regression/legacy/`，保留原有源码、文档、CLI、测试和运行产物；平台默认路径、子进程搜索路径和产品 CLI 均指向新位置。两套 `show` 与用例发现已验证，fbasecman `env status` 能读取 14 节点拓扑；`doctor` 的远端 192.168.1.24 SSH 当前不可达。旧 `framework` 和嵌套业务包仍需抽取/去重，目录搬迁不等于架构迁移完成。
+- 控制面数据已从数据库实例资源中分离：`data/platform` 保存 SQLite/队列/锁/操作日志，`data/environments` 保存 profile 和回归证据；SQLite 内环境配置路径已事务迁移。现有 `data/*-pgdata` 不搬动、不删除，作为目标数据库资源由 pgcluster 配置管理；新 profile 拒绝项目目录作为数据库数据根。
+- `cman-lab` 已停止，数据库目录从项目内 `data/cman-lab-pgdata` 迁到 `/home/postgres/fbasecman_regress_v2_mmr_cman-lab`，profile/override 同步更新，CLI status 验证通过。`fbase-mmr`、`fbase-mac` 配置本来已指向 `/home/postgres/pgdata`；项目内同名旧目录未确认所有权，保留待后续逐实例核对，禁止盲删。
+- 已确认项目内 `data/fbase-mmr-pgdata`、`data/fbase-mac-pgdata`、`data/smoke` 均无运行进程且不再被环境 profile 引用，迁移到 `/home/postgres/fbase-platform-legacy-pgdata/`；smoke YAML 已同步到外部路径。项目 `data/` 现在只保留平台控制面和环境证据。
+- 前端产品组件已从 `frontend/src/product-adapters` 移到 `frontend/src/products/fbasecman`，测试导航改为按产品 manifest 动态生成；当前公共 App/页面仍需进一步拆分为 platform shell、platform views 和产品前端包。
+- 前端平台壳已拆到 `frontend/src/platform/PlatformShell.tsx`，API 客户端已拆到 `frontend/src/platform/api.ts`，根文件只保留兼容导出；产品组件位于 `frontend/src/products/<id>/`。TypeScript/Vite 构建已通过。
+- `TestsPage` 的产品差异已开始下沉到 `frontend/src/products/testRegistry.ts`：测试动作、套件筛选、报告、旧产物状态和终端能力由产品适配器声明，公共页面不再直接判断 fbasecman 字符串。剩余旧页面样式和部分 suite 展示逻辑仍待继续拆分。
+- `DeploymentPage` 的 profile、fixture、产品工作区样式和远端数据根默认值已下沉到 `frontend/src/products/deploymentRegistry.ts`；公共部署页只消费适配器和数据库集群动作。前端构建已通过。
 
 ## 2026-09-25 下午:文档整合为三份
 
@@ -45,6 +77,26 @@
 - 产品适配器迁移进行中(2026-09-25 12:38 快照):`cman_artifacts`/`fbasecman_profile`/`fbasecman_fixture`/`legacy_cman_runner` 实现已迁入 `product_adapters/fbasecman/`,核心目录留兼容垫片;剩余耦合清单与目标结构见设计文档第二部分 2.9(`providers.py` 类、`api.py` 产品端点、`product_registry`、`config` 产品设置、`actions` 分支、前端页面类型)。
 
 ## 未完成项
+
+- 2026-09-26：前端产品扩展配置已下沉到 `products/<id>/frontend.ts`；开发启动和构建扫描同时存在 `product.yaml`、`frontend.ts` 的产品包，生成 `frontend/src/products/generated.ts`。公共测试入口不再把未知产品误映射为 FBase，平台壳不再按产品 ID 选择测试模式。`npm run build` 通过。产品专属报告、终端和部署画布仍由公共页面直接导入，页面拆分及旧回归框架迁移尚未完成。
+- 2026-09-26：fbasecman 的报告、终端、部署画布、场景详情及其资源已整体迁到 `products/fbasecman/frontend/`，公共页面通过生成的产品注册表取组件。前端依赖解析已覆盖包外产品源码，生产构建和类型检查通过。Vite 的 Lightning CSS 压缩器对迁移后的合并样式报 `Unknown at rule: @keyframes`，暂关闭 CSS 压缩；需定位并恢复。公共测试页和部署页仍包含较多旧布局与流程代码，尚需重构。
+- 2026-09-26：核对回归调用链：产品 CLI 仍直接转发旧 `regression/legacy/run.sh`；Web 的 fbasecman 用例仍由旧框架运行；平台 `RegressionEngine` 当前仅执行两条多活用例，等保尚未迁入。公共 `CaseContext.command` 已增加无 shell 的参数数组执行、超时/取消进程组终止、输出证据和退出码返回；定向测试 10 项通过。接口是后续用例迁移基础，不代表旧用例已经平台化。
+- 2026-09-26：等保 `mac.separation_of_duties.dba_metadata_access_restrictions` 已将旧四步业务断言迁入产品 `cases.py`，通过公共 `RegressionEngine` 执行；Provider 按 pgcluster 拓扑选择唯一主节点，SDK 保存预期 SQL 错误的 SQLSTATE 和文本。当前 15432 实例经平台 CLI 真实执行 PASS，证据在 `/tmp/product-platform-mac-check.XIp3Ox`，两次读表拒绝 SQLSTATE 42501，两次重命名被产品钩子拒绝。旧框架输出中未找到该目标历史报告，因此仅确认旧断言与当前实测一致，未完成历史结果逐文件对照。本阶段平台测试 77 passed，旧 FBase 149 OK、旧 fbasecman 259 OK。
+- 2026-09-26：重启 8080 平台服务后，通过 Web 任务 `28de299a-b844-4ffd-8561-1c36e4bb8791` 真实执行同一等保目标，任务 SUCCEEDED，当前结果 PASS；`data/environments/regression/fbase-mac/mac.separation_of_duties.dba_metadata_access_restrictions/result.json` 的 operation_id 与任务一致并引用五份 SQL 证据。该目标的 CLI、Web、结果发布闭环已验证；其他等保与 fbasecman 用例仍在旧框架。
+- 2026-09-26：按批量迁移方向，FBase 228 条旧用例（含完整步骤、断言和 fixture 声明）导出到产品 `regression/cases.json`；fbasecman 211 条旧用例目录元数据导出到产品 `regression/catalog.json`。平台发现已改为直接读取这两份产品数据，不再为用例清单启动旧框架。FBase 当前步骤分布：command 3837、sql 685、cluster_action 17、wait_sql 15、node_action 5、background_sql 3、wait_background_sql 3、system_time_shift 1；118 条使用 isolated_mmr_node_creation，25 条使用共享 session。fbasecman 是 Python executor 模型，不能按 FBase 的声明式步骤直接解释。批量导出尚未替代旧执行器，判定与清理协议仍需迁移验证。
+- 2026-09-26：FBase 产品 CLI 新增 `platform-case`，可指定 `--node NAME=HOST:PORT`、`--output-dir` 直接运行已迁入公共引擎的目标；当前等保目标在 15432 实测 PASS。原 `run mac|mmr ...` 保留未迁移用例行为，不能把新子命令视为旧 CLI 全量替换。
+- 2026-09-26：重启服务后 API 返回 FBase 228/228、fbasecman 211/211 个唯一目标，健康接口正常；平台测试 78 passed。按现有 FBase 定义筛选，只有 10 条同时满足仅 cluster fixture、仅 SQL/命令步骤且无共享 session；其余目标需要先实现隔离集群、专用 fixture、后台步骤或共享 session 的平台协议。导出清单覆盖全部目标，但执行器迁移尚未覆盖全部目标。
+- 2026-09-26：FBase 四条事务内元数据拒绝用例批量接入平台执行器，在当前 MAC 主节点 CLI 实测全部 PASS，分别保存三份 SQL 证据。新增平台声明式 SQL 步骤断言器；多活 `mmr.cluster_verification.same_priority_errors` 复用导出的五步定义，在 mmr2 主节点 CLI 实测 PASS，保存六份证据。`ALTER SYSTEM` 目标未纳入无状态批次，避免意外放行时留下配置修改。
+- 2026-09-26：按快速批量接线，FBase 228 个、fbasecman 211 个单目标均注册到公共 `RegressionEngine`。原生目标执行平台步骤；未重写的目标由产品包内过渡用例调用原有 fixture/步骤执行器，再由平台核对本次结构化报告、记录事件和证据并发布 PASS/FAIL/BLOCKED/ERROR。FBase 使用唯一 run ID 防止旧报告误判；fbasecman 使用报告更新时标及退出码交叉核对。FBase 旧 FAIL/BLOCKED 和陈旧/错目标报告、fbasecman 旧 FAIL/陈旧报告已用受控测试验证。**这只是批量接入平台生命周期，旧执行器尚未删除，不等于全部业务步骤已原生迁移。**
+- 2026-09-26：FBase 非原生 `mac.audit.log_access_restrictions` 经 Web 任务 `272135b9-0d1c-4d7a-b973-58e6997a1704` 实测 SUCCEEDED/PASS，平台结果绑定任务并保存命令与本次旧 summary。fbasecman `guc.search_path_reuse_sql_parse` 经产品 CLI 进入平台后取得本次 FAIL 报告，原因是当前测试环境 127.0.0.1:15011 拒绝连接；此前历史 PASS 不能覆盖当前失败。平台测试 88 passed；当前 fbasecman 环境需恢复后再作业务对照。
+- 2026-09-26：平台 `CaseContext.attach_file` 已增加本次文件证据归档；两产品过渡层把旧报告与日志复制进平台 execution 目录。FBase `mac.audit.log_access_restrictions` 本次 PASS 归档 summary、report、execution.log、postgresql.log、postgresql.csv；fbasecman `guc.search_path_reuse_sql_parse` 当前 FAIL 归档 summary、report 和日志。文件丢失或路径不属于本次 FBase run 会导致 ERROR，不再只保留旧绝对路径。平台现有 cman-lab profile 的 PGDATA 均在项目外 `/home/postgres/fbasecman_regress_v2_mmr_cman-lab/`，但 127.0.0.1:15011 当前无响应；尚未恢复环境验证业务 PASS/FAIL 对照。
+- 2026-09-26：确认环境绑定模型改为“回归 profile -> 一套环境”，而不是“产品 -> 一套环境”。新增 `regression_bindings(product_id, profile_id, environment_id)` 表和 API；环境仍有唯一产品所有权，但同一产品可有多套环境。FBase manifest 声明 `mmr`（多活）和 `mac`（等保）profile，fbasecman 声明 `cman` profile；平台提交测试任务必须命中对应绑定和部署目标。部署页提供 profile 绑定选择，测试导航按 profile 生成独立入口。平台测试 91 passed，前端 build 通过。
+- 2026-09-26：按用户要求选择 fbasecman 现有框架的通用内核作为平台迁移基础；已将其 `execution`、`evidence`、`persistence`、`reporting` 四组公共模块搬到 `backend/platform_regress/`，产品运行时导入改为平台路径；fbasecman 旧环境搭建器没有迁移，数据库环境继续统一由 pgcluster 管理。旧框架 259 单测此前通过，迁移后正在修正系统 Python 3.8 兼容入口和遗漏导入。
+- 2026-09-26：继续迁移 fbasecman 公共内核：`CaseRuntime`、suite contracts、suite runner 已进入 `backend/platform_regress/`；旧 `framework/suites/{runtime,contracts,runner}.py` 仅保留 re-export 兼容层，避免旧 CLI 和单测断裂。平台 Runtime 延迟导入旧环境配置，不把 fbasecman 环境搭建器带入平台。验证：平台测试 91 passed，fbasecman 旧单测 259 OK。
+- 2026-09-26：数据库环境能力正式收口为平台 `PgclusterDatabaseProvider`，提供统一 `validate/plan/apply/inspect/lifecycle` 契约；动作层通过该 Provider 生成 pgcluster 计划，产品不再实现底层集群生命周期。Provider 契约测试已加入，平台全套测试 93 passed，前端 build 通过。
+- 2026-09-26：按快速批量迁移要求，`platform_regress.cli` 新增 suite 批量执行模式（`--suite`），逐目标输出独立 result/evidence，并写入聚合 `suite-result.json`；不再要求人工逐条调用和验收。单条目标入口保持兼容，批内 FAIL/BLOCKED/CANCELLED 维持原判定。
+- 2026-09-26：Web/CLI 的整组 suite 目标已改为统一调用 `platform_regress --suite`；FBase 和 fbasecman Provider 不再直接把 suite 目标交给旧聚合 runner。平台负责逐目标生命周期和批量聚合，旧执行器只作为尚未原生改写的产品实现。Provider/API/Runtime 定向测试 32 passed。
+- 2026-09-26：按“先整批迁移代码、后调试”的要求完成本阶段结构切换：产品 provider 入口统一为 `provider.py`，单条和 suite 目标统一进入平台批处理器，suite 结果逐条发布；平台 Runtime 公共模块和 pgcluster Provider 已进入平台目录，旧框架仅保留产品专属实现/兼容入口。一次性验证：平台 94 passed，fbasecman 259 OK，FBase 149 OK，前端 build 通过。
 
 - 路线图 P1–P6 未开始(见 [设计文档](design.md) 第二部分第 4 节)。
 - P7 相关遗留:报告 Modal 的 3D canvas 像素/取景/步骤播放/节点点击/手机截图未验收;部署画布需重做(深色完整画布、节点操作);2D 拓扑需继续按参考截图校准布局、连线、3D 视角和动效;`stable.sh env` 需要独立 stable pgcluster 配置才能实际运行;真实执行/停止及部署流程端到端验证未做。

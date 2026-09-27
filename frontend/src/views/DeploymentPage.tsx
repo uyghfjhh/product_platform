@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Segmented, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd';
 import {
   CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined,
 } from '@ant-design/icons';
 
-import { api, operationRequest, type Action, type Environment, type Product } from '../api';
+import { api, operationRequest, type Action, type Environment, type Product, type RegressionBinding } from '../api';
 import CodeEditor from '../components/LazyCodeEditor';
 import ThreeTopologyView, { type TopologyData, type TopologyNode } from '../components/ThreeTopologyView';
-import DeploymentCanvas from '../product-adapters/fbasecman/DeploymentCanvas';
+import { deploymentAdapter, deploymentFrontend } from '../products/deploymentRegistry';
 
 type Props = {
   product: Product | undefined;
@@ -16,6 +16,7 @@ type Props = {
   onSelectEnvironment?: (id: string) => void;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
+  productBindings?: RegressionBinding[];
   navigate?: (page: string) => void;
 };
 
@@ -28,6 +29,7 @@ export default function DeploymentPage({
   onSelectEnvironment,
   openTask,
   reload,
+  productBindings = [],
   navigate,
 }: Props) {
   const { message, modal } = App.useApp();
@@ -43,6 +45,32 @@ export default function DeploymentPage({
   const [profileForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('2d');
+  const productAdapter = deploymentAdapter(product);
+  const DeploymentCanvas = deploymentFrontend(product)?.DeploymentCanvas;
+  const compatibleProfiles = (product?.test_profiles || []).filter((profile) =>
+    profile.deployment_targets.some((pattern) => pattern.endsWith('*')
+      ? Boolean(environment?.deployment_target?.startsWith(pattern.slice(0, -1)))
+      : environment?.deployment_target === pattern));
+  const boundProfiles = productBindings.filter((binding) => binding.environment_id === environment?.id
+    && binding.product_id === product?.id).map((binding) => binding.profile_id);
+
+  async function updateRegressionBindings(selected: string[]) {
+    if (!product || !environment) return;
+    try {
+      for (const profileId of boundProfiles.filter((id) => !selected.includes(id))) {
+        await api(`/regression-bindings/${encodeURIComponent(product.id)}/${encodeURIComponent(profileId)}`,
+          { method: 'DELETE' });
+      }
+      for (const profileId of selected.filter((id) => !boundProfiles.includes(id))) {
+        await api(`/regression-bindings/${encodeURIComponent(product.id)}/${encodeURIComponent(profileId)}`,
+          { method: 'PUT', body: JSON.stringify({ environment_id: environment.id }) });
+      }
+      await reload();
+      message.success('环境用途已更新');
+    } catch (cause) {
+      message.error((cause as Error).message);
+    }
+  }
 
   useEffect(() => {
     if (!environment) { setActions([]); setConfiguration(null); setTopology(null); setObserved(null); return; }
@@ -51,14 +79,14 @@ export default function DeploymentPage({
       api<Action[]>(`/environments/${encodeURIComponent(environment.id)}/actions`),
       api<{ content: string; path: string }>(`/environments/${encodeURIComponent(environment.id)}/configuration`).catch(() => null),
       api<TopologyData>(`/environments/${encodeURIComponent(environment.id)}/topology`).then((value) => { setTopologyError(''); return value; }).catch((error) => { setTopologyError(error.message); return null; }),
-      product?.id === 'fbasecman' ? api<Profile>(`/environments/${encodeURIComponent(environment.id)}/fbasecman-profile`).catch(() => null) : Promise.resolve(null),
+      productAdapter.profilePath ? api<Profile>(productAdapter.profilePath(environment.id)).catch(() => null) : Promise.resolve(null),
     ]).then(([list, config, graph, currentProfile]) => {
       setActions(list.filter((item) => item.capability === 'deployment'));
       setConfiguration(config);
       setTopology(graph);
       setProfile(currentProfile);
     }).catch((error) => message.error(error.message));
-  }, [environment, product?.id, message]);
+  }, [environment, productAdapter.profilePath, message]);
 
   async function refreshStatus() {
     if (!environment) return;
@@ -76,7 +104,7 @@ export default function DeploymentPage({
     if (!environment) return;
     try {
       const values = await profileForm.validateFields();
-      const saved = await api<Profile>(`/environments/${encodeURIComponent(environment.id)}/fbasecman-profile`, {
+      const saved = await api<Profile>(productAdapter.profilePath!(environment.id), {
         method: 'POST', body: JSON.stringify(values),
       });
       setProfile(saved);
@@ -92,7 +120,7 @@ export default function DeploymentPage({
     if (!environment) return;
     profileForm.setFieldsValue({
       mmr1_port: 15011,
-      data_root: `/home/postgres/product_platform/fbasecman_regress/${environment.id}`,
+      data_root: productAdapter.defaultDataRoot?.(environment.id),
       license_file: '/home/postgres/license/license.dat',
     });
     setProfileOpen(true);
@@ -140,7 +168,7 @@ export default function DeploymentPage({
   }
 
   return (
-    <div className={product?.id === 'fbasecman' ? 'cman-deploy-workspace' : undefined}>
+    <div className={productAdapter.workspaceClass}>
       {/* Multi-Environment Switcher Bar */}
       {environments.length > 0 && (
         <div
@@ -172,17 +200,13 @@ export default function DeploymentPage({
             value={environment?.id}
             onChange={(val) => onSelectEnvironment?.(String(val))}
             options={environments.map((env) => {
-              const isCman = env.product_id === 'fbasecman';
-              const isMac = env.id.includes('mac');
-              const icon = isCman ? '🚀' : isMac ? '🛡️' : '🌐';
               return {
                 value: env.id,
                 label: (
                   <span style={{ padding: '3px 6px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span>{icon}</span>
                     <strong style={{ fontSize: 13 }}>{env.title}</strong>
                     <Tag
-                      color={isCman ? 'blue' : isMac ? 'purple' : 'cyan'}
+                      color="cyan"
                       style={{ margin: 0, fontSize: 11, padding: '0 5px' }}
                     >
                       :{env.port}
@@ -194,11 +218,20 @@ export default function DeploymentPage({
           />
         </div>
       )}
-      {product?.id !== 'fbasecman' && <div className="page-heading">
+      {!productAdapter.workspaceClass && <div className="page-heading">
         <div>
           <Typography.Title level={3} style={{ marginBottom: 4 }}>数据库部署管理</Typography.Title>
           <Typography.Text type="secondary">pgcluster 驱动的多中心拓扑编排、健康探测与实例生命周期</Typography.Text>
         </div>
+      </div>}
+
+      {environment && <div className="regression-binding-control" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <Typography.Text strong>环境用途</Typography.Text>
+        <Tag color={boundProfiles.length ? 'green' : 'default'}>{boundProfiles.length ? '回归测试' : '开发环境'}</Tag>
+        <Select mode="multiple" aria-label="绑定回归测试" style={{ minWidth: 260, maxWidth: '100%' }}
+          value={boundProfiles} placeholder="选择回归测试"
+          options={compatibleProfiles.map((profile) => ({ value: profile.id, label: profile.title }))}
+          onChange={(values: string[]) => void updateRegressionBindings(values)} />
       </div>}
 
       {!environment ? <Empty description="先在产品与环境页登记环境" /> : <>
@@ -216,10 +249,10 @@ export default function DeploymentPage({
             })}
           </div>
           <div className="cman-deploy-actions">
-            {product?.id === 'fbasecman' && <>
+            {productAdapter.hasProfileWizard && <>
               <Button onClick={openProfileWizard}>📐 部署向导</Button>
               <Button disabled={!profile?.generated || loading} title={profile?.context_ready ? '测试夹具已生成，可重新准备' : '部署并启动集群后准备测试夹具'}
-                onClick={() => void run({ id: 'tests.prepare_fbasecman', title: '准备 fbasecman 测试夹具', capability: 'tests', changes_environment: true })}>
+                onClick={() => productAdapter.fixtureAction && void run(productAdapter.fixtureAction)}>
                 🧪 准备测试夹具
               </Button>
             </>}
@@ -248,7 +281,7 @@ export default function DeploymentPage({
                   onSelectNode={(node) => setSelectedNode(node)}
                   height={640}
                 />
-              ) : (
+              ) : DeploymentCanvas ? (
                 <DeploymentCanvas
                   topology={topology}
                   observed={observed}
@@ -259,6 +292,9 @@ export default function DeploymentPage({
                     if (action) void run(action);
                   }}
                 />
+              ) : (
+                <ThreeTopologyView topology={topology} observed={observed}
+                  onSelectNode={setSelectedNode} height={640} />
               )
             ) : (
               <Alert type="warning" showIcon message="拓扑暂不可显示" description={topologyError || '检查部署配置和目标名称'} />

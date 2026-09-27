@@ -1,6 +1,6 @@
 import json
 
-from platform_app.product_adapters.fbasecman.artifacts import CaseProgressObserver
+from products.fbasecman.reports.artifacts import CaseProgressObserver
 from platform_app.storage import Store
 from test_api import settings_for
 

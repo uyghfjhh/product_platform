@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 from platform_app.config import Settings
-from platform_app.providers import FbasecmanProvider, command_for
+from platform_app.providers import command_for
+from products.fbasecman.provider import FbasecmanProvider
 
 
 def settings_for(tmp_path: Path) -> Settings:
@@ -52,7 +53,7 @@ def test_fbase_provider_validates_cluster_parameter(tmp_path):
 def test_fbasecman_target_validation_is_owned_by_provider(tmp_path, monkeypatch):
     settings = settings_for(tmp_path)
     monkeypatch.setattr(
-        "platform_app.providers.FbasecmanProvider.discover",
+        "products.fbasecman.provider.FbasecmanProvider.discover",
         lambda self, current: [{"target": "suite.case"}],
     )
     provider = FbasecmanProvider()

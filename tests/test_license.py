@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_encrypt
 from platform_app.api import create_app
 from platform_app.license import _separator
+from platform_app.config import Settings
 from test_api import settings_for
 
 
@@ -195,3 +196,31 @@ def test_revoked_key_cannot_sign_new_license(tmp_path):
         "mac_addrs": ["02:42:8e:0f:0b:1b"], "password": "revoke-password",
     })
     assert response.status_code == 422
+
+
+def test_uninstalled_product_cannot_be_signed(tmp_path, monkeypatch):
+    settings = settings_for(tmp_path)
+    _key_dir, password = legacy_key_fixture(tmp_path)
+    package = tmp_path / "products" / "demo"
+    package.mkdir(parents=True)
+    manifest = package / "product.yaml"
+    manifest.write_text(
+        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  license: fd-licenser\n"
+        "license:\n  product_code: demo\n  allowed_versions: ['1.0']\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Settings, "products_root", property(lambda self: package.parent))
+    client = TestClient(create_app(settings, enqueuer=lambda task_id: None))
+    payload = {
+        "license_version": "1.1", "start_at": "2026-09-25",
+        "products": [{"name": "demo", "version": "1.0", "expiration_at": "2027-09-25"}],
+        "mac_addrs": ["02:42:8e:0f:0b:1b"], "password": password,
+    }
+    assert client.get("/api/v1/licenses/options").json()["products"] == [{"name": "demo", "version": "1.0"}]
+    assert client.post("/api/v1/licenses/generate", json=payload).status_code == 200
+
+    manifest.unlink()
+    assert client.get("/api/v1/licenses/options").json()["products"] == []
+    rejected = client.post("/api/v1/licenses/generate", json=payload)
+    assert rejected.status_code == 422
+    assert "未安装" in rejected.json()["detail"]

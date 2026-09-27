@@ -14,11 +14,12 @@ set -euo pipefail
 # 确定平台根目录与数据目录
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="${PRODUCT_PLATFORM_DATA_DIR:-$ROOT_DIR/data}"
-mkdir -p "$DATA_DIR"
+PLATFORM_DATA_DIR="$DATA_DIR/platform"
+mkdir -p "$PLATFORM_DATA_DIR"
 
-PID_FILE="$DATA_DIR/web.pid"
-PORT_FILE="$DATA_DIR/web.port"
-LOG_FILE="$DATA_DIR/web.log"
+PID_FILE="$PLATFORM_DATA_DIR/web.pid"
+PORT_FILE="$PLATFORM_DATA_DIR/web.port"
+LOG_FILE="$PLATFORM_DATA_DIR/web.log"
 
 DEFAULT_PORT=8080
 DEFAULT_HOST="0.0.0.0"

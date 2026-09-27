@@ -8,8 +8,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/design.md](docs/design.md) | 设计文档:总体架构(第一部分)、能力升级路线图 P1–P7(第二部分)、关键决策(第三部分)、接口契约(第四部分)、前端与动画设计(第五部分)、新增依赖清单(第六部分) |
-| [docs/progress.md](docs/progress.md) | 实施进度、未完成项、历史教训与工作区约束 |
+| [docs/design.md](docs/design.md) | v3 目标架构:平台公共部署/回归/License 内核、单目录产品包、数据与事件契约、实施路线 |
+| [docs/progress.md](docs/progress.md) | 当前代码进度、旧方案历史记录与工作区约束;旧 P1–P8 不再是实施路线 |
 
 ## 核心特性
 
@@ -28,13 +28,14 @@
 ./web.sh status | logs | restart | stop
 
 # fbasecman 回归测试 CLI
-cd regress/fbasecman
-./run.sh doctor | show | env setup | env status | env start/stop/restart
-./run.sh run rw_toggle                # 套件
-./run.sh run rw_toggle.mmr_hint_switch # 单用例
-./run.sh run failed                   # 重跑失败项
-./run.sh test                         # 259 项框架单测
-./run.sh clean --output
+cd products/fbasecman
+./cli/run.sh doctor | show | env setup | env status | env start/stop/restart
+./cli/run.sh run rw_toggle                # 套件
+./cli/run.sh run rw_toggle.mmr_hint_switch # 单用例
+./cli/run.sh run failed                   # 重跑失败项
+./cli/run.sh test                         # 框架单测
+./cli/stable.sh show                      # 常稳命令
+./cli/run.sh clean --output
 ```
 
 ## 平台使用要点
@@ -49,7 +50,7 @@ cd regress/fbasecman
 
 ```text
 product_platform/
-├── backend/platform_app/          # 平台后端核心(FastAPI + SQLite + Huey)
+├── backend/platform_app/          # 当前过渡实现(FastAPI + SQLite + Huey)
 │   ├── api.py                      #   全部 HTTP API(待按领域拆分)
 │   ├── actions.py                  #   任务执行器:环境锁/子进程/取消/事件/结果发布
 │   ├── providers.py                #   产品提供者分发(待全部迁入适配器)
@@ -59,17 +60,19 @@ product_platform/
 │   ├── license.py                  #   License 生成与密钥管理(Python 重写)
 │   ├── diagnostics.py              #   AI 失败诊断(证据捆绑 + 引用防幻觉校验)
 │   ├── database.py + topology.py + scene.py   # SQL 查询;拓扑解析;场景动画事件
-│   └── product_adapters/fbasecman/  # 产品适配器(观测/产物/部署方案/夹具/旧运行器)
+│   └── product_catalog.py          # 产品 manifest 发现与契约校验
 ├── frontend/src/                   # React 19 + TS + AntD 前端
 │   ├── views/                      #   部署/测试(多活·等保·fbasecman)/License 页面
 │   ├── components/                 #   TaskDrawer/LogViewer/ThreeTopologyView 等
 │   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
-├── products/                       # fbasecman 业务包(套件引用,待归位产品工程)
-├── regress/                        # 回归测试工程(产品测试资产 + 知识库语料)
-│   ├── fbasecman/                  #   fbasecman:framework(待剥离平台化)+10 套件+env+tools
-│   └── fbase/                      #   FBase:等保 mac + 多活 mmr 套件(自有框架,待接入平台框架)
+├── products/                       # 每个产品一个代码目录
+│   ├── fbase-database/             # FBase 适配、CLI、用例和 regression/legacy
+│   └── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
 ├── tests/                          # 平台自身测试(45 项 pytest)
-├── data/                           # 运行数据:platform.sqlite3/队列/profiles/报告产物
+├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
+│   ├── platform/                   # SQLite、队列、锁、操作/Web 日志
+│   ├── environments/               # profile、fixture 上下文、回归证据
+│   └── <legacy-pgdata>/            # 迁移期旧实例资源；由 pgcluster 管理，不是平台数据库
 ├── docs/                           # design.md(设计文档)+ progress.md(进度)
 ├── web.sh                          # Web 控制台管理(默认 8080)
 └── pyproject.toml + uv.lock         # Python 工程(uv 管理)
@@ -78,23 +81,24 @@ product_platform/
 ## 开发与构建
 
 ```bash
-.venv/bin/python -m pytest               # 平台测试(45 项)
-regress/fbasecman/run.sh test            # 回归单测(259 项)
-cd frontend && npm run build            # 前端构建(含 tsc 检查)
+.venv/bin/python -m pytest
+products/fbasecman/cli/run.sh test
+(cd products/fbase-database/regression/legacy && ../../../../.venv/bin/python -m unittest discover -s unit_tests -t .)
+(cd frontend && npm run build)
 ```
 
-全量验证 = 平台测试 + 回归单测 + 前端构建 + `git diff --check`。
+全量验证 = 平台测试 + 两套回归框架单测 + 前端构建 + `git diff --check`。
 
 - 脚本向下兼容探测虚拟环境与 python3.12→3.8;业务夹具用系统 `psql` 管道,避免驱动冲突。
 - 前端改动需在 `frontend/` 执行 `npm run build`,产物输出 `frontend/dist/` 由 FastAPI 静态托管。
-- 新增依赖只在对应设计文档第六部分阶段安装,不引入浮动版本。
+- 新增依赖按 [设计文档](docs/design.md) 的实施阶段安装，不引入浮动版本。
 
 ## 会话工作规则(AI/开发必读)
 
 1. 工作树有大量未提交修改与未跟踪产物;**禁止 `git reset`、批量清理、删除 core/锁文件**;只编辑明确涉及的文件,编辑前先核对当前内容。
-2. **产品代码归 `backend/platform_app/product_adapters/<product>/`**;平台核心(`api.py`/`actions.py`/`providers.py`/`product_registry.py`/`config.py`)不得新增产品分支——解耦协议见设计文档第二部分 2.9,验收标准是"接入新产品只增适配器包、核心零修改"。
+2. **目标产品代码归 `products/<product_id>/`**;平台核心不得新增产品分支。旧回归工程已归入对应产品的 `regression/legacy/`，不再保留顶层 `regress/` 或平台产品适配器目录；目标协议见 [docs/design.md](docs/design.md)。
 3. AI 不修改确定性测试判定;报告解析不从展示文本猜测结论。
-4. 回归非 Web 逻辑**复用** `regress/fbasecman`,不在平台重写;部署统一 pgcluster,不回退旧 `env setup/start/stop/heal`。
+4. 回归测试、数据库集群部署和 License 通用能力归平台；迁移期可隔离调用旧资产，但新实现不继续复制旧框架。部署统一数据库集群引擎，不回退旧 `env setup/start/stop/heal`。
 5. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
 6. 可能有**并行会话**同时修改本仓库;编辑前重新读文件,以当前内容为准。
 7. 每完成一个阶段:更新 `docs/progress.md`,跑全量验证;文档主张必须与代码事实核对。

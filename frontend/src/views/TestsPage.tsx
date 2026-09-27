@@ -6,11 +6,12 @@ import {
 import {
   api, operationRequest, type Case, type Environment, type Product, type Result,
 } from '../api';
-import ReportDrawer from '../product-adapters/fbasecman/ReportViewer';
+import { testAdapter, testFrontend, type TestMode } from '../products/testRegistry';
 import DiagnosisDrawer from '../components/DiagnosisDrawer';
-import RegressionTerminal from '../product-adapters/fbasecman/RegressionTerminal';
+import EvidenceDrawer from '../platform/EvidenceDrawer';
+import { FileSearchOutlined } from '@ant-design/icons';
 
-export type SubProduct = 'mmr' | 'mac' | 'cman';
+export type SubProduct = TestMode;
 
 type Props = {
   product: Product | undefined;
@@ -41,7 +42,7 @@ function getSuiteName(suiteId: string): string {
 }
 
 export default function TestsPage({
-  product: _product,
+  product,
   environment,
   openTask,
   subProduct = 'cman',
@@ -62,6 +63,7 @@ export default function TestsPage({
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
   const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
   const [reportTarget, setReportTarget] = useState<string | null>(null);
+  const [evidenceTarget, setEvidenceTarget] = useState<string | null>(null);
   const [diagnosisTarget, setDiagnosisTarget] = useState<string | null>(null);
   const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
   const [failedModalOpen, setFailedModalOpen] = useState(false);
@@ -69,7 +71,10 @@ export default function TestsPage({
 
   useEffect(() => { setFailedReasons({}); }, [environment?.id]);
 
-  const effectiveProductId = subProduct === 'cman' ? 'fbasecman' : 'fbase-database';
+  const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
+  const ReportDrawer = testFrontend(product)?.ReportViewer;
+  const RegressionTerminal = testFrontend(product)?.RegressionTerminal;
+  const effectiveProductId = adapter.productId;
 
   // 3. 获取测试用例清单
   useEffect(() => {
@@ -78,11 +83,7 @@ export default function TestsPage({
     void api<Case[]>(`/cases?product_id=${encodeURIComponent(effectiveProductId)}`)
       .then((data) => {
         let filtered = data;
-        if (subProduct === 'mmr') {
-          filtered = data.filter((c) => c.suite === 'mmr');
-        } else if (subProduct === 'mac') {
-          filtered = data.filter((c) => c.suite === 'mac');
-        }
+        if (adapter.suiteFilter) filtered = data.filter((c) => c.suite === adapter.suiteFilter);
         setCases(filtered);
         const allSuites = Array.from(new Set(filtered.map((c) => c.suite)));
         setExpandedSuites(new Set(allSuites));
@@ -92,7 +93,7 @@ export default function TestsPage({
         setError(cause.message);
       })
       .finally(() => setLoading(false));
-  }, [effectiveProductId, subProduct]);
+  }, [effectiveProductId, adapter.suiteFilter]);
 
   // 4. 刷新执行结果与状态
   async function refreshResults() {
@@ -103,10 +104,9 @@ export default function TestsPage({
     } else {
       setResults([]);
     }
-    if (effectiveProductId === 'fbasecman') {
-      const query = environment ? `?environment_id=${encodeURIComponent(environment.id)}` : '';
+    if (adapter.sourceStatusPath) {
       await api<Record<string, { status: string; duration?: string; has_report?: boolean; modified_at: number }>>(
-        `/fbasecman/case-statuses${query}`
+        adapter.sourceStatusPath(environment?.id)
       )
         .then(setSourceStatuses)
         .catch(() => setSourceStatuses({}));
@@ -117,12 +117,12 @@ export default function TestsPage({
 
   useEffect(() => {
     void refreshResults();
-  }, [environment?.id, effectiveProductId]);
+  }, [environment?.id, adapter.sourceStatusPath]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       void refreshResults();
-    }, 10000);
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [environment?.id, effectiveProductId]);
 
@@ -144,7 +144,7 @@ export default function TestsPage({
   };
 
   const canViewReport = (target: string): boolean => {
-    if (effectiveProductId !== 'fbasecman') return false;
+    if (!adapter.supportsLegacyReports) return false;
     const s = sourceStatuses[target];
     if (s && (s.has_report || s.status === 'PASS' || s.status === 'FAIL')) return true;
     const r = resultByTarget.get(target);
@@ -238,11 +238,10 @@ export default function TestsPage({
     let cancelled = false;
     failedCasesList.forEach((c) => {
       if (failedReasons[c.target]) return;
-      const query = environment ? `?environment_id=${encodeURIComponent(environment.id)}` : '';
       api<{
         summary?: { reason?: string };
         parsed?: { reason?: string; steps?: Array<{ status: string; actual?: string; expected?: string }> };
-      }>(`/fbasecman/cases/${encodeURIComponent(c.target)}/artifacts${query}`)
+      }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id) : '')
         .then((data) => {
           if (cancelled) return;
           let reason = data.summary?.reason || data.parsed?.reason;
@@ -288,21 +287,24 @@ export default function TestsPage({
 
   // 10. 执行单个用例
   async function runTarget(target: string, cluster?: string) {
+    if (!adapter.action) {
+      message.error('此产品没有注册可执行的前端测试动作');
+      return;
+    }
     if (!environment) {
       message.warning('请先在顶部选择绑定测试环境');
       return;
     }
-    const isCman = effectiveProductId === 'fbasecman';
-    const effectiveCluster = cluster || (subProduct === 'mac' ? 'mac' : subProduct === 'mmr' ? 'mmr' : undefined);
+    const effectiveCluster = cluster || adapter.clusterForSuite('');
     try {
       const task = await operationRequest(
         environment.id,
-        isCman ? 'tests.fbasecman' : 'tests.fbase',
+        adapter.action,
         target,
-        !isCman ? { cluster: effectiveCluster } : {},
+        adapter.mode === 'cman' ? {} : { cluster: effectiveCluster },
         true,
       );
-      if (isCman) setTerminalTaskId(task.id);
+      if (adapter.supportsTerminal) setTerminalTaskId(task.id);
       else openTask(task.id);
     } catch (cause) {
       message.error((cause as Error).message);
@@ -327,7 +329,7 @@ export default function TestsPage({
       }),
     );
     if (confirmed) {
-      const cluster = suiteId === 'mac' ? 'mac' : suiteId === 'mmr' ? 'mmr' : undefined;
+      const cluster = adapter.clusterForSuite(suiteId);
       await runTarget(suiteId, cluster);
     }
   }
@@ -433,7 +435,7 @@ export default function TestsPage({
               <button className="filter-banner-btn primary" onClick={() => setFailedModalOpen(true)}>
                 📋 失败用例清单弹窗
               </button>
-              {effectiveProductId === 'fbasecman' && (
+              {adapter.supportsLegacyReports && (
                 <button
                   className="filter-banner-btn danger"
                   disabled={!environment || stats.failCount === 0}
@@ -505,7 +507,7 @@ export default function TestsPage({
               🔄 刷新状态
             </button>
 
-            {effectiveProductId === 'fbasecman' && (
+            {adapter.supportsLegacyReports && (
               <button
                 className="tool-btn danger"
                 disabled={!environment || stats.failCount === 0}
@@ -516,11 +518,11 @@ export default function TestsPage({
               </button>
             )}
 
-            {effectiveProductId === 'fbasecman' && environment && (
+            {adapter.reportPath && environment && (
               <>
                 <a
                   className="tool-btn"
-                  href={`/api/v1/fbasecman/environments/${encodeURIComponent(environment.id)}/reports/junit`}
+                  href={`/api/v1${adapter.reportPath(environment.id, 'junit')}`}
                   target="_blank"
                   rel="noreferrer"
                   title="导出标准 JUnit XML 报告"
@@ -529,7 +531,7 @@ export default function TestsPage({
                 </a>
                 <a
                   className="tool-btn"
-                  href={`/api/v1/fbasecman/environments/${encodeURIComponent(environment.id)}/reports/html`}
+                  href={`/api/v1${adapter.reportPath(environment.id, 'html')}`}
                   target="_blank"
                   rel="noreferrer"
                   title="导出沉浸式 HTML 报告"
@@ -597,6 +599,9 @@ export default function TestsPage({
                       const statusClass = st.toLowerCase();
                       const dur = getCaseDuration(c.target);
                       const canView = canViewReport(c.target);
+                      const result = resultByTarget.get(c.target);
+                      const hasArchive = Boolean(environment && result?.artifact_dir?.endsWith(
+                        `/regression/${environment.id}/${c.target}`));
 
                       return (
                         <div key={c.target} className="case-row">
@@ -637,7 +642,7 @@ export default function TestsPage({
                               ▶ 执行
                             </button>
 
-                            {effectiveProductId === 'fbasecman' && (
+                            {adapter.supportsLegacyReports && (
                               <button
                                 className="btn-view-report"
                                 disabled={!canView}
@@ -647,6 +652,10 @@ export default function TestsPage({
                                 📄 查看报告
                               </button>
                             )}
+                            {hasArchive && <button className="btn-view-report"
+                              onClick={() => setEvidenceTarget(c.target)} title="查看本次平台归档证据">
+                              <FileSearchOutlined /> 证据
+                            </button>}
                             {st === 'FAIL' && resultByTarget.has(c.target) && (
                               <button className="btn-diagnose" onClick={() => setDiagnosisTarget(c.target)} title="结合证据与源码分析失败">
                                 AI 分析
@@ -684,7 +693,7 @@ export default function TestsPage({
                 点击【查看完整报告】深入分析失败原因与日志，或点击【单独重跑】进行针对性复测
               </div>
             </div>
-            {effectiveProductId === 'fbasecman' && (
+            {adapter.supportsLegacyReports && (
               <button
                 className="filter-banner-btn danger"
                 style={{ padding: '0.45rem 0.95rem', fontSize: '0.82rem', marginLeft: 16 }}
@@ -740,7 +749,7 @@ export default function TestsPage({
                     >
                       ▶ 单独重跑
                     </button>
-                    {effectiveProductId === 'fbasecman' && (
+                    {adapter.supportsLegacyReports && (
                       <button
                         className="btn-view-report"
                         onClick={() => {
@@ -766,14 +775,16 @@ export default function TestsPage({
       </Modal>
 
       {/* 6. 测试报告抽屉 */}
-      <ReportDrawer
+      {ReportDrawer && <ReportDrawer
         target={reportTarget}
         environmentId={environment?.id}
         onClose={() => setReportTarget(null)}
-      />
+      />}
+      <EvidenceDrawer environmentId={environment?.id} target={evidenceTarget}
+        onClose={() => setEvidenceTarget(null)} />
       <DiagnosisDrawer target={diagnosisTarget} environmentId={environment?.id}
         onClose={() => setDiagnosisTarget(null)} openTask={openTask} />
-      {effectiveProductId === 'fbasecman' && <RegressionTerminal taskId={terminalTaskId}
+      {adapter.supportsTerminal && RegressionTerminal && <RegressionTerminal taskId={terminalTaskId}
         onInspect={openTask} onFinished={() => void refreshResults()} />}
     </>
   );

@@ -1,4 +1,4 @@
-from platform_app.product_adapters.fbasecman.observations import (
+from products.fbasecman.observations import (
     parse_group_routing,
     parse_node_monitor,
     parse_monitor_config,
@@ -8,7 +8,9 @@ from platform_app.product_adapters.fbasecman.observations import (
     parse_node_status,
     parse_replication,
 )
-from platform_app.providers import FbasecmanProvider, FbaseProvider
+from platform_app.providers import provider_for
+from platform_app.config import load_settings
+from products.fbasecman.provider import FbasecmanProvider
 
 
 def test_node_status_is_normalized_to_scene_facts():
@@ -146,7 +148,7 @@ def test_fbase_runtime_probe_reads_replication_rows(monkeypatch, tmp_path):
         def close(self): pass
 
     monkeypatch.setattr("psycopg.connect", lambda **kwargs: Connection())
-    values = FbaseProvider().observe_runtime(tmp_path, {
+    values = provider_for(load_settings(), "fbase-database").observe_runtime(tmp_path, {
         "host": "127.0.0.1", "port": 5432,
         "database_name": "postgres", "database_user": "postgres",
     })

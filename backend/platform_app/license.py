@@ -29,6 +29,7 @@ except ImportError:
 from pydantic import BaseModel, Field, model_validator
 
 from .config import Settings
+from .product_catalog import discover_products
 
 KEY_VERSION = re.compile(r"^1\.([1-9][0-9]*)$")
 MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
@@ -69,18 +70,25 @@ def _version_dir(key_dir: Path, version: str) -> Path:
 
 
 def options(settings: Settings) -> dict:
+    """List signable products from installed packages, not legacy config.json.
+
+    The old config file still supplies the vendor name for output compatibility.
+    Removing a product package immediately removes its new-signing option.
+    """
     config_file = settings.license_config
     if not config_file.is_file():
         config_file = config_file.with_name("config.json.exmaple")
-    products = []
     vendor = settings.license_vendor
     if config_file.is_file():
         data = json.loads(config_file.read_text(encoding="utf-8"))
         vendor = data.get("vendor") or vendor
-        products = [
-            {"name": name, "version": (value or {}).get("productVersion", "")}
-            for name, value in (data.get("products") or {}).items()
-        ]
+    products = [
+        {"name": item.license.product_code, "version": version}
+        for item in discover_products(settings.products_root).values()
+        if item.license is not None
+        for version in item.license.allowed_versions
+    ]
+    products.sort(key=lambda item: (item["name"], item["version"]))
     versions = []
     if settings.license_key_dir.is_dir():
         versions = sorted(
@@ -250,9 +258,20 @@ def _new_license_id() -> str:
 
 
 def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
+    """Sign one multi-product License after checking installed product rules."""
     if not SIGN_LIMIT.acquire(blocking=False):
         raise RuntimeError("当前已有两项 License 生成操作，请稍后重试")
     try:
+        allowed = {
+            item.license.product_code: set(item.license.allowed_versions)
+            for item in discover_products(settings.products_root).values()
+            if item.license is not None
+        }
+        if len({item.name for item in request.products}) != len(request.products):
+            raise ValueError("同一 License 中产品不能重复")
+        for item in request.products:
+            if item.name not in allowed or item.version not in allowed[item.name]:
+                raise ValueError(f"产品未安装或版本不允许签发: {item.name} {item.version}")
         if _key_metadata(settings.license_key_dir, request.license_version)["revoked"]:
             raise ValueError("所选密钥版本已撤销")
         signer = _read_legacy_key(

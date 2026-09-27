@@ -1,0 +1,49 @@
+id: fbasecman
+title: fbasecman
+plugin_api: v1
+provider: provider.py
+source:
+  env: PRODUCT_PLATFORM_CMAN_SOURCE_ROOT
+  default: ../../../fbasecman_dev
+versions:
+  - id: "1.7"
+capabilities:
+  deployment: database-cluster
+  database: postgresql-compatible
+  tests: fbasecman-regression
+  stability: fbasecman-stability
+  diagnostics: fbasecman-diagnostics
+  license: fd-licenser
+test_profiles:
+  - id: cman
+    title: fbasecman 回归测试
+    suites: ["*"]
+    deployment_targets: ["mmr.fbasecman_regress"]
+actions:
+  - id: database.check
+    title: 检查数据库连接
+    capability: database
+  - id: tests.fbasecman
+    title: 运行 fbasecman 用例
+    capability: tests
+    changes_environment: true
+    validate_target: true
+  - id: tests.prepare_fbasecman
+    title: 准备 fbasecman 测试夹具
+    capability: tests
+    changes_environment: true
+  - id: stability.fbasecman
+    title: 运行 fbasecman 常稳
+    capability: stability
+    changes_environment: true
+  - id: diagnostics.analyze
+    title: AI 分析当前测试结果
+    capability: diagnostics
+cli:
+  run: cli/run.sh
+  stable: cli/stable.sh
+  prepare_fixture: deployment/fixture.py
+license:
+  product_code: fbasecman
+  allowed_versions:
+    - "1.7"

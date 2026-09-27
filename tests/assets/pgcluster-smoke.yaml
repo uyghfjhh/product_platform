@@ -13,12 +13,12 @@ instances:
     host: local
     installation: local_fbase
     port: 25432
-    data_dir: /home/postgres/fly_dev/product_platform/data/smoke/primary
+    data_dir: /home/postgres/fbase-platform-legacy-pgdata/smoke/primary
   platform_smoke_standby:
     host: local
     installation: local_fbase
     port: 25433
-    data_dir: /home/postgres/fly_dev/product_platform/data/smoke/standby
+    data_dir: /home/postgres/fbase-platform-legacy-pgdata/smoke/standby
 
 streaming_clusters:
   smoke:
