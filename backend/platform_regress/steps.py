@@ -29,9 +29,12 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
     title = step["title"]
     query = step["sql"]
     database = step.get("database") or "postgres"
+    sql_kwargs = {"database": database}
+    if step.get("user"):
+        sql_kwargs["user"] = step["user"]
     if kind in {"sql_error", "sql_fails"}:
         try:
-            context.sql(node, query, database=database)
+            context.sql(node, query, **sql_kwargs)
         except psycopg.Error as exc:
             actual = str(exc)
             state = getattr(exc, "sqlstate", None)
@@ -46,7 +49,7 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
                                                        "actual": "SQL 成功"})
         raise AssertionError(f"{title}: SQL 意外成功")
 
-    result = context.sql(node, query, database=database)
+    result = context.sql(node, query, **sql_kwargs)
     if kind == "rows_equal":
         expected_rows = tuple(tuple(None if cell is None else str(cell) for cell in row)
                               for row in assertion["rows"])

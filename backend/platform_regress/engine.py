@@ -86,6 +86,7 @@ class CaseContext:
         self._sequence = 0
         self._sql_sequence = 0
         self._evidence: list[str] = []
+        self._cleanup_actions: list[Callable[[], None]] = []
         output_dir.mkdir(parents=True, exist_ok=True)
         # The directory contains only the current result. A rerun starts a new
         # event sequence; previous attachments remain unreferenced until pruned.
@@ -98,6 +99,47 @@ class CaseContext:
     def check_cancel(self) -> None:
         if self._cancelled():
             raise Cancelled("用例已取消")
+
+    def defer_cleanup(self, action: Callable[[], None]) -> None:
+        """Register an idempotent product fixture cleanup action."""
+        self._cleanup_actions.append(action)
+
+    def cleanup_fixtures(self) -> None:
+        """Run registered fixture cleanup in reverse order."""
+        errors = []
+        for action in reversed(self._cleanup_actions):
+            try:
+                action()
+            except Exception as exc:
+                errors.append(str(exc))
+        self._cleanup_actions.clear()
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+    def reload(self, node: str) -> None:
+        """Reload PostgreSQL configuration through the declared node."""
+        self.sql(node, "SELECT pg_reload_conf()")
+        self.step("fixture-reload", "重载数据库配置")
+
+    def set_setting(self, node: str, name: str, value: str) -> None:
+        """Set a runtime setting and restore its previous value afterwards."""
+        if not name.replace("_", "").replace(".", "").isalnum():
+            raise ValueError("配置参数名无效")
+        old = self.sql(node, f"SELECT current_setting('{name}', true)").rows
+        old_value = old[0][0] if old and old[0] else None
+        escaped = value.replace("'", "''")
+        self.sql(node, f"ALTER SYSTEM SET {name} = '{escaped}'")
+        self.reload(node)
+        restore = "RESET" if old_value is None else f"SET {name} = '{old_value.replace(chr(39), chr(39) * 2)}'"
+        self.defer_cleanup(lambda: (self.sql(node, f"ALTER SYSTEM {restore}"), self.reload(node)))
+
+    def create_role(self, node: str, name: str, attributes: str = "") -> None:
+        """Create a temporary role and guarantee cleanup after the case."""
+        if not name.replace("_", "").isalnum():
+            raise ValueError("角色名无效")
+        suffix = (" " + attributes.strip()) if attributes.strip() else ""
+        self.sql(node, f"CREATE ROLE {name}{suffix}")
+        self.defer_cleanup(lambda: self.sql(node, f"DROP ROLE IF EXISTS {name}"))
 
     def emit(self, kind: str, payload: dict[str, Any]) -> None:
         """Append one ordered fact before clients can observe the event."""
@@ -158,7 +200,8 @@ class CaseContext:
         self.emit("evidence.attached", {"ref": reference})
         return reference
 
-    def sql(self, node: str, query: str, *, database: str = "postgres") -> SqlResult:
+    def sql(self, node: str, query: str, *, database: str = "postgres",
+            user: str | None = None) -> SqlResult:
         """Execute one SQL statement against a declared product node.
 
         SQL text and returned rows become evidence. Product cases own the
@@ -174,11 +217,16 @@ class CaseContext:
             raise Blocked(f"测试节点连接信息无效: {node}")
         self._sql_sequence += 1
         key = f"sql-{self._sql_sequence}"
-        self.emit("sql.started", {"step_key": key, "node": node, "database": database})
+        users = self.environment.get("users") or {}
+        selected_user = user or self.environment.get("user") or "postgres"
+        selected_password = (users.get(selected_user, {}).get("password")
+                             if isinstance(users, dict) else None)
+        self.emit("sql.started", {"step_key": key, "node": node, "database": database,
+                                   "user": selected_user})
         try:
             with psycopg.connect(
                 host=host, port=port, dbname=database,
-                user=self.environment.get("user") or "postgres",
+                user=selected_user, password=selected_password,
                 connect_timeout=5, options="-c statement_timeout=10000",
                 autocommit=True,
             ) as connection:
@@ -307,10 +355,15 @@ class RegressionEngine:
 
         try:
             teardown = getattr(case, "cleanup", None)
-            if callable(teardown):
-                context.emit("phase.started", {"phase": "cleanup"})
-                teardown(context)
-                context.emit("phase.finished", {"phase": "cleanup"})
+            try:
+                if callable(teardown):
+                    context.emit("phase.started", {"phase": "cleanup"})
+                    teardown(context)
+                    context.emit("phase.finished", {"phase": "cleanup"})
+            finally:
+                # Product fixture cleanup must run even if product teardown
+                # itself fails; otherwise a setting or role can leak.
+                context.cleanup_fixtures()
         except Exception as exc:  # noqa: BLE001 - cleanup must be visible
             cleanup = CleanupResult("ERROR", str(exc))
             context.emit("phase.failed", {"phase": "cleanup", "reason": str(exc)})
