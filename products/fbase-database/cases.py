@@ -343,8 +343,13 @@ def load_native_sql_cases():
         path.read_text(encoding="utf-8"))["cases"]}
     supported = {"rows_equal", "output_contains_text", "sql_error", "sql_fails",
                  "command_succeeds"}
+    # These targets intentionally stay on the legacy executor until their
+    # product-specific privilege/session semantics have a platform contract.
+    unsafe = {"mac.audit.log_access_restrictions"}
     selected = {}
     for target, definition in definitions.items():
+        if target in unsafe:
+            continue
         steps = definition.get("steps") or []
         fixtures = definition.get("fixtures") or []
         valid_fixture = fixtures == ["cluster"] or (
@@ -353,10 +358,14 @@ def load_native_sql_cases():
                     for item in fixtures[1:])
         )
         if (not valid_fixture or not steps
-                or any(step.get("type") != "sql"
-                       or step.get("user", "postgres") != "postgres"
-                       or step.get("assertion", {}).get("type") not in supported
-                       for step in steps)):
+                or not all(
+                    (step.get("type") == "cluster_action" and
+                     step.get("action") == "reload" and
+                     step.get("assertion", {}).get("type") == "command_succeeds")
+                    or (step.get("type") == "sql"
+                        and step.get("user", "postgres") == "postgres"
+                        and step.get("assertion", {}).get("type") in supported)
+                    for step in steps) is False):
             continue
         selected[target] = definition
     return selected

@@ -23,6 +23,12 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
     """
     assertion = step.get("assertion") or {}
     kind = assertion.get("type")
+    if step.get("type") == "cluster_action":
+        if step.get("action") != "reload" or kind != "command_succeeds":
+            raise ValueError(f"平台不支持集群动作: {step.get('action')}")
+        context.reload(node)
+        context.step(f"step-{index}", step["title"], details={"action": "reload"})
+        return
     if step.get("type") != "sql" or kind not in SUPPORTED_SQL_ASSERTIONS:
         raise ValueError(f"平台不支持 SQL 步骤或断言: {kind}")
     key = f"step-{index}"
