@@ -1,11 +1,16 @@
 """fbasecman test, stability, and runtime observation provider."""
 
 import json
+import os
+import socket
 import sys
 from pathlib import Path
 
+import yaml
+
 from platform_app.product_catalog import discover_products
 from platform_app.providers import CommandSpec
+from platform_app.topology import configured_topology
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -135,8 +140,9 @@ class FbasecmanProvider:
             profile, override = profile_paths(settings, environment["id"])
             if not profile.is_file() or not override.is_file():
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
-            context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
-            if not context.is_file():
+            native_target = target == "sql_parse.savepoint_recovery_after_local_25p02"
+            legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
+            if not native_target and not legacy_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
                 output = settings.environment_dir / "regression" / environment["id"] / target
@@ -145,6 +151,38 @@ class FbasecmanProvider:
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
+                if target == "sql_parse.savepoint_recovery_after_local_25p02":
+                    topology = configured_topology(settings, environment)
+                    primaries = {node.get("group"): node for node in topology["nodes"]
+                                 if node.get("role") == "primary"}
+                    if "mmr1" not in primaries or "mmr2" not in primaries:
+                        raise RuntimeError("fbasecman 原生用例需要 mmr1/mmr2 两个主节点")
+                    runtime_file = settings.fbasecman_regress_root / "regress.yaml"
+                    runtime = yaml.safe_load(runtime_file.read_text(encoding="utf-8"))
+                    fbasecman = runtime.get("fbasecman", {})
+                    listener = socket.socket()
+                    listener.bind(("127.0.0.1", 0))
+                    proxy_port = listener.getsockname()[1]
+                    listener.close()
+                    probe = socket.socket()
+                    try:
+                        probe.bind(("127.0.0.1", proxy_port + 2))
+                    except OSError as exc:
+                        raise RuntimeError("代理端口相邻的 metrics 端口已占用，请重试") from exc
+                    finally:
+                        probe.close()
+                    case_context.update({
+                        "nodes": {"mmr1": {"host": primaries["mmr1"]["host"],
+                                            "port": primaries["mmr1"]["port"]},
+                                  "mmr2": {"host": primaries["mmr2"]["host"],
+                                            "port": primaries["mmr2"]["port"]}},
+                        "user": environment.get("database_user") or "postgres",
+                        "fbasecman_bin": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_BIN")
+                        or fbasecman.get("fbasecman_bin"),
+                        "license_dir": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR")
+                        or fbasecman.get("license_dir"),
+                        "proxy_port": proxy_port,
+                    })
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),

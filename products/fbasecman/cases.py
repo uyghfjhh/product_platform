@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from platform_regress import Blocked
+from products.fbasecman.native import SavepointRecoveryCase
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -74,4 +75,8 @@ class LegacyCmanCase:
         raise RuntimeError(f"旧用例结果与退出码不一致: {status}/{result.returncode}")
 
 
-CASES = {item["target"]: LegacyCmanCase(item["target"]) for item in CASE_METADATA}
+NATIVE_CASES = {
+    "sql_parse.savepoint_recovery_after_local_25p02": SavepointRecoveryCase(),
+}
+CASES = {item["target"]: NATIVE_CASES.get(
+    item["target"], LegacyCmanCase(item["target"])) for item in CASE_METADATA}

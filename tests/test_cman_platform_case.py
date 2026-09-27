@@ -75,3 +75,9 @@ def test_bulk_cman_bridge_rejects_unchanged_old_summary(tmp_path):
 def test_bulk_cman_catalog_registers_all_targets():
     module = load_cases()
     assert len(module.CASES) == len(module.CASE_METADATA) == 211
+
+
+def test_savepoint_protocol_case_is_native():
+    module = load_cases()
+    case = module.CASES["sql_parse.savepoint_recovery_after_local_25p02"]
+    assert type(case).__name__ == "SavepointRecoveryCase"

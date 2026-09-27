@@ -213,6 +213,25 @@ Provider 通过 `ExecutionContext` 发布事件和附件，不直接更新平台
 
 ## 5. 回归测试平台
 
+### 5.0 旧回归迁移保真原则
+
+fbasecman、多活和等保的既有回归实现是迁移行为基准，参考工程固定为：
+
+- fbasecman：`/home/postgres/fly_dev/fbasecman_dev/fbasecman_regress_v2`
+- FBase 多活/等保：`/home/postgres/fly_dev/postgresql_for_fbase_dev/fbase_regress`
+- 数据库集群部署：`/home/postgres/fly_dev/pgcluster`
+
+迁移只替换执行宿主和平台集成方式。产品配置、测试准备、步骤顺序、断言内容、
+资源清理、报告证据和判定语义必须保持一致。旧版本已失败的用例迁入后继续 FAIL；
+不得为了平台测试变绿而删步骤、放宽预期、把 BLOCKED/ERROR 改成 PASS 或重写业务
+断言。每个迁移批次必须逐项对照参考工程中的 executor、fixture、配置变换和报告。
+
+平台公共 SDK 负责运行隔离、取消、超时、资源生命周期、事件、结果和证据；产品包
+负责产品配置、协议、产品专属 fixture 与业务断言。无法解释的差异保持原判定并记录，
+不得猜测测试意图。代码目录也必须遵守：平台代码在 `backend/platform_*`，产品代码
+只在 `products/<product_id>/`，数据库部署由 pgcluster 管理，禁止把 PostgreSQL
+数据目录放进项目 `data/`。
+
 ### 5.1 RegressionEngine
 
 回归测试通用能力属于平台：
