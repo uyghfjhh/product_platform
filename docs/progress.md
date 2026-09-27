@@ -100,6 +100,7 @@
 - 2026-09-27：按旧工程保真原则完成 fbasecman 原生协议迁移。`sql_parse.savepoint_recovery_after_local_25p02` 在真实 cman-lab 双主环境 PASS；平台原生启动 fbasecman、执行 13 个 Extended Query 事务步骤、核对 SQLSTATE/ReadyForQuery/CommandComplete/结果值和同一 client 日志中的内部 rollback，并归档配置、协议记录和产品日志。
 - 2026-09-27：继续原生迁移 fbasecman SQL_PARSE heartbeat 三个目标：`heartbeat_bind_normal`、`heartbeat_bind_invalid`、`heartbeat_bind_unsupported`。真实环境 normal/malformed PASS；binary fallback 按旧版本语义保留 FAIL。平台不再要求原生目标存在旧 `test_context.yaml`，拓扑、MMR UUID、system identifier、二进制和 license 从 pgcluster/产品配置注入。平台全量测试 97 passed。
 - 2026-09-27：迁移保真原则固定写入 `docs/design.md`，参考路径为 `/home/postgres/fly_dev/fbasecman_dev/fbasecman_regress_v2`、`/home/postgres/fly_dev/postgresql_for_fbase_dev/fbase_regress`、`/home/postgres/fly_dev/pgcluster`。用户已明确允许正常处理未跟踪 core dump、scratch 和锁文件；本阶段未清理它们，也未使用 destructive git 操作。
+- 2026-09-27：原生迁移 `fbasecman` 的 `ha_commands.sql_parse_extended_protocol`。保留旧 Java PreparedStatement 测试资产、sql_parse 配置、读路由/写 leader 端口判定及 ROLLBACK/COMMIT 恢复标记；平台负责配置、进程、javac/java 命令、证据和清理。真实 cman-lab 双主环境 PASS。平台命令执行器修复为允许显式空字符串参数（JDBC 空密码是旧用例语义），并加入回归测试。
 
 - 路线图 P1–P6 未开始(见 [设计文档](design.md) 第二部分第 4 节)。
 - P7 相关遗留:报告 Modal 的 3D canvas 像素/取景/步骤播放/节点点击/手机截图未验收;部署画布需重做(深色完整画布、节点操作);2D 拓扑需继续按参考截图校准布局、连线、3D 视角和动效;`stable.sh env` 需要独立 stable pgcluster 配置才能实际运行;真实执行/停止及部署流程端到端验证未做。

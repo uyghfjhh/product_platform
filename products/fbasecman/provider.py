@@ -140,11 +140,12 @@ class FbasecmanProvider:
             profile, override = profile_paths(settings, environment["id"])
             if not profile.is_file() or not override.is_file():
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
-            native_target = target.startswith("sql_parse.") and target in {
+            native_target = target in {
                 "sql_parse.savepoint_recovery_after_local_25p02",
                 "sql_parse.heartbeat_bind_normal",
                 "sql_parse.heartbeat_bind_invalid",
                 "sql_parse.heartbeat_bind_unsupported",
+                "ha_commands.sql_parse_extended_protocol",
             }
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():
@@ -188,6 +189,13 @@ class FbasecmanProvider:
                         or fbasecman.get("license_dir"),
                         "proxy_port": proxy_port,
                     })
+                    if target == "ha_commands.sql_parse_extended_protocol":
+                        case_context.update({
+                            "sql_parse_java_asset": str(settings.fbasecman_regress_root /
+                                "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
+                            "jdbc_jar": str(settings.fbasecman_regress_root /
+                                "lib_jdbc/postgresql-42.7.7.jar"),
+                        })
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),

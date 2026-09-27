@@ -283,7 +283,7 @@ class CaseContext:
         A nonzero exit is returned to the case, which owns the business
         assertion. Timeout and cancellation interrupt the whole process group.
         """
-        if not argv or any(not isinstance(arg, str) or not arg for arg in argv):
+        if not argv or any(not isinstance(arg, str) for arg in argv):
             raise ValueError("命令必须是非空字符串参数数组")
         if timeout_seconds <= 0:
             raise ValueError("命令超时必须大于零")

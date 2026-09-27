@@ -74,7 +74,7 @@ def test_bulk_cman_bridge_rejects_unchanged_old_summary(tmp_path):
 
 def test_bulk_cman_catalog_registers_all_targets():
     module = load_cases()
-    assert len(module.CASES) == len(module.CASE_METADATA) == 211
+    assert len(module.CASES) == len(module.CASE_METADATA) == 212
 
 
 def test_savepoint_protocol_case_is_native():

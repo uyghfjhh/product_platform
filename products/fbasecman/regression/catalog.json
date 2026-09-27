@@ -2,6 +2,18 @@
   "schema_version": 1,
   "cases": [
     {
+      "suite": "ha_commands",
+      "suite_title": "高可用控制台命令及持久化测试",
+      "suite_description": "fbasecman 高可用控制台和扩展协议回归",
+      "target": "ha_commands.sql_parse_extended_protocol",
+      "name": "sql_parse_extended_protocol",
+      "title": "sql_parse 使用 JDBC PreparedStatement 覆盖扩展协议与失败事务恢复",
+      "core_id": "",
+      "summary": "sql_parse 使用 JDBC PreparedStatement 覆盖扩展协议与失败事务恢复",
+      "enabled": true,
+      "tags": ["sql_parse", "protocol"]
+    },
+    {
       "suite": "guc",
       "suite_title": "GUC 规范化、多值解析与连接复用测试",
       "suite_description": "search_path 多值 GUC 规范化、AST 表达式重放、Hint/SQL_PARSE 模式与连接复用防多重转义",

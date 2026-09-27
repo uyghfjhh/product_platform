@@ -256,6 +256,40 @@ class HeartbeatBindCase:
         return True
 
 
+class SqlParseExtendedProtocolCase:
+    """Native host for the legacy JDBC routing/recovery contract."""
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="sql_parse")
+        text = config.read_text(encoding="utf-8")
+        required = ('rw_split_method "sql_parse"',
+                    'pool_reserve_prepared_statement yes')
+        if not all(item in text for item in required):
+            raise AssertionError("sql_parse JDBC 配置不完整")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        asset = Path(context.environment.get("sql_parse_java_asset", ""))
+        jar = Path(context.environment.get("jdbc_jar", ""))
+        if not asset.is_file() or not jar.is_file():
+            raise Blocked("缺少 SQL_PARSE JDBC 测试资产或驱动")
+        context.command(["javac", "-cp", str(jar), "-d", str(context.output_dir), str(asset)],
+                        cwd=context.output_dir, timeout_seconds=60)
+        url = f"jdbc:postgresql://127.0.0.1:{port}/mmr_group?prepareThreshold=1&preferQueryMode=extended"
+        result = context.command(["java", "-cp", f"{context.output_dir}:{jar}",
+                                  "HaSqlParseExtended", url, "postgres", ""],
+                                 cwd=context.output_dir, timeout_seconds=120)
+        required_markers = ("ROLLBACK_RECOVERY=OK", "COMMIT_RECOVERY=OK", "PARAM_VALUE=42",
+                            "READ_PORT=", "WRITE_PORT=")
+        passed = result.returncode == 0 and all(marker in result.stdout for marker in required_markers)
+        context.step("jdbc-verdict", "核对 SQL_PARSE JDBC 扩展协议路由和事务恢复",
+                     status="PASS" if passed else "FAIL",
+                     details={"output": result.stdout, "required": required_markers})
+        if not passed:
+            raise AssertionError("SQL_PARSE JDBC 扩展协议结果与旧用例预期不符")
+        return True
+
+
 class SavepointRecoveryCase:
     """Native Extended Query savepoint recovery verification."""
 

@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 
 from platform_regress import Blocked
-from products.fbasecman.native import HeartbeatBindCase, SavepointRecoveryCase
+from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
+                                        SqlParseExtendedProtocolCase)
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -80,6 +81,7 @@ NATIVE_CASES = {
     "sql_parse.heartbeat_bind_normal": HeartbeatBindCase("normal"),
     "sql_parse.heartbeat_bind_invalid": HeartbeatBindCase("malformed"),
     "sql_parse.heartbeat_bind_unsupported": HeartbeatBindCase("binary"),
+    "ha_commands.sql_parse_extended_protocol": SqlParseExtendedProtocolCase(),
 }
 CASES = {item["target"]: NATIVE_CASES.get(
     item["target"], LegacyCmanCase(item["target"])) for item in CASE_METADATA}

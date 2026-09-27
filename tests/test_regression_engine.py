@@ -232,6 +232,12 @@ def test_command_records_nonzero_exit_without_rewriting_business_verdict(tmp_pat
     assert events[-1]["kind"] == "command.finished"
 
 
+def test_command_allows_explicit_empty_argument(tmp_path):
+    context = CaseContext("demo.empty-arg", tmp_path)
+    result = context.command([sys.executable, "-c", "import sys; assert sys.argv[1] == ''", ""])
+    assert result.returncode == 0
+
+
 def test_command_timeout_and_cancel_stop_child_process(tmp_path):
     context = CaseContext("demo.timeout", tmp_path / "timeout")
     with pytest.raises(TimeoutError):
