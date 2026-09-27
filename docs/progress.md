@@ -103,6 +103,7 @@
 - 2026-09-27：原生迁移 `fbasecman` 的 `ha_commands.sql_parse_extended_protocol`。保留旧 Java PreparedStatement 测试资产、sql_parse 配置、读路由/写 leader 端口判定及 ROLLBACK/COMMIT 恢复标记；平台负责配置、进程、javac/java 命令、证据和清理。真实 cman-lab 双主环境 PASS。平台命令执行器修复为允许显式空字符串参数（JDBC 空密码是旧用例语义），并加入回归测试。
 - 2026-09-27：原生接入 `ha_commands.jdbc_console_ha_commands`，保留旧 JDBC 控制台命令资产、MMR 主备拓扑、配置快照目录和全部 marker 判定。真实 cman-lab 执行进入产品命令流程后在 `SET_NODE_PARTED` 之后失败，平台记录为 FAIL 并归档命令输出/产品日志；未放宽旧语义或改判 PASS。
 - 2026-09-27：原生迁移 `ha_commands.set_node_write_idempotent`。平台保留旧的初始路由检查、`SET NODE WRITE pg_2 IN GROUP mmr_group` 命令、配置字节不变判定和最终路由检查；真实 cman-lab 执行 PASS，结果包含三次 SQL/命令证据及产品日志。
+- 2026-09-27：继续原生迁移两个幂等高可用命令：`set_node_promoted_idempotent` 真实执行 PASS；`set_cluster_active_idempotent` 按旧语义真实执行 FAIL，平台保留该失败及证据，不改判定。
 
 - 路线图 P1–P6 未开始(见 [设计文档](design.md) 第二部分第 4 节)。
 - P7 相关遗留:报告 Modal 的 3D canvas 像素/取景/步骤播放/节点点击/手机截图未验收;部署画布需重做(深色完整画布、节点操作);2D 拓扑需继续按参考截图校准布局、连线、3D 视角和动效;`stable.sh env` 需要独立 stable pgcluster 配置才能实际运行;真实执行/停止及部署流程端到端验证未做。

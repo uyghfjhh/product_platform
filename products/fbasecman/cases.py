@@ -8,7 +8,7 @@ from platform_regress import Blocked
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                         SqlParseExtendedProtocolCase,
                                         JdbcConsoleHaCommandsCase)
-from products.fbasecman.native import SetNodeWriteIdempotentCase
+from products.fbasecman.native import SetNodeWriteIdempotentCase, IdempotentHaCommandCase
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -86,6 +86,12 @@ NATIVE_CASES = {
     "ha_commands.sql_parse_extended_protocol": SqlParseExtendedProtocolCase(),
     "ha_commands.jdbc_console_ha_commands": JdbcConsoleHaCommandsCase(),
     "ha_commands.set_node_write_idempotent": SetNodeWriteIdempotentCase(),
+    "ha_commands.set_node_promoted_idempotent": IdempotentHaCommandCase(
+        "SET NODE PROMOTED pg_1 IN GROUP mmr_group;", ("pg_cluster_1",),
+        ("mmr_group", "active", "pg_cluster_1"), "核对 SET NODE PROMOTED 幂等命令"),
+    "ha_commands.set_cluster_active_idempotent": IdempotentHaCommandCase(
+        "SET CLUSTER ACTIVE pg_cluster_1;", ("pg_cluster_1", "VALID", "pg_1"),
+        ("mmr_group", "pg_cluster_1", "pg_1"), "核对 SET CLUSTER ACTIVE 幂等命令"),
 }
 CASES = {item["target"]: NATIVE_CASES.get(
     item["target"], LegacyCmanCase(item["target"])) for item in CASE_METADATA}

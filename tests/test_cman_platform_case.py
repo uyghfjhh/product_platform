@@ -91,3 +91,9 @@ def test_jdbc_console_case_is_native():
 def test_set_node_write_idempotent_case_is_native():
     module = load_cases()
     assert type(module.CASES["ha_commands.set_node_write_idempotent"]).__name__ == "SetNodeWriteIdempotentCase"
+
+
+def test_more_idempotent_ha_cases_are_native():
+    module = load_cases()
+    assert type(module.CASES["ha_commands.set_node_promoted_idempotent"]).__name__ == "IdempotentHaCommandCase"
+    assert type(module.CASES["ha_commands.set_cluster_active_idempotent"]).__name__ == "IdempotentHaCommandCase"

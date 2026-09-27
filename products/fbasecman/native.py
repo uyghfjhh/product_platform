@@ -368,6 +368,42 @@ class SetNodeWriteIdempotentCase:
         return True
 
 
+class IdempotentHaCommandCase:
+    """Native implementation for idempotent NODE/CLUSTER commands."""
+
+    def __init__(self, command, initial_needles, final_needles, title):
+        self.command, self.initial_needles = command, initial_needles
+        self.final_needles, self.title = final_needles, title
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        before = config.read_bytes()
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        def q(sql):
+            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+                                    "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
+        initial = q("SHOW GROUP_ROUTING mmr_group;")
+        command = q(self.command)
+        final = q("SHOW GROUP_ROUTING mmr_group;")
+        unchanged = config.read_bytes() == before
+        passed = (initial.returncode == command.returncode == final.returncode == 0
+                  and all(x in initial.stdout for x in self.initial_needles)
+                  and ("SET NODE" in command.stdout or "SET CLUSTER" in command.stdout
+                       or "NO CONFIG CHANGE" in command.stdout)
+                  and "ERROR" not in command.stdout and unchanged
+                  and all(x in final.stdout for x in self.final_needles))
+        output = "\n".join((initial.stdout, command.stdout, final.stdout))
+        context.attach_text("idempotent-ha-output.txt", output)
+        context.step("idempotent-verdict", self.title, status="PASS" if passed else "FAIL",
+                     details={"config_unchanged": unchanged, "output": output})
+        if not passed:
+            raise AssertionError(self.title + " 与旧用例预期不符")
+        return True
+
+
 class SavepointRecoveryCase:
     """Native Extended Query savepoint recovery verification."""
 
