@@ -33,6 +33,7 @@ SHARED_ENGINE_TARGETS = frozenset({
     "mac.mac.table_creation_and_grants",
     "mac.separation_of_duties.dba_object_privilege_separation",
     "mac.audit.server_audit_logs",
+    "mac.separation_of_duties.dba_user_management_separation_on",
 })
 
 

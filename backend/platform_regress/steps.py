@@ -11,7 +11,7 @@ from .engine import CaseContext
 
 
 SUPPORTED_SQL_ASSERTIONS = frozenset({
-    "rows_equal", "output_contains_text", "sql_error", "sql_fails", "command_succeeds",
+    "rows_equal", "output_contains_text", "output_contains", "sql_error", "sql_fails", "command_succeeds",
 })
 
 
@@ -81,7 +81,7 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
                               for row in assertion["rows"])
         passed = result.rows == expected_rows
         details = {"expected": expected_rows, "actual": result.rows}
-    elif kind == "output_contains_text":
+    elif kind in {"output_contains_text", "output_contains"}:
         # The structured SQL result contains the values that psql previously
         # printed. Include columns and the command tag for metadata checks.
         display = "\n".join([*result.columns,

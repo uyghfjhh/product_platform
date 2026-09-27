@@ -348,7 +348,7 @@ def load_native_sql_cases():
     path = Path(__file__).parent / "regression" / "cases.json"
     definitions = {case["id"]: case for case in json.loads(
         path.read_text(encoding="utf-8"))["cases"]}
-    supported = {"rows_equal", "output_contains_text", "sql_error", "sql_fails",
+    supported = {"rows_equal", "output_contains_text", "output_contains", "sql_error", "sql_fails",
                  "command_succeeds"}
     # These targets intentionally stay on the legacy executor until their
     # product-specific privilege/session semantics have a platform contract.
