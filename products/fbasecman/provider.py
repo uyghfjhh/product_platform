@@ -140,7 +140,12 @@ class FbasecmanProvider:
             profile, override = profile_paths(settings, environment["id"])
             if not profile.is_file() or not override.is_file():
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
-            native_target = target == "sql_parse.savepoint_recovery_after_local_25p02"
+            native_target = target.startswith("sql_parse.") and target in {
+                "sql_parse.savepoint_recovery_after_local_25p02",
+                "sql_parse.heartbeat_bind_normal",
+                "sql_parse.heartbeat_bind_invalid",
+                "sql_parse.heartbeat_bind_unsupported",
+            }
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
@@ -151,7 +156,7 @@ class FbasecmanProvider:
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
-                if target == "sql_parse.savepoint_recovery_after_local_25p02":
+                if native_target:
                     topology = configured_topology(settings, environment)
                     primaries = {node.get("group"): node for node in topology["nodes"]
                                  if node.get("role") == "primary"}

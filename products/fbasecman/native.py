@@ -181,6 +181,81 @@ def _run_protocol(port):
     return records
 
 
+def _heartbeat_probe(port, mode):
+    """Run the legacy heartbeat Parse/Bind/Execute message sequence."""
+    with _protocol_connect(port) as sock:
+        statement = b"hb\0SELECT 1\0" + struct.pack("!H", 0)
+        _send(sock, "P", statement)
+        _send(sock, "S")
+        parse_messages = []
+        while True:
+            kind, _ = _message(sock)
+            parse_messages.append(kind)
+            if kind == "Z":
+                break
+        bind = b"\0hb\0" + struct.pack("!H", 0) + struct.pack("!H", 0)
+        if mode == "malformed":
+            pass
+        elif mode == "binary":
+            bind += struct.pack("!H", 1) + struct.pack("!H", 1)
+        else:
+            bind += struct.pack("!H", 0)
+        _send(sock, "B", bind)
+        _send(sock, "E", b"\0" + struct.pack("!I", 0))
+        _send(sock, "S")
+        messages = []
+        while True:
+            kind, _ = _message(sock)
+            messages.append(kind)
+            if kind == "Z":
+                break
+        return parse_messages, messages
+
+
+class HeartbeatBindCase:
+    """Native SQL_PARSE heartbeat Bind variants."""
+
+    def __init__(self, mode):
+        self.mode = mode
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="sql_parse")
+        text = config.read_text(encoding="utf-8")
+        required = ('rw_split_method "sql_parse"',
+                    'pool_reserve_prepared_statement yes', 'heartbeat_request "select 1"')
+        if not all(item in text for item in required):
+            raise AssertionError("SQL_PARSE heartbeat 配置不完整")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        parse_messages, messages = _heartbeat_probe(port, self.mode)
+        if self.mode == "malformed":
+            passed = "E" in messages and "Z" in messages and "D" not in messages
+        else:
+            passed = all(item in messages for item in ("2", "D", "C", "Z"))
+        context.attach_text("heartbeat-messages.json", json.dumps(
+            {"mode": self.mode, "parse": parse_messages, "bind": messages}, indent=2))
+        context.step("heartbeat-verdict", "核对 SQL_PARSE heartbeat Bind", status="PASS" if passed else "FAIL",
+                     details={"mode": self.mode, "parse": parse_messages, "bind": messages})
+        if not passed:
+            raise AssertionError(f"heartbeat {self.mode} 响应不符合旧用例预期")
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        backend_check = context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
+                                         "-p", str(port), "-U", "postgres", "-d", "console",
+                                         "-c", "SHOW SERVER_PREP_STMTS;"], timeout_seconds=15)
+        rendered = backend_check.stdout
+        backend_has_statement = "SELECT 1" in rendered
+        expected_backend = self.mode == "binary"
+        backend_ok = backend_has_statement == expected_backend
+        context.step("backend-prepared-check", "核对 heartbeat 后端 PreparedStatement 部署",
+                     status="PASS" if backend_ok else "FAIL",
+                     details={"contains_select_1": backend_has_statement,
+                              "expected": expected_backend, "output": rendered})
+        if not backend_ok:
+            raise AssertionError("heartbeat 后端 PreparedStatement 部署状态与旧用例预期不符")
+        return True
+
+
 class SavepointRecoveryCase:
     """Native Extended Query savepoint recovery verification."""
 
