@@ -349,6 +349,83 @@ def _execute_case(rt):
     _assert_fbasecman_no_warning_or_error(rt)
 
 
+def _run_case(root, env, context, case):
+    rt = CaseRuntime(root, env, context, case)
+    rt.trace("[global_cache] run   %s" % case.target)
+    rt.trace("summary: %s" % case.summary)
+    rt.trace(
+        "manifest: batch=%s driver=%s topology=%s rw=%s pool=%s"
+        % (
+            case.batch,
+            case.driver,
+            case.topology,
+            case.rw_split_method,
+            case.pool_mode,
+        )
+    )
+    if case.notes:
+        rt.trace("notes: %s" % " | ".join(case.notes))
+    try:
+        _execute_case(rt)
+        _assert_negative_logs(rt)
+        rt.summary["status"] = "PASS"
+    except Exception as exc:
+        rt.summary["status"] = "FAIL"
+        issue_suffix = " [%s]" % case.issue_id if case.issue_id else ""
+        rt.summary["reason"] = "%s%s" % (str(exc), issue_suffix)
+        if not rt.summary.get("failed_step"):
+            previous = rt.step_records[-1].get("title", "<none>") if rt.step_records else "<none>"
+            rt.record_step(
+                "用例断言阶段失败",
+                output="last completed step: %s" % previous,
+                expected="用例完成全部业务步骤和产品行为检测，不抛出异常。",
+                actual=str(exc),
+                result="FAIL",
+                phase="assertion",
+            )
+            rt.summary["failed_step"] = dict(rt.step_records[-1])
+    finally:
+        rt.stop_fbasecman(best_effort=True, record=False)
+        core_info = rt.detect_new_core()
+        if core_info is not None:
+            core_path, gdb_cmd = core_info
+            reason = "fbasecman generated core dump during execution or shutdown: %s" % core_path
+            previous_reason = rt.summary.get("reason")
+            rt.summary["status"] = "FAIL"
+            rt.summary["reason"] = (
+                "%s; %s" % (previous_reason, reason) if previous_reason else reason
+            )
+            rt.record_step(
+                "产品进程崩溃检测",
+                expected="用例执行及进程停止期间不产生 core dump。",
+                actual=core_path,
+                result="FAIL",
+                phase="cleanup",
+            )
+            rt.summary["failed_step"] = dict(rt.step_records[-1])
+            print("    core: %s" % core_path, flush=True)
+            print("    gdb : %s" % gdb_cmd, flush=True)
+        rt.capture_core_log_evidence()
+        rt.finish()
+        rt.write_summary()
+        rt.write_report()
+        rt.prune_artifacts()
+    passed = rt.summary["status"] == "PASS"
+    if passed:
+        print("%-55s SUCCESS" % case.target, flush=True)
+    else:
+        print("%-55s FAIL" % case.target, flush=True)
+        print("    reason: %s" % rt.summary.get("reason", "unknown"), flush=True)
+    return passed, rt.summary.get("reason", "unknown")
+
+
+def run_case(root, case):
+    """Platform engine entry: execute one manifest case, return pass/fail."""
+    env, context = _load_env(root)
+    passed, _ = _run_case(root, env, context, case)
+    return passed
+
+
 def run(root, target=None):
     _validate_report_levels()
     env, context = _load_env(root)
@@ -365,73 +442,11 @@ def run(root, target=None):
     failures = []
     success_count = 0
     for case in selected:
-        rt = CaseRuntime(root, env, context, case)
-        rt.trace("[global_cache] run   %s" % case.target)
-        rt.trace("summary: %s" % case.summary)
-        rt.trace(
-            "manifest: batch=%s driver=%s topology=%s rw=%s pool=%s"
-            % (
-                case.batch,
-                case.driver,
-                case.topology,
-                case.rw_split_method,
-                case.pool_mode,
-            )
-        )
-        if case.notes:
-            rt.trace("notes: %s" % " | ".join(case.notes))
-        try:
-            _execute_case(rt)
-            _assert_negative_logs(rt)
-            rt.summary["status"] = "PASS"
-        except Exception as exc:
-            rt.summary["status"] = "FAIL"
-            issue_suffix = " [%s]" % case.issue_id if case.issue_id else ""
-            rt.summary["reason"] = "%s%s" % (str(exc), issue_suffix)
-            if not rt.summary.get("failed_step"):
-                previous = rt.step_records[-1].get("title", "<none>") if rt.step_records else "<none>"
-                rt.record_step(
-                    "用例断言阶段失败",
-                    output="last completed step: %s" % previous,
-                    expected="用例完成全部业务步骤和产品行为检测，不抛出异常。",
-                    actual=str(exc),
-                    result="FAIL",
-                    phase="assertion",
-                )
-                rt.summary["failed_step"] = dict(rt.step_records[-1])
-        finally:
-            rt.stop_fbasecman(best_effort=True, record=False)
-            core_info = rt.detect_new_core()
-            if core_info is not None:
-                core_path, gdb_cmd = core_info
-                reason = "fbasecman generated core dump during execution or shutdown: %s" % core_path
-                previous_reason = rt.summary.get("reason")
-                rt.summary["status"] = "FAIL"
-                rt.summary["reason"] = (
-                    "%s; %s" % (previous_reason, reason) if previous_reason else reason
-                )
-                rt.record_step(
-                    "产品进程崩溃检测",
-                    expected="用例执行及进程停止期间不产生 core dump。",
-                    actual=core_path,
-                    result="FAIL",
-                    phase="cleanup",
-                )
-                rt.summary["failed_step"] = dict(rt.step_records[-1])
-                print("    core: %s" % core_path, flush=True)
-                print("    gdb : %s" % gdb_cmd, flush=True)
-            rt.capture_core_log_evidence()
-            rt.finish()
-            rt.write_summary()
-            rt.write_report()
-            rt.prune_artifacts()
-            if rt.summary["status"] == "PASS":
-                success_count += 1
-                print("%-55s SUCCESS" % case.target, flush=True)
-            else:
-                print("%-55s FAIL" % case.target, flush=True)
-                print("    reason: %s" % rt.summary.get("reason", "unknown"), flush=True)
-                failures.append((case.target, rt.summary.get("reason", "unknown")))
+        passed, reason = _run_case(root, env, context, case)
+        if passed:
+            success_count += 1
+        else:
+            failures.append((case.target, reason))
 
     print("-------------------------------------------------------------------------------------", flush=True)
     print("Total:", flush=True)

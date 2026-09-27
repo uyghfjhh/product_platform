@@ -392,8 +392,12 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             nodes = {node["id"] for node in topology["nodes"]}
             allowed = {environment["deployment_target"]} | nodes
-            if item.action in {"deployment.failover", "deployment.rejoin"}:
+            if item.action in {"deployment.failover", "deployment.switchover",
+                               "deployment.rejoin", "deployment.lag"}:
                 allowed = {f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
+            if item.action == "deployment.verify":
+                allowed = {environment["deployment_target"]} | {
+                    f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
             if target not in allowed:
                 raise HTTPException(status_code=422, detail="操作目标不属于当前环境拓扑")
             if item.action in {"deployment.validate", "deployment.create", "deployment.health", "deployment.clean"} and target != environment["deployment_target"]:

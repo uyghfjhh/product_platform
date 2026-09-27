@@ -1,11 +1,41 @@
 """FBase cases migrated to the shared platform regression engine."""
 
+import importlib.util
 import json
 import re
+import shutil
+import uuid
 from pathlib import Path
 
-from platform_regress import Blocked, run_sql_step
+from platform_regress import (Blocked, run_declared_steps, run_sql_step,
+                              SUPPORTED_COMMAND_ASSERTIONS, SUPPORTED_SQL_ASSERTIONS)
 import psycopg
+
+
+def _load_isolated_module():
+    """Load this product's sibling module without a package import."""
+    path = Path(__file__).parent / "isolated.py"
+    spec = importlib.util.spec_from_file_location("_fbase_isolated", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("无法加载 FBase 隔离集群 fixture")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_fixtures_module():
+    """Load this product's fixture registry without a package import."""
+    path = Path(__file__).parent / "fixtures.py"
+    spec = importlib.util.spec_from_file_location("_fbase_fixtures", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("无法加载 FBase fixture 注册表")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+isolated = _load_isolated_module()
+fixtures_mod = _load_fixtures_module()
 
 
 def require_nodes(context, names):
@@ -389,6 +419,314 @@ FIXTURE_TARGETS = frozenset(target for target, definition in NATIVE_SQL_CASES.it
                              if len(definition.get("fixtures", [])) > 1)
 
 
+def _scalar(context, node, sql):
+    rows = context.sql(node, sql).rows
+    return rows[0][0] if rows and rows[0] else None
+
+
+def check_requirements(context, definition):
+    """Mirror the legacy requirement gate exactly (evaluate_requirements)."""
+    requirements = definition.get("requirements") or {}
+    cluster = context.environment.get("cluster")
+    cluster_name = context.environment.get("cluster_name") or cluster
+    allowed = requirements.get("clusters") or []
+    if allowed and cluster not in allowed:
+        raise Blocked("用例仅支持 cluster=%s；当前为 %s" % (",".join(allowed), cluster))
+    for command in requirements.get("commands") or []:
+        if not isinstance(command, str) or not command:
+            raise ValueError("requirements.commands 必须包含非空命令名: %s" % command)
+        if not shutil.which(command):
+            raise Blocked("缺少命令: %s；请安装 util-linux（提供 %s）" % (command, command))
+    missing_plugins = sorted(set(requirements.get("plugins") or []) -
+                             set(context.environment.get("plugins") or []))
+    if missing_plugins:
+        raise Blocked("cluster %s 未启用插件: %s" % (cluster_name, ",".join(missing_plugins)))
+    for group in requirements.get("groups") or []:
+        if group not in (context.environment.get("node_groups") or {}):
+            raise Blocked("cluster %s 缺少关系组: %s" % (cluster_name, group))
+    for selector in requirements.get("nodes") or []:
+        context.resolve_node(selector)
+    node = context.resolve_node(requirements.get("node") or "primary")
+    if requirements.get("writable_node"):
+        row = fixtures_mod.node_status_row(context, node)
+        if not row or row[5] != "false" or row[6] != "healthy":
+            raise Blocked("cluster %s 没有健康的可写节点" % cluster_name)
+    if requirements.get("system_time_control"):
+        result = context.command(["sudo", "-n", "true"], timeout_seconds=30,
+                                 merge_stderr=True)
+        if result.returncode != 0:
+            raise Blocked("密码周期用例需要免交互 sudo 调整并恢复系统时间；"
+                          "请安装 sudo 并为当前测试用户配置 sudo -n true")
+    for role in requirements.get("roles") or []:
+        try:
+            exists = fixtures_mod.query_value(
+                context, node, "postgres",
+                "SELECT count(*) FROM pg_roles WHERE rolname = '%s'"
+                % str(role).replace("'", "''"))
+        except Exception as exc:
+            raise Blocked("无法检查角色 %s: %s" % (role, exc))
+        if exists != "1":
+            raise Blocked("缺少数据库角色: %s" % role)
+    for extension in requirements.get("extensions") or []:
+        try:
+            available = fixtures_mod.query_value(
+                context, node, "postgres",
+                "SELECT count(*) FROM pg_available_extensions WHERE name = '%s'"
+                % str(extension).replace("'", "''"))
+        except Exception as exc:
+            raise Blocked("无法检查扩展 %s: %s" % (extension, exc))
+        if available != "1":
+            raise Blocked("缺少可用 PostgreSQL 扩展: %s" % extension)
+
+
+class ExportedCommandCase:
+    """Run one exported catalog case through the platform SDK natively.
+
+    Every supported step/fixture/assertion shape is dispatched verbatim onto
+    the platform primitives: psql subprocess SQL, command transport,
+    background processes, node/cluster lifecycle actions, system-time shifts,
+    declared fixtures and shared sessions all behave exactly like the legacy
+    executor — including halt/BLOCKED and cleanup ordering.
+    """
+
+    def __init__(self, definition):
+        # Legacy cases derived object names from a module-level uuid token
+        # (evaluated once per executor process).  The exporter froze that
+        # token into the catalog; "runtime_tokens" marks the literals to
+        # re-randomize at case construction so every run gets fresh names
+        # exactly like the legacy per-process TOKEN evaluation.
+        tokens = definition.get("runtime_tokens") or []
+        if tokens:
+            rendered = json.dumps(definition, ensure_ascii=False)
+            for token in tokens:
+                rendered = rendered.replace(str(token), uuid.uuid4().hex[:12])
+            definition = json.loads(rendered)
+        self.definition = definition
+        session = definition.get("session") or {}
+        self.session_key = session.get("key")
+        self.session_order = session.get("order", 0)
+        self.default_enabled = definition.get("default_enabled", True)
+        self._collectors = []
+        self._core_before = {}
+
+    def _isolated_mmr(self):
+        """Legacy _uses_isolated_mmr_topology: only this fixture relaxes the
+        shared-cluster health gates."""
+        return any(isinstance(fixture, dict) and
+                   fixture.get("type") == "isolated_mmr_node_creation"
+                   for fixture in self.definition.get("fixtures") or [])
+
+    def setup_session(self, context):
+        """Initialize this case's shared session fixtures and steps once.
+
+        Runs against the session-owned context whose cleanup drains when the
+        session key changes or the run ends. Any failure propagates to the
+        CLI, which stores it as the session error blocking every member case.
+        """
+        spec = self.definition["session"]
+        session_def = {"id": "_session.%s" % spec["key"],
+                       "steps": spec.get("steps") or []}
+        for fixture in spec.get("fixtures") or []:
+            fixtures_mod.setup_fixture(context, session_def, fixture)
+        try:
+            run_declared_steps(
+                context, session_def["steps"],
+                before_command=lambda argv: isolated.release_port_for_command(
+                    context, session_def, argv),
+                definition=session_def)
+        except AssertionError as exc:
+            raise RuntimeError("共享会话初始化步骤失败: %s" % exc)
+
+    def setup(self, context):
+        definition = self.definition
+        # The core snapshot precedes every gate, exactly like the legacy
+        # CoreCollector which starts before the blocker is consulted.
+        roots = fixtures_mod.core_file_roots(context, context.output_dir)
+        self._core_before = fixtures_mod._core_files(roots)
+
+        def collect_cores():
+            cores = fixtures_mod.collect_new_core_files(
+                context, self._core_before, context.output_dir)
+            if cores:
+                context.attach_text("core-files.txt", "\n".join(cores) + "\n")
+
+        context.defer_cleanup(collect_cores, priority=-600)
+        if context.environment.get("topology_error"):
+            raise Blocked("拓扑不可用: " + context.environment["topology_error"])
+        isolated_mmr = self._isolated_mmr()
+        if not isolated_mmr:
+            blocker = fixtures_mod.environment_blocker(context)
+            if blocker:
+                raise Blocked(blocker)
+            blocker, names = fixtures_mod.declared_nodes_blocker(
+                context, definition)
+            if blocker:
+                raise Blocked(blocker)
+        basic = dict(definition.get("requirements") or {})
+        basic.pop("settings", None)
+        if isolated_mmr:
+            basic.pop("writable_node", None)
+        check_requirements(context, dict(definition, requirements=basic))
+        session_error = context.values.get("session_error")
+        if session_error:
+            raise Blocked(session_error)
+        names = self._collector_nodes(context)
+        self._collectors = fixtures_mod.start_log_collectors(
+            context, names, context.output_dir)
+        collectors = self._collectors
+
+        def finish_collectors():
+            errors = fixtures_mod.finish_log_collectors(context, collectors)
+            if errors:
+                raise RuntimeError(errors)
+
+        context.defer_cleanup(finish_collectors, priority=-500)
+        blocker, details = fixtures_mod.evaluate_setting_requirements(
+            context, definition.get("requirements") or {})
+        if details:
+            context.attach_text(
+                "setting-requirements.json",
+                json.dumps(details, ensure_ascii=False, indent=2) + "\n")
+        if blocker:
+            raise Blocked(blocker)
+        try:
+            for fixture in definition.get("fixtures") or []:
+                try:
+                    fixtures_mod.setup_fixture(context, definition, fixture)
+                except fixtures_mod.SafetyError as exc:
+                    raise Blocked(str(exc))
+        finally:
+            fixture_settings = context.values.get("postgresql_settings")
+            if fixture_settings:
+                context.attach_text(
+                    "fixture-settings.json",
+                    json.dumps(fixture_settings, ensure_ascii=False, indent=2) + "\n")
+
+    def _collector_nodes(self, context):
+        """Declared nodes for server-log collection, tolerating gaps."""
+        names = []
+        try:
+            _, names = fixtures_mod.declared_nodes_blocker(
+                context, self.definition)
+        except Exception:
+            names = []
+        if names:
+            return names
+        for selector in fixtures_mod.declared_nodes(self.definition):
+            try:
+                name = context.resolve_node(selector)
+            except Exception:
+                continue
+            if name not in names:
+                names.append(name)
+        return names
+
+    def run(self, context):
+        definition = self.definition
+        failure = ""
+        try:
+            run_declared_steps(
+                context, definition["steps"],
+                before_command=lambda argv: isolated.release_port_for_command(
+                    context, definition, argv),
+                definition=definition)
+        except AssertionError as exc:
+            failure = str(exc)
+        # Fixture cleanup runs inside run() so its errors keep the legacy
+        # FAILED verdict instead of surfacing as a cleanup ERROR.
+        cleanup_error = ""
+        try:
+            context.cleanup_fixtures()
+        except Exception as exc:
+            cleanup_error = str(exc)
+        parts = [part for part in (failure, cleanup_error) if part]
+        if parts:
+            raise AssertionError("; ".join(parts))
+        return True
+
+
+_STEP_TYPES = frozenset({
+    "sql", "command", "wait_sql", "background_sql", "wait_background_sql",
+    "cluster_action", "node_action", "system_time_shift",
+})
+_ALL_ASSERTIONS = frozenset(
+    set(SUPPORTED_SQL_ASSERTIONS) | set(SUPPORTED_COMMAND_ASSERTIONS))
+
+
+def _supported_fixture_list(fixtures):
+    names = [item if isinstance(item, str) else item.get("type")
+             for item in fixtures or []]
+    return all(name in fixtures_mod.SUPPORTED_FIXTURES for name in names)
+
+
+def _supported_step_list(steps):
+    return all(
+        step.get("type", "sql") in _STEP_TYPES and
+        (step.get("assertion") or {}).get("type") in _ALL_ASSERTIONS
+        for step in steps or [])
+
+
+def load_exported_command_cases():
+    """Batch-register exported cases every capability is now platform-owned.
+
+    A case migrates only when its steps, fixtures, assertions and session
+    definition are all expressible with the platform SDK; anything else stays
+    on the legacy executor rather than being approximated.
+    """
+    path = Path(__file__).parent / "regression" / "cases.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    definitions = {case["id"]: case for case in payload["cases"]}
+    selected = {}
+    for target, case in definitions.items():
+        steps = case.get("steps") or []
+        fixtures = case.get("fixtures") or []
+        if (not steps or not fixtures or not _supported_step_list(steps)
+                or not _supported_fixture_list(fixtures)):
+            continue
+        session = case.get("session")
+        if session:
+            if not session.get("key"):
+                continue
+            if not _supported_fixture_list(session.get("fixtures") or []):
+                continue
+            if not _supported_step_list(session.get("steps") or []):
+                continue
+        connection = case.get("connection")
+        if connection is not None and not isinstance(connection, dict):
+            continue
+        selected[target] = case
+    return selected
+
+
+EXPORTED_COMMAND_CASES = load_exported_command_cases()
+
+
+def prepare_run(environment):
+    """Start stopped managed nodes before any case evaluates requirements.
+
+    Mirrors the legacy ``_ensure_environment_started`` prepare phase: a node
+    whose ``pg_ctl status`` fails is started with the environment's FBase
+    binaries before requirement probes run.
+    """
+    import subprocess
+    bin_dir = environment.get("fbase_bin_dir")
+    pg_ctl = str(Path(bin_dir) / "pg_ctl") if bin_dir else "pg_ctl"
+    nodes = environment.get("nodes") or {}
+    for name in environment.get("node_order") or list(nodes):
+        endpoint = nodes.get(name) or {}
+        data_dir = endpoint.get("data_dir")
+        if not data_dir:
+            continue
+        status = subprocess.run(
+            [pg_ctl, "-D", str(data_dir), "status"],
+            capture_output=True, text=True)
+        if status.returncode != 0:
+            subprocess.run(
+                [pg_ctl, "-D", str(data_dir), "-l",
+                 str(Path(str(data_dir)) / "startup.log"), "-w", "start"],
+                capture_output=True, text=True)
+
+
 class LegacyFbaseCase:
     """Transition one exported target through the shared result lifecycle.
 
@@ -453,15 +791,21 @@ CASES = {
 }
 CASES.update({target: MacMetadataDenialCase(case) for target, case in MAC_METADATA_DENIALS.items()})
 CASES.update({target: MmrReadOnlyDeclarativeCase(case) for target, case in MMR_READ_ONLY_CASES.items()})
+# ExportedCommandCase carries the full legacy step/fixture semantics, so it
+# wins over the earlier partial-migration classes wherever it can express the
+# case.  The partial classes remain only for targets the exported loader
+# deliberately skips.
+CASES.update({target: ExportedCommandCase(case)
+              for target, case in EXPORTED_COMMAND_CASES.items()
+              if target not in CASES})
 CASES.update({target: DeclarativeSqlCase(case) for target, case in NATIVE_SQL_CASES.items()
               if target not in CASES and target not in FIXTURE_TARGETS})
 CASES.update({target: FixtureSqlCase(NATIVE_SQL_CASES[target])
               for target in FIXTURE_TARGETS if target not in CASES})
-EXPORTED_TARGETS = {
-    case["id"] for case in json.loads(
-        (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8")
-    )["cases"]
-}
+_CATALOG = json.loads(
+    (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8"))
+CASE_ORDER = [case["id"] for case in _CATALOG["cases"]]
+EXPORTED_TARGETS = {case["id"] for case in _CATALOG["cases"]}
 CASES.update({target: LegacyFbaseCase(target) for target in EXPORTED_TARGETS - CASES.keys()})
 
 CASE_METADATA = [{
@@ -510,3 +854,12 @@ CASE_METADATA.extend({
     "core_id": case.get("core_id", ""), "summary": case.get("name", target),
     "enabled": True, "tags": [case.get("group", "")],
 } for target, case in sorted(MMR_READ_ONLY_CASES.items()))
+CASE_METADATA.extend({
+    "suite": target.split(".", 1)[0],
+    "suite_title": target.split(".", 1)[0],
+    "suite_description": "",
+    "target": target, "name": target, "title": case.get("name", target),
+    "core_id": case.get("core_id", ""), "summary": case.get("name", target),
+    "enabled": case.get("default_enabled", True),
+    "tags": [case.get("group", "")],
+} for target, case in sorted(EXPORTED_COMMAND_CASES.items()))

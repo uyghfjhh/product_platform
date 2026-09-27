@@ -21,7 +21,9 @@ test_profiles:
   - id: mac
     title: 等保回归测试
     suites: [mac]
-    deployment_targets: ["streaming.mac"]
+    # logical.fbase_regress 覆盖 mac 主备 + 逻辑订阅者整环境；
+    # streaming.mac 保留以兼容已登记环境。
+    deployment_targets: ["logical.fbase_regress", "streaming.mac"]
 actions:
   - id: database.check
     title: 检查数据库连接

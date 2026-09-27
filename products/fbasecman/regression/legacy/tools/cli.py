@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from framework.configuration import load_regression_config, validate_profile_isolation
-from platform_regress.persistence import atomic_write_text
+from platform_regress.suites import failed as failed_bookkeeping
 import products.fbasecman.environment  # Registers the product environment provider.
 from suites.registry import get_default_registry
 from tools.clean import run_clean
@@ -286,10 +284,7 @@ def _run_target(target: str, preflight: str = "heal") -> int:
 
 
 def _failed_targets(targets, result):
-    failures = [target for target in targets if _case_status(target) != "PASS"]
-    # A preflight failure produces no new case report. Previous PASS reports
-    # must not cause the failed invocation to disappear from `run failed`.
-    return failures or (list(targets) if result != 0 else [])
+    return failed_bookkeeping.failed_targets(targets, result, ROOT_DIR / "output")
 
 
 def _selected_targets(target: str):
@@ -303,37 +298,17 @@ def _suite_targets(target: str):
 
 
 def _case_status(target: str):
-    suite_name, separator, case_name = target.partition(".")
-    if not separator:
-        return None
-    run_root = ROOT_DIR / "output" / "runs" / suite_name / case_name
-    summary = run_root / "summary.json"
-    if summary.exists():
-        try:
-            return json.loads(summary.read_text(encoding="utf-8")).get("status")
-        except (OSError, ValueError):
-            return None
-    report = run_root / "report.txt"
-    if report.exists():
-        match = re.search(r"^(?:结论|Status):\s*(PASS|FAIL)\s*$",
-                          report.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
-        return match.group(1) if match else None
-    return None
+    return failed_bookkeeping.case_status(ROOT_DIR / "output", target)
 
 
 def _read_last_failed():
-    try:
-        value = json.loads(LAST_FAILED_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    targets = value.get("targets", []) if isinstance(value, dict) else []
-    return [target for target in targets if _selected_targets(target) == [target]]
+    return failed_bookkeeping.read_last_failed(
+        LAST_FAILED_PATH.parent, registry=get_default_registry())
 
 
 def _write_last_failed(targets):
     values = list(dict.fromkeys(targets))
-    atomic_write_text(LAST_FAILED_PATH, json.dumps(
-        {"targets": values}, ensure_ascii=False, indent=2) + "\n")
+    failed_bookkeeping.write_last_failed(LAST_FAILED_PATH.parent, values)
 
 
 def _export_junit(junit_arg):

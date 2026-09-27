@@ -142,11 +142,32 @@ def _ensure_test_database(
         grp_exists = _scalar(host, port, "test_db", user, "SELECT 1 FROM fdd.mmr_group WHERE group_name='testdb_g1';")
         if not grp_exists:
             _run(host, port, "test_db", user, "SELECT fdd.create_group('testdb_g1');")
+        pub_exists = _scalar(host, port, "test_db", user, "SELECT 1 FROM pg_publication WHERE pubname LIKE 'fmmr_testdb_g1%';")
+        if not pub_exists:
+            _run(host, port, "test_db", user, "SELECT fdd.create_publication_by_replication_set('testdb_g1');")
     else:
         grp_exists = _scalar(host, port, "test_db", user, "SELECT 1 FROM fdd.mmr_group WHERE group_name='testdb_g1';")
         if not grp_exists:
             peer = f"host={host} port={peer_port} user={user} dbname=test_db"
-            _run(host, port, "test_db", user, f"SELECT fdd.join_group('testdb_g1','{peer}',true,'data-only');")
+            join_sql = f"SELECT fdd.join_group('testdb_g1','{peer}',true,'all');"
+            try:
+                _run(host, port, "test_db", user, join_sql)
+            except Exception:
+                for stmt in (
+                    f"SELECT fdd.part_node('{node_name}',true,true)",
+                    f"SELECT fdd.drop_node('{node_name}',true)",
+                ):
+                    try:
+                        _run(host, port, "test_db", user, stmt)
+                    except Exception:
+                        pass
+                try:
+                    _run(host, peer_port, "test_db", user, f"SELECT fdd.drop_node('{node_name}',true)")
+                except Exception:
+                    pass
+                dsn = f"host={host} port={port} user={user} dbname=test_db"
+                _run(host, port, "test_db", user, f"SELECT fdd.create_node('{node_name}','{dsn}');")
+                _run(host, port, "test_db", user, join_sql)
 
 
 def _role_password(host: str, port: int, user: str, role: str) -> str:

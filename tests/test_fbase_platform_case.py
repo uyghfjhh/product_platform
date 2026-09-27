@@ -219,7 +219,7 @@ def test_bulk_fbase_bridge_preserves_old_fail_and_blocked(tmp_path):
         context = CaseContext(target, tmp_path / old_status,
                               environment={"legacy_source": str(root)})
         context.command = lambda *args, **kwargs: CommandResult(1, "RUN ID: run_test\n", "", 0.1)
-        result = RegressionEngine().run(module.CASES[target], context)
+        result = RegressionEngine().run(module.LegacyFbaseCase(target), context)
         assert result.verdict == expected
         assert result.reason == "old failure"
         assert len(result.evidence) == 1
@@ -246,6 +246,6 @@ def test_bulk_fbase_bridge_rejects_stale_or_wrong_report(tmp_path):
     context = CaseContext(target, tmp_path / "output",
                           environment={"legacy_source": str(root)})
     context.command = lambda *args, **kwargs: CommandResult(0, "RUN ID: run_test\n", "", 0.1)
-    result = RegressionEngine().run(module.CASES[target], context)
+    result = RegressionEngine().run(module.LegacyFbaseCase(target), context)
     assert result.verdict == "ERROR"
     assert "不匹配" in result.reason

@@ -245,16 +245,19 @@ class HeartbeatBindCase:
             raise AssertionError(f"heartbeat {self.mode} 响应不符合旧用例预期")
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         backend_check = context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
-                                         "-p", str(port), "-U", "postgres", "-d", "console",
+                                         "-p", str(port), "-U", "admin", "-d", "console",
                                          "-c", "SHOW SERVER_PREP_STMTS;"], timeout_seconds=15)
         rendered = backend_check.stdout
         backend_has_statement = "SELECT 1" in rendered
         expected_backend = self.mode == "binary"
-        backend_ok = backend_has_statement == expected_backend
+        backend_ok = (backend_check.returncode == 0
+                      and backend_has_statement == expected_backend)
         context.step("backend-prepared-check", "核对 heartbeat 后端 PreparedStatement 部署",
                      status="PASS" if backend_ok else "FAIL",
                      details={"contains_select_1": backend_has_statement,
-                              "expected": expected_backend, "output": rendered})
+                              "expected": expected_backend,
+                              "returncode": backend_check.returncode,
+                              "stderr": backend_check.stderr, "output": rendered})
         if not backend_ok:
             raise AssertionError("heartbeat 后端 PreparedStatement 部署状态与旧用例预期不符")
         return True
@@ -371,9 +374,12 @@ class SetNodeWriteIdempotentCase:
 class IdempotentHaCommandCase:
     """Native implementation for idempotent NODE/CLUSTER commands."""
 
-    def __init__(self, command, initial_needles, final_needles, title):
+    def __init__(self, command, initial_needles, final_needles, title,
+                 initial_query="SHOW GROUP_ROUTING mmr_group;",
+                 final_query="SHOW GROUP_ROUTING mmr_group;"):
         self.command, self.initial_needles = command, initial_needles
         self.final_needles, self.title = final_needles, title
+        self.initial_query, self.final_query = initial_query, final_query
 
     def run(self, context: CaseContext) -> bool:
         config = context.output_dir / "fbasecman.conf"
@@ -385,9 +391,9 @@ class IdempotentHaCommandCase:
         def q(sql):
             return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
-        initial = q("SHOW GROUP_ROUTING mmr_group;")
+        initial = q(self.initial_query)
         command = q(self.command)
-        final = q("SHOW GROUP_ROUTING mmr_group;")
+        final = q(self.final_query)
         unchanged = config.read_bytes() == before
         passed = (initial.returncode == command.returncode == final.returncode == 0
                   and all(x in initial.stdout for x in self.initial_needles)
@@ -401,6 +407,37 @@ class IdempotentHaCommandCase:
                      details={"config_unchanged": unchanged, "output": output})
         if not passed:
             raise AssertionError(self.title + " 与旧用例预期不符")
+        return True
+
+
+class SetNodeWeightIdempotentCase:
+    """Native host for SET NODE WEIGHT pg_3=10 idempotency."""
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        before = config.read_bytes()
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        def q(sql):
+            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+                                    "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
+        initial, command, final = q("SHOW NODES;"), q("SET NODE WEIGHT pg_3=10;"), q("SHOW NODES;")
+        unchanged = config.read_bytes() == before
+        def has_weight(result):
+            return any("pg_3" in line and "10" in line for line in result.stdout.splitlines())
+        passed = (initial.returncode == command.returncode == final.returncode == 0
+                  and has_weight(initial) and has_weight(final) and unchanged
+                  and ("SET NODE" in command.stdout or "NO CONFIG CHANGE" in command.stdout)
+                  and "ERROR" not in command.stdout)
+        output = "\n".join((initial.stdout, command.stdout, final.stdout))
+        context.attach_text("set-node-weight-output.txt", output)
+        context.step("weight-verdict", "核对 SET NODE WEIGHT 幂等命令",
+                     status="PASS" if passed else "FAIL",
+                     details={"config_unchanged": unchanged, "output": output})
+        if not passed:
+            raise AssertionError("SET NODE WEIGHT 幂等用例与旧判定不一致")
         return True
 
 

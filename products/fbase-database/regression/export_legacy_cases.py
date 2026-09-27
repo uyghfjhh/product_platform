@@ -5,8 +5,18 @@ artifact. The platform reads the exported product data without that import.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
+
+
+# Cases whose legacy modules derive object names from a per-process uuid
+# TOKEN (e.g. `uuid.uuid4().hex[:12]` at module import).  The exported
+# catalog freezes those names; runtime_tokens marks the literals the
+# executor must re-randomize per run to preserve legacy semantics.
+RUNTIME_TOKEN_CASES = {
+    "mac.audit.role_audit_logs",
+}
 
 
 def main() -> None:
@@ -15,6 +25,14 @@ def main() -> None:
     from suites import SUITES
 
     cases = [case for suite in SUITES.values() for case in suite["cases"]]
+    for case in cases:
+        if case.get("id") not in RUNTIME_TOKEN_CASES:
+            continue
+        rendered = json.dumps(case, ensure_ascii=False)
+        tokens = sorted(set(re.findall(r"fbase_regress\w*?_([0-9a-f]{12})\b", rendered)))
+        if not tokens:
+            tokens = sorted(set(re.findall(r"_([0-9a-f]{12})\b", rendered)))
+        case["runtime_tokens"] = tokens
     suites = {
         suite_id: {"title": suite.get("name", suite_id),
                    "description": suite.get("description", "")}

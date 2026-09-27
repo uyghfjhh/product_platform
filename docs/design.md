@@ -497,6 +497,8 @@ AI 是后置能力：
 - 旧框架只作为隔离迁移适配器，最终删除；
 - CLI、Web、JUnit、HTML 和当前结果共用同一事实模型。
 
+当前进度与剩余缺口见 [regression-status.md](regression-status.md)。
+
 ### P3：License 平台能力
 
 - 实现 LicenseEngine、密钥库和产品授权目录；

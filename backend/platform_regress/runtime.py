@@ -83,11 +83,22 @@ class CaseRuntime(object):
                 "database_name": platform_context.environment.database_name,
                 "database_user": platform_context.environment.database_user,
             }
+        else:
+            # 旧框架兼容路径：产品包自带的 legacy 用例直接实例化本类时，
+            # 按原 CaseRuntime 语义加载回归配置和 test_context。
+            import yaml
+            from framework.configuration import load_regression_config
+            self.env = load_regression_config(self.root)
+            if not self.env.test_context_file.exists():
+                raise self.failure_class(
+                    "missing %s, run env setup first" % self.env.test_context_file)
+            self.context = yaml.safe_load(
+                self.env.test_context_file.read_text(encoding="utf-8")) or {}
         self.suite_id = (getattr(case, "suite_name", None)
                          or getattr(case, "suite_id", None) or "suite")
         # 每次用例运行重建目录，保证报告工件不混入上一次结果
         output_root = (platform_context.output_dir if platform_context is not None
-                       else self.root / "output")
+                       else self.env.output_dir)
         self.run_root = output_root / "runs" / self.suite_id / case.name
         if self.run_root.exists():
             shutil.rmtree(str(self.run_root))

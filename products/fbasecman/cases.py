@@ -1,81 +1,126 @@
-"""fbasecman regression targets registered with the platform engine."""
+"""fbasecman regression targets registered with the platform engine.
 
+Legacy suite cases execute in-process through ``suites.<id>.suite.run_case``
+inside the platform ``RegressionEngine``; the suite still owns fixtures,
+assertions and report artifacts, while the engine owns scheduling, verdict
+mapping and evidence collection.
+"""
+
+import importlib
 import json
 import sys
 from pathlib import Path
 
 from platform_regress import Blocked
+from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                         SqlParseExtendedProtocolCase,
                                         JdbcConsoleHaCommandsCase)
-from products.fbasecman.native import SetNodeWriteIdempotentCase, IdempotentHaCommandCase
+from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
+                                        SetNodeWeightIdempotentCase)
 
 
 PRODUCT_ROOT = Path(__file__).parent
+REPO_ROOT = PRODUCT_ROOT.parent.parent
+DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression" / "legacy"
 CATALOG = json.loads((PRODUCT_ROOT / "regression" / "catalog.json").read_text(encoding="utf-8"))
 if CATALOG.get("schema_version") != 1:
     raise ValueError("fbasecman 用例目录版本无效")
 CASE_METADATA = CATALOG["cases"]
 
+# Extra config files merged into every regression-config load.  The platform
+# supplies the current environment's override through the case context; the
+# list is evaluated at call time so one process can retarget environments.
+_EXTRA_CONFIGS = []
+_LOADER_PROFILED = False
 
-class LegacyCmanCase:
-    """Temporary product executor with platform-owned verdict publication.
 
-    The old runtime still owns fixtures and business checks. A fresh summary
-    for this exact target is mandatory; command exit code alone is insufficient.
-    """
+def _ensure_imports(source):
+    """Isolate the legacy suite import path and install the override loader."""
+    global _LOADER_PROFILED
+    for path in (REPO_ROOT, REPO_ROOT / "backend", source):
+        value = str(path)
+        while value in sys.path:
+            sys.path.remove(value)
+        sys.path.insert(0, value)
+    import framework.configuration as package
+    import framework.configuration.loader as loader
 
-    def __init__(self, target):
-        self.target = target
+    if _LOADER_PROFILED:
+        return
+    original = loader.load_regression_config
 
-    def run(self, context):
-        source = Path(context.environment.get("legacy_source") or
-                      PRODUCT_ROOT / "regression" / "legacy").resolve()
-        override_value = context.environment.get("legacy_override")
-        report_value = context.environment.get("legacy_report_root")
+    def load_with_profile(root_dir, extra_configs=None, validate=True):
+        extras = list(extra_configs or []) + list(_EXTRA_CONFIGS)
+        return original(root_dir, extra_configs=extras, validate=validate)
+
+    loader.load_regression_config = load_with_profile
+    package.load_regression_config = load_with_profile
+    _LOADER_PROFILED = True
+
+
+def _load_registry(source):
+    """Import the suite registry after the override loader is installed."""
+    _ensure_imports(source)
+    from suites.registry import get_default_registry
+    return get_default_registry()
+
+
+def _suite_specs(source):
+    registry = _load_registry(source)
+    specs = {}
+    for plugin in registry.all_suites():
+        for spec in plugin.get_cases():
+            specs[spec.target] = spec
+    return specs
+
+
+class LegacyCmanCase(LegacySuiteCase):
+    """fbasecman suite case executed by its own ``run_case`` in-process."""
+
+    def __init__(self, target, metadata, default_enabled=True):
+        super().__init__(
+            target, self._resolve,
+            summary=metadata.get("summary") or "",
+            default_enabled=default_enabled,
+            # The handover suite serializes through output/handover.lock.
+            lock_name="handover" if target.startswith("handover.") else None,
+        )
+        self._metadata = metadata
+
+    def _resolve(self, context):
+        environment = context.environment or {}
+        source = Path(environment.get("legacy_source")
+                      or DEFAULT_LEGACY_ROOT).resolve()
+        override_value = environment.get("legacy_override")
+        report_value = environment.get("legacy_report_root")
         if not override_value or not report_value:
             raise Blocked("缺少当前环境的 fbasecman 测试配置或报告目录")
         override = Path(override_value).resolve()
-        report_root = Path(report_value).resolve()
         if not (source / "suites" / "registry.py").is_file() or not override.is_file():
             raise Blocked("fbasecman 用例来源或环境覆盖配置不存在")
-        suite, name = self.target.split(".", 1)
-        summary_path = report_root / "output" / "runs" / suite / name / "summary.json"
-        previous_mtime = summary_path.stat().st_mtime_ns if summary_path.is_file() else -1
-        command = [
-            sys.executable, str(PRODUCT_ROOT / "regression" / "run.py"),
-            "--source", str(source), "--override", str(override), self.target,
-        ]
-        result = context.command(command, cwd=source, timeout_seconds=7200)
-        try:
-            stat = summary_path.stat()
-            if stat.st_mtime_ns <= previous_mtime:
-                raise RuntimeError("本次未更新 fbasecman 用例报告")
-            summary_text = summary_path.read_text(encoding="utf-8")
-            summary = json.loads(summary_text)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError("本次未生成可核对的 fbasecman 用例报告") from exc
-        status = summary.get("status")
-        if status not in {"PASS", "FAIL"}:
-            raise RuntimeError(f"fbasecman 报告状态无效: {status}")
-        context.attach_text("legacy-summary.json", summary_text)
-        case_directory = summary_path.parent.resolve()
-        report = case_directory / "report.txt"
-        if not report.is_file():
-            raise RuntimeError("本次旧用例缺少文本报告")
-        context.attach_file("legacy-report.txt", report)
-        for index, source in enumerate(sorted(case_directory.rglob("*.log")), 1):
-            resolved = source.resolve()
-            if not resolved.is_relative_to(case_directory) or not resolved.is_file():
-                raise RuntimeError(f"旧用例日志路径无效: {source}")
-            context.attach_file(f"legacy-log-{index}.log", resolved)
-        context.step("legacy-verdict", "核对旧用例原始判定", status=status,
-                     details={"legacy_status": status})
-        if status == "PASS" and result.returncode == 0:
-            return True
-        if status == "FAIL" and result.returncode != 0:
-            raise AssertionError(summary.get("reason") or "旧用例业务断言失败")
-        raise RuntimeError(f"旧用例结果与退出码不一致: {status}/{result.returncode}")
+        _EXTRA_CONFIGS[:] = [override]
+        registry = _load_registry(source)
+        suite_id, _, name = self.target.partition(".")
+        plugin = registry.get(suite_id)
+        if plugin is None:
+            raise Blocked("未注册的 fbasecman 套件: %s" % suite_id)
+        spec = next((item for item in plugin.get_cases() if item.name == name), None)
+        if spec is None:
+            raise Blocked("套件 %s 没有用例 %s" % (suite_id, name))
+        import framework.configuration as configuration
+        environment_cfg = configuration.load_regression_config(source)
+        configuration.validate_profile_isolation(environment_cfg)
+        suite_module = importlib.import_module("suites.%s.suite" % suite_id)
+        run_case = getattr(suite_module, "run_case", None)
+        if run_case is None:
+            raise Blocked("套件 %s 尚未接入平台执行路径" % suite_id)
+
+        def run_root(item):
+            return (environment_cfg.output_dir / "runs" /
+                    item.suite_id / item.name)
+
+        return LegacyCaseBinding(spec, run_case, source, run_root=run_root)
 
 
 NATIVE_CASES = {
@@ -91,7 +136,26 @@ NATIVE_CASES = {
         ("mmr_group", "active", "pg_cluster_1"), "核对 SET NODE PROMOTED 幂等命令"),
     "ha_commands.set_cluster_active_idempotent": IdempotentHaCommandCase(
         "SET CLUSTER ACTIVE pg_cluster_1;", ("pg_cluster_1", "VALID", "pg_1"),
-        ("mmr_group", "pg_cluster_1", "pg_1"), "核对 SET CLUSTER ACTIVE 幂等命令"),
+        ("mmr_group", "pg_cluster_1", "pg_1"), "核对 SET CLUSTER ACTIVE 幂等命令",
+        initial_query="SHOW CLUSTERS;"),
+    "ha_commands.set_node_weight_idempotent": SetNodeWeightIdempotentCase(),
 }
+
+# Suite manifests are static: they import cleanly before any environment
+# override exists (config values only matter when load_regression_config is
+# called, which reads _EXTRA_CONFIGS lazily).
+_LEGACY_SPECS = _suite_specs(DEFAULT_LEGACY_ROOT)
+
+
+def _legacy_case(item):
+    spec = _LEGACY_SPECS.get(item["target"])
+    enabled = item.get("enabled", True)
+    if spec is not None:
+        enabled = enabled and getattr(spec, "enabled", True) \
+            and not getattr(spec, "long_time", False)
+    return LegacyCmanCase(item["target"], item, default_enabled=bool(enabled))
+
+
 CASES = {item["target"]: NATIVE_CASES.get(
-    item["target"], LegacyCmanCase(item["target"])) for item in CASE_METADATA}
+    item["target"], _legacy_case(item)) for item in CASE_METADATA}
+CASE_ORDER = [item["target"] for item in CASE_METADATA]

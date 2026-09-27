@@ -41,11 +41,60 @@ def main(argv: list[str] | None = None) -> int:
     cases = getattr(module, "CASES", None)
     if not isinstance(cases, dict):
         parser.error("产品用例注册表无效")
-    targets = [args.target] if args.target else sorted(
-        target for target in cases if not args.suite or target.startswith(args.suite + ".")
-    )
+    catalog_order = getattr(module, "CASE_ORDER", None) or []
+    catalog_index = {target: index for index, target in enumerate(catalog_order)}
+    if args.target in ("failed", "faild"):
+        from .suites import failed as failed_bookkeeping
+        recorded = failed_bookkeeping.read_last_failed(args.output_dir)
+        # Suites each record their own last_failed.json; a run-level `failed`
+        # merges the freshest per-suite records so `run failed` reruns every
+        # target the most recent suite runs left behind.
+        for sibling in sorted(args.output_dir.glob("*/last_failed.json")):
+            for target in failed_bookkeeping.read_last_failed(sibling.parent):
+                if target not in recorded:
+                    recorded.append(target)
+        targets = [target for target in recorded if target in cases]
+        if not targets:
+            failed_bookkeeping.write_last_failed(args.output_dir, [])
+            print("No failed cases recorded from the previous run.")
+            return 0
+    elif args.target:
+        targets = [args.target]
+    else:
+        # Suites run in catalog order like the legacy executor, and cases the
+        # product marked default_enabled=False are skipped unless targeted
+        # explicitly.
+        selected = [
+            target for target in cases
+            if not args.suite or target.startswith(args.suite + ".")
+        ]
+        targets = sorted(selected,
+                         key=lambda target: catalog_index.get(target, len(catalog_order)))
+        targets = [
+            target for target in targets
+            if getattr(cases[target], "default_enabled", True)
+        ]
     if not targets or any(target not in cases for target in targets):
         parser.error("未知测试目标或 suite")
+
+    # Session members run contiguously at their first member's position,
+    # ordered by the declared session order — legacy _group_session_cases.
+    by_key = {}
+    for index, target in enumerate(targets):
+        key = getattr(cases[target], "session_key", None)
+        if key:
+            by_key.setdefault(key, []).append(
+                (getattr(cases[target], "session_order", index), index, target))
+    if by_key:
+        emitted, ordered = set(), []
+        for index, target in enumerate(targets):
+            key = getattr(cases[target], "session_key", None)
+            if not key:
+                ordered.append(target)
+            elif key not in emitted:
+                ordered.extend(item[2] for item in sorted(by_key[key]))
+                emitted.add(key)
+        targets = ordered
 
     cancelled = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: cancelled.set())
@@ -70,27 +119,96 @@ def main(argv: list[str] | None = None) -> int:
         environment["nodes"] = nodes
     if args.user:
         environment["user"] = args.user
+
+    # Run-level prepare: products may start stopped managed nodes before any
+    # case evaluates requirements (legacy _ensure_environment_started).
+    prepare = getattr(module, "prepare_run", None)
+    if callable(prepare):
+        prepare(environment)
+
+    # One run shares a run_id so session fixtures and member cases expand
+    # identical {run_id} placeholders.
+    import uuid
+    from datetime import datetime
+    run_id = "run_%s_%s" % (datetime.now().strftime("%Y%m%d_%H%M%S"),
+                            uuid.uuid4().hex[:6])
+    operation_id = os.environ.get("PRODUCT_PLATFORM_TASK_ID")
+    engine = RegressionEngine()
+    sessions: dict = {}
+    suite_errors: list = []
+
+    def cleanup_sessions(keep_key=None):
+        for key in [key for key in sessions if key != keep_key]:
+            session = sessions.pop(key)
+            try:
+                session["context"].cleanup_fixtures()
+            except Exception as exc:  # noqa: BLE001 - session errors surface at suite level
+                suite_errors.append("%s: %s" % (key, exc))
+
     results = []
     for target in targets:
+        case = cases[target]
+        session_key = getattr(case, "session_key", None)
+        # Legacy _cleanup_inactive_sessions: a different session key (or a
+        # non-session case) ends the previous session before this case runs.
+        cleanup_sessions(keep_key=session_key)
+        session_values = {}
+        session_error = ""
+        if session_key:
+            session = sessions.get(session_key)
+            if session is None:
+                session_context = CaseContext(
+                    "_session.%s" % session_key,
+                    (args.output_dir / "_sessions" / session_key).resolve(),
+                    cancelled.is_set, environment, operation_id, run_id)
+                try:
+                    case.setup_session(session_context)
+                except Exception as exc:  # noqa: BLE001 - member cases inherit the blocker
+                    session_error = "共享会话 %s 初始化失败: %s" % (session_key, exc)
+                session = {
+                    "context": session_context,
+                    "error": session_error,
+                    "values": {
+                        "isolated_mmr_port_mapping": dict(
+                            session_context.values.get(
+                                "isolated_mmr_port_mapping") or {}),
+                    },
+                }
+                sessions[session_key] = session
+            session_error = session["error"]
+            session_values = session["values"]
         context = CaseContext(
-            target, (args.output_dir / target if len(targets) > 1 else args.output_dir).resolve(),
-            cancelled.is_set, environment, os.environ.get("PRODUCT_PLATFORM_TASK_ID"),
-        )
-        result = RegressionEngine().run(cases[target], context)
+            target,
+            (args.output_dir / target if len(targets) > 1
+             else args.output_dir).resolve(),
+            cancelled.is_set, environment, operation_id, run_id)
+        context.values.update(session_values)
+        if session_error:
+            context.values["session_error"] = session_error
+        result = engine.run(case, context)
         results.append(result)
         print(json.dumps(result.to_dict(), ensure_ascii=False), flush=True)
         if result.verdict == "CANCELLED":
             break
-    if len(results) == 1:
+    cleanup_sessions()
+    # Bookkeep non-PASS targets so a later `run failed` reruns exactly them.
+    # A CANCELLED run leaves untried targets out — they never produced a
+    # verdict, so only executed non-PASS results are recorded.
+    from .suites import failed as failed_bookkeeping
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    failed_bookkeeping.write_last_failed(
+        args.output_dir,
+        [item.target for item in results if item.verdict != "PASS"])
+    if len(results) == 1 and not suite_errors:
         return EXIT_CODES[results[0].verdict]
     counts = {status: sum(item.verdict == status for item in results) for status in EXIT_CODES}
-    (args.output_dir / "suite-result.json").parent.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "suite-result.json").write_text(
         json.dumps({"targets": targets, "counts": counts,
+                    "session_cleanup_errors": suite_errors,
                     "results": [item.to_dict() for item in results]},
                    ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
     )
-    return 0 if counts["PASS"] == len(results) else 1
+    return 0 if counts["PASS"] == len(results) and not suite_errors else 1
 
 
 if __name__ == "__main__":

@@ -1,33 +1,3 @@
-"""Product-neutral environment provider contract."""
-
-from abc import ABCMeta, abstractmethod
-
-
-class EnvironmentProvider(object, metaclass=ABCMeta):
-    @abstractmethod
-    def setup(self):
-        pass
-
-    @abstractmethod
-    def clean(self):
-        pass
-
-    @abstractmethod
-    def status_text(self):
-        pass
-
-    @abstractmethod
-    def start(self):
-        pass
-
-    @abstractmethod
-    def restart(self):
-        pass
-
-    @abstractmethod
-    def stop(self):
-        pass
-
-    def heal(self):
-        """Self-heal environment, restarting instances and repairing broken standbys."""
-        return self.start()
+"""Compatibility import; environment provider contract lives in the platform SDK."""
+from platform_regress.environment.provider import *  # noqa: F401,F403
+from platform_regress.environment.provider import EnvironmentProvider  # noqa: F401

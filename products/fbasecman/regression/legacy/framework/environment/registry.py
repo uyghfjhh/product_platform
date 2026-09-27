@@ -1,20 +1,7 @@
-"""Environment provider registration."""
+"""Compatibility import; environment provider registry lives in the platform SDK."""
+import platform_regress.environment.registry as _impl
+from platform_regress.environment.registry import (  # noqa: F401
+    create_environment_provider, register_environment_provider,
+)
 
-
-_PROVIDERS = {}
-
-
-def register_environment_provider(name, factory):
-    if not name:
-        raise ValueError("environment provider name must not be empty")
-    if name in _PROVIDERS:
-        raise ValueError("environment provider already registered: %s" % name)
-    _PROVIDERS[name] = factory
-
-
-def create_environment_provider(name, regress_env, verbose=True):
-    try:
-        factory = _PROVIDERS[name]
-    except KeyError:
-        raise ValueError("unknown environment provider: %s" % name)
-    return factory(regress_env, verbose=verbose)
+_PROVIDERS = _impl._PROVIDERS

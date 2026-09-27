@@ -1,177 +1,43 @@
 #!/usr/bin/env python3
 """Raw PostgreSQL protocol driver for outstanding/cache consistency tests."""
 
-import socket
 import struct
 import sys
 import time
 
-
-def _message(kind, payload):
-    return kind + struct.pack("!I", len(payload) + 4) + payload
-
-
-def _startup(database, user):
-    payload = struct.pack("!I", 196608)
-    for key, value in (("user", user), ("database", database),
-                       ("application_name", "outstanding_protocol_probe")):
-        payload += key.encode("utf-8") + b"\0" + value.encode("utf-8") + b"\0"
-    payload += b"\0"
-    return struct.pack("!I", len(payload) + 4) + payload
+from platform_regress.clients.pgwire import (
+    ProtocolClient, bind_payload, close_portal_payload, data_rows,
+    describe_portal_payload, error_fields, execute_payload, message,
+    parse_payload, response_summary, simple_query_message, sync_message,
+)
 
 
 def _parse(name, sql):
-    payload = name.encode("utf-8") + b"\0" + sql.encode("utf-8") + b"\0"
-    return _message(b"P", payload + struct.pack("!H", 0))
+    return message("P", parse_payload(name, sql))
 
 
 def _bind(portal, statement):
-    payload = portal.encode("utf-8") + b"\0" + statement.encode("utf-8") + b"\0"
-    payload += struct.pack("!H", 0) + struct.pack("!H", 0) + struct.pack("!H", 0)
-    return _message(b"B", payload)
+    return message("B", bind_payload(portal, statement))
 
 
 def _describe_portal(portal):
-    return _message(b"D", b"P" + portal.encode("utf-8") + b"\0")
+    return message("D", describe_portal_payload(portal))
 
 
 def _execute(portal):
-    return _message(b"E", portal.encode("utf-8") + b"\0" + struct.pack("!I", 0))
+    return message("E", execute_payload(portal))
 
 
 def _sync():
-    return _message(b"S", b"")
-
-
-def _simple_query(sql):
-    return _message(b"Q", sql.encode("utf-8") + b"\0")
-
-
-def _recv_exact(sock, size):
-    data = b""
-    while len(data) < size:
-        chunk = sock.recv(size - len(data))
-        if not chunk:
-            raise RuntimeError("connection closed while reading protocol message")
-        data += chunk
-    return data
-
-
-def _read_messages(sock):
-    messages = []
-    while True:
-        header = _recv_exact(sock, 5)
-        kind = header[:1].decode("ascii", "replace")
-        length = struct.unpack("!I", header[1:])[0]
-        if length < 4:
-            raise RuntimeError("invalid backend message length %s" % length)
-        payload = _recv_exact(sock, length - 4)
-        messages.append((kind, payload))
-        if kind == "Z":
-            return messages
-
-
-def _error_fields(payload):
-    fields = {}
-    offset = 0
-    while offset < len(payload) and payload[offset] != 0:
-        code = chr(payload[offset])
-        offset += 1
-        end = payload.find(b"\0", offset)
-        if end < 0:
-            break
-        fields[code] = payload[offset:end].decode("utf-8", "replace")
-        offset = end + 1
-    return fields
-
-
-def _error_text(payload):
-    return _error_fields(payload).get("M", "unknown backend error")
-
-
-def _response_summary(messages):
-    kinds = "".join(kind for kind, _ in messages)
-    errors = [_error_text(payload) for kind, payload in messages if kind == "E"]
-    return kinds, errors
+    return sync_message()
 
 
 def _data_rows(messages):
-    rows = []
-    for kind, payload in messages:
-        if kind != "D":
-            continue
-        if len(payload) < 2:
-            raise RuntimeError("truncated DataRow")
-        count = struct.unpack("!H", payload[:2])[0]
-        offset = 2
-        row = []
-        for _ in range(count):
-            if offset + 4 > len(payload):
-                raise RuntimeError("truncated DataRow length")
-            value_len = struct.unpack("!i", payload[offset:offset + 4])[0]
-            offset += 4
-            if value_len < 0:
-                row.append(None)
-                continue
-            if offset + value_len > len(payload):
-                raise RuntimeError("truncated DataRow value")
-            row.append(payload[offset:offset + value_len].decode("utf-8", "replace"))
-            offset += value_len
-        rows.append(row)
-    return rows
+    return data_rows(messages)
 
 
-class ProtocolClient(object):
-    def __init__(self, port, database):
-        self.sock = socket.create_connection(("127.0.0.1", int(port)), 10)
-        self.sock.settimeout(30)
-        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        try:
-            self.sock.sendall(_startup(database, "postgres"))
-            messages = _read_messages(self.sock)
-            if not messages or messages[-1][0] != "Z":
-                raise RuntimeError("startup did not reach ReadyForQuery")
-        except Exception:
-            self.sock.close()
-            raise
-
-    def close(self):
-        try:
-            self.sock.sendall(_message(b"X", b""))
-        except OSError:
-            pass
-        self.sock.close()
-
-    def send(self, payload):
-        self.sock.sendall(payload)
-        return _read_messages(self.sock)
-
-    def query(self, sql):
-        messages = self.send(_simple_query(sql))
-        errors = [_error_text(payload) for kind, payload in messages if kind == "E"]
-        if errors:
-            raise RuntimeError("simple query failed: %s" % errors[0])
-        return _data_rows(messages), messages
-
-    def fragmented_cycle(self, prefix, packet, suffix=b"", delay=0.01):
-        if prefix:
-            self.sock.sendall(prefix)
-        for byte in packet:
-            self.sock.sendall(bytes((byte,)))
-            time.sleep(delay)
-        self.sock.sendall(suffix + _sync())
-        return _read_messages(self.sock)
-
-    def parse_sync(self, name, sql):
-        return self.send(_parse(name, sql) + _sync())
-
-    def execute_sync(self, statement, portal):
-        return self.send(
-            _bind(portal, statement) + _describe_portal(portal) +
-            _execute(portal) +
-            _message(b"C", b"P" + portal.encode("utf-8") + b"\0") +
-            _sync()
-        )
+def _response_summary(messages):
+    return response_summary(messages)
 
 
 def _require_error(messages, label):
@@ -191,7 +57,7 @@ def _require_success(messages, label):
 
 def _require_protocol_error(messages, label, ready_status="I"):
     kinds, _ = _response_summary(messages)
-    errors = [_error_fields(payload) for kind, payload in messages if kind == "E"]
+    errors = [error_fields(payload) for kind, payload in messages if kind == "E"]
     sqlstates = [fields.get("C", "") for fields in errors]
     ready = [payload[:1].decode("ascii", "replace")
              for kind, payload in messages if kind == "Z" and payload]
@@ -403,12 +269,12 @@ def _fragmented_close(client, mode):
     name = "fragmented_close_statement"
     sql = "SELECT 901 /* outstanding_case_%s_seed */" % mode
     _prepare(client, name, sql, "FRAGMENTED_CLOSE_SEED")
-    packet = _message(b"C", b"S" + name.encode("utf-8") + b"\0")
+    packet = message("C", b"S" + name.encode("utf-8") + b"\0")
     print("CLIENT_SEQUENCE=Parse,Sync,Close(each byte),Sync")
     print("FRAGMENTED_PACKET=Close(S); fragments=%s; includes header,type,name,NUL" %
           len(packet))
     sys.stdout.flush()
-    messages = client.fragmented_cycle(b"", packet)
+    messages = client.send_fragmented(b"", packet)
     _require_success(messages, "FRAGMENTED_CLOSE")
     kinds, _ = _response_summary(messages)
     if "3" not in kinds or "Z" not in kinds:
@@ -433,8 +299,8 @@ def _fragmented_execute(client, mode):
     print("FRAGMENTED_PACKET=Execute; fragments=%s; includes header,portal,NUL,max_rows" %
           len(execute))
     sys.stdout.flush()
-    close_portal = _message(b"C", b"P" + portal.encode("utf-8") + b"\0")
-    messages = client.fragmented_cycle(bind, execute, close_portal)
+    close_portal = message("C", close_portal_payload(portal))
+    messages = client.send_fragmented(bind, execute, close_portal)
     _require_success(messages, "FRAGMENTED_EXECUTE")
     rows = _data_rows(messages)
     actual = rows[-1][0] if rows and rows[-1] else None
@@ -455,13 +321,13 @@ def _execute_payload_validation(client, mode):
     print("CLIENT_SEQUENCE=malformed Execute + Sync, then legal Execute + Sync")
 
     portal_missing = "execute_missing_max_rows"
-    missing_max_rows = _message(b"E", portal_missing.encode("utf-8") + b"\0")
+    missing_max_rows = message("E", portal_missing.encode("utf-8") + b"\0")
     messages = client.send(_bind(portal_missing, name) + missing_max_rows + _sync())
     _require_protocol_error(messages, "EXECUTE_MISSING_MAX_ROWS")
 
     portal_trailing = "execute_trailing_data"
-    trailing_data = _message(
-        b"E", portal_trailing.encode("utf-8") + b"\0" +
+    trailing_data = message(
+        "E", portal_trailing.encode("utf-8") + b"\0" +
         struct.pack("!I", 0) + b"x")
     messages = client.send(_bind(portal_trailing, name) + trailing_data + _sync())
     _require_protocol_error(messages, "EXECUTE_TRAILING_DATA")
@@ -470,7 +336,7 @@ def _execute_payload_validation(client, mode):
     messages = client.send(
         _bind(portal_zero, name) + _describe_portal(portal_zero) +
         _execute(portal_zero) +
-        _message(b"C", b"P" + portal_zero.encode("utf-8") + b"\0") +
+        message("C", close_portal_payload(portal_zero)) +
         _sync())
     _require_success(messages, "EXECUTE_MAX_ROWS_ZERO")
     rows = _data_rows(messages)
@@ -478,12 +344,12 @@ def _execute_payload_validation(client, mode):
         raise RuntimeError("max_rows=0 Execute did not return 921")
 
     portal_one = "execute_max_rows_one"
-    execute_one = _message(
-        b"E", portal_one.encode("utf-8") + b"\0" + struct.pack("!I", 1))
+    execute_one = message(
+        "E", portal_one.encode("utf-8") + b"\0" + struct.pack("!I", 1))
     messages = client.send(
         _bind(portal_one, name) + _describe_portal(portal_one) +
         execute_one +
-        _message(b"C", b"P" + portal_one.encode("utf-8") + b"\0") +
+        message("C", close_portal_payload(portal_one)) +
         _sync())
     _require_success(messages, "EXECUTE_MAX_ROWS_ONE")
     rows = _data_rows(messages)
@@ -492,7 +358,7 @@ def _execute_payload_validation(client, mode):
 
     client.query("BEGIN")
     portal_tx = "execute_invalid_in_transaction"
-    missing_in_tx = _message(b"E", portal_tx.encode("utf-8") + b"\0")
+    missing_in_tx = message("E", portal_tx.encode("utf-8") + b"\0")
     messages = client.send(_bind(portal_tx, name) + missing_in_tx + _sync())
     _require_protocol_error(messages, "EXECUTE_INVALID_IN_TRANSACTION", "E")
     client.query("ROLLBACK")
@@ -508,7 +374,7 @@ def _connect_with_retry(port, database, attempts=30):
     last_error = None
     for _ in range(attempts):
         try:
-            return ProtocolClient(port, database)
+            return ProtocolClient("127.0.0.1", port, database)
         except Exception as exc:
             last_error = exc
             time.sleep(0.2)

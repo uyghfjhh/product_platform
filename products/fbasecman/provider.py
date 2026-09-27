@@ -150,6 +150,7 @@ class FbasecmanProvider:
                 "ha_commands.set_node_write_idempotent",
                 "ha_commands.set_node_promoted_idempotent",
                 "ha_commands.set_cluster_active_idempotent",
+                "ha_commands.set_node_weight_idempotent",
             }
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():
@@ -193,6 +194,13 @@ class FbasecmanProvider:
                         or fbasecman.get("license_dir"),
                         "proxy_port": proxy_port,
                     })
+                    extras = {}
+                    for alias, group in (("pg_3", "mmr1"), ("pg_4", "mmr2")):
+                        standby = next((node for node in topology["nodes"]
+                                        if node.get("group") == group and node.get("role") == "standby"), None)
+                        if standby:
+                            extras[alias] = {"host": standby["host"], "port": standby["port"]}
+                    case_context["extra_nodes"] = extras
                     if target == "ha_commands.sql_parse_extended_protocol":
                         case_context.update({
                             "sql_parse_java_asset": str(settings.fbasecman_regress_root /
@@ -201,13 +209,6 @@ class FbasecmanProvider:
                                 "lib_jdbc/postgresql-42.7.7.jar"),
                         })
                     if target == "ha_commands.jdbc_console_ha_commands":
-                        extras = {}
-                        for alias, group in (("pg_3", "mmr1"), ("pg_4", "mmr2")):
-                            standby = next((node for node in topology["nodes"]
-                                            if node.get("group") == group and node.get("role") == "standby"), None)
-                            if standby:
-                                extras[alias] = {"host": standby["host"], "port": standby["port"]}
-                        case_context["extra_nodes"] = extras
                         case_context.update({
                             "ha_console_java_asset": str(settings.fbasecman_regress_root /
                                 "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
@@ -232,6 +233,19 @@ class FbasecmanProvider:
                     "--product-dir", str(Path(__file__).resolve().parent),
                     "--output-dir", str(output), "--context-json", json.dumps(case_context),
                     "--suite", target,
+                ], settings.data_dir)
+            if target == "failed":
+                output = settings.environment_dir / "regression" / environment["id"]
+                case_context = {
+                    "legacy_source": str(settings.fbasecman_regress_root),
+                    "legacy_override": str(override),
+                    "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                }
+                return CommandSpec([
+                    sys.executable, "-m", "platform_regress.cli",
+                    "--product-dir", str(Path(__file__).resolve().parent),
+                    "--output-dir", str(output), "--context-json", json.dumps(case_context),
+                    "failed",
                 ], settings.data_dir)
             return CommandSpec([
                 sys.executable, str(Path(__file__).resolve().parent / "regression" / "run.py"),

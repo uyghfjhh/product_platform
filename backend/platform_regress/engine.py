@@ -71,23 +71,98 @@ class CaseResult:
         return result
 
 
+def resolve_selector(environment: dict[str, Any],
+                     selector: str | None = "primary") -> str:
+    """Resolve a product node selector to an injected endpoint key.
+
+    Mirrors the legacy topology contract exactly: a direct node key wins;
+    ``primary``/``writable`` prefer the streaming primary, then the first MMR
+    member's primary in topology order, then the logical publisher, then the
+    first declared node; ``standby`` resolves only from the streaming group;
+    ``subscriber``/``logical_subscriber`` take the first logical subscriber;
+    ``mmr:<member>[:primary|standby]`` resolves through the MMR member map.
+    Products describe their groups via ``environment["node_groups"]``.
+    """
+    nodes = environment.get("nodes") or {}
+    selector = str(selector or "primary")
+    if selector in nodes:
+        return selector
+    groups = environment.get("node_groups") or {}
+    streaming = groups.get("streaming") or {}
+    logical = groups.get("logical") or {}
+    members = (groups.get("mmr") or {}).get("members") or {}
+    if selector in ("primary", "writable"):
+        if streaming.get("primary") and streaming["primary"] in nodes:
+            return streaming["primary"]
+        if members:
+            primary = next(iter(members.values()))["primary"]
+            if primary in nodes:
+                return primary
+        if logical.get("publisher") and logical["publisher"] in nodes:
+            return logical["publisher"]
+        if nodes:
+            return next(iter(nodes))
+        raise Blocked("无法解析测试节点: %s" % selector)
+    if selector == "standby" and streaming.get("standbys"):
+        candidate = streaming["standbys"][0]
+        if candidate in nodes:
+            return candidate
+    if selector == "publisher" and logical.get("publisher") in nodes:
+        return logical["publisher"]
+    if selector in ("subscriber", "logical_subscriber"):
+        subscribers = logical.get("subscribers") or {}
+        for candidate in subscribers:
+            if candidate in nodes:
+                return candidate
+    parts = selector.split(":")
+    if selector.startswith("mmr:"):
+        relation = members.get(parts[1]) if len(parts) > 1 else None
+        if relation:
+            if len(parts) == 2 or parts[2] == "primary":
+                candidate = relation["primary"]
+                if candidate in nodes:
+                    return candidate
+            elif parts[2] == "standby" and relation.get("standbys"):
+                candidate = relation["standbys"][0]
+                if candidate in nodes:
+                    return candidate
+    # Compatibility: ``member:role`` resolves to an explicit ``member_role``
+    # endpoint key when products inject flat names instead of groups.
+    if len(parts) >= 2:
+        key = parts[-2] if parts[-1] == "primary" else "%s_%s" % (parts[-2], parts[-1])
+        if key in nodes:
+            return key
+    # Product convenience aliases (e.g. bare MMR member names) resolve last so
+    # they can never shadow a real node key or a group-based selector.
+    aliases = environment.get("node_aliases") or {}
+    if aliases.get(selector) in nodes:
+        return aliases[selector]
+    raise Blocked("无法解析测试节点: %s" % selector)
+
+
 class CaseContext:
     """Controlled case output and cancellation surface shared by products."""
 
     def __init__(self, target: str, output_dir: Path,
                  cancelled: Callable[[], bool] | None = None,
                  environment: dict[str, Any] | None = None,
-                 operation_id: str | None = None):
+                 operation_id: str | None = None,
+                 run_id: str | None = None):
         self.target = target
         self.output_dir = output_dir
         self.execution_id = uuid.uuid4().hex
         self.operation_id = operation_id
         self._cancelled = cancelled or (lambda: False)
         self.environment = environment or {}
+        # One invocation may share a run_id across case contexts so session
+        # fixtures and member cases expand identical {run_id} placeholders.
+        self.run_id = run_id or f"run_{datetime.now():%Y%m%d_%H%M%S}_{self.execution_id[:6]}"
+        self.values: dict[str, Any] = {"run_id": self.run_id}
         self._sequence = 0
         self._sql_sequence = 0
         self._evidence: list[str] = []
-        self._cleanup_actions: list[Callable[[], None]] = []
+        self._cleanup_actions: list[tuple[int, int, Callable[[], None]]] = []
+        self._cleanup_sequence = 0
         self._processes: list[subprocess.Popen] = []
         self._process_logs: list[Path] = []
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -103,19 +178,27 @@ class CaseContext:
         if self._cancelled():
             raise Cancelled("用例已取消")
 
-    def defer_cleanup(self, action: Callable[[], None]) -> None:
-        """Register an idempotent product fixture cleanup action."""
-        self._cleanup_actions.append(action)
+    def defer_cleanup(self, action: Callable[[], None], *, priority: int = 0) -> None:
+        """Register an idempotent product fixture cleanup action.
+
+        Cleanup drains highest priority first; actions with the same priority
+        run in reverse registration order. Products use priorities to order
+        resource teardown (e.g. stop postmasters before releasing ports).
+        """
+        self._cleanup_actions.append((priority, self._cleanup_sequence, action))
+        self._cleanup_sequence += 1
 
     def cleanup_fixtures(self) -> None:
         """Run registered fixture cleanup in reverse order."""
         errors = []
-        for action in reversed(self._cleanup_actions):
+        pending = sorted(self._cleanup_actions, key=lambda item: item[:2])
+        self._cleanup_actions.clear()
+        while pending:
+            _, _, action = pending.pop()
             try:
                 action()
             except Exception as exc:
                 errors.append(str(exc))
-        self._cleanup_actions.clear()
         for index, path in enumerate(self._process_logs, 1):
             if path.is_file():
                 try:
@@ -124,6 +207,60 @@ class CaseContext:
                     errors.append(f"无法归档产品进程日志: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
+
+    def expand(self, value: Any) -> Any:
+        """Expand per-run placeholders in declarative fixtures and steps.
+
+        ``{run_id}`` becomes this execution's unique id; strings holding a
+        declared listener port are rewritten to the reserved port recorded in
+        ``values["isolated_mmr_port_mapping"]`` (``port=<n>``, ``-p <n>`` and ``:<n>``
+        forms), so product cases can keep their exported commands verbatim.
+        """
+        if isinstance(value, str):
+            expanded = value.replace("{run_id}", str(self.values["run_id"]))
+            ports = self.values.get("isolated_mmr_port_mapping") or {}
+            if expanded in ports:
+                return ports[expanded]
+            for declared, allocated in ports.items():
+                escaped = re.escape(str(declared))
+                expanded = re.sub(r"(port\s*=\s*)%s\b" % escaped,
+                                  r"\g<1>%s" % allocated, expanded)
+                expanded = re.sub(r"(\B-p\s+)%s\b" % escaped,
+                                  r"\g<1>%s" % allocated, expanded)
+                expanded = re.sub(r"(:)%s\b" % escaped,
+                                  r"\g<1>%s" % allocated, expanded)
+            return expanded
+        if isinstance(value, list):
+            return [self.expand(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self.expand(item) for item in value)
+        if isinstance(value, dict):
+            return {key: self.expand(item) for key, item in value.items()}
+        return value
+
+    def resolve_node(self, selector: str = "primary") -> str:
+        """Map a product node selector to an injected endpoint key."""
+        return resolve_selector(self.environment, selector)
+
+    def node_endpoint(self, selector: str = "primary") -> dict[str, Any]:
+        """Return the injected ``{host, port}`` endpoint for a selector."""
+        key = self.resolve_node(selector)
+        endpoint = (self.environment.get("nodes") or {}).get(key)
+        if not isinstance(endpoint, dict):
+            raise Blocked(f"测试节点连接信息无效: {key}")
+        return endpoint
+
+    @staticmethod
+    def is_local(host: Any) -> bool:
+        host = str(host)
+        if host in {"127.0.0.1", "localhost", "local", "::1"}:
+            return True
+        try:
+            local_addresses = {item[4][0] for item in socket.getaddrinfo(socket.gethostname(), None)}
+            target_addresses = {item[4][0] for item in socket.getaddrinfo(host, None)}
+            return bool(local_addresses & target_addresses)
+        except socket.gaierror:
+            return False
 
     def reload(self, node: str, *, user: str | None = None) -> None:
         """Reload PostgreSQL configuration through the declared node."""
@@ -199,6 +336,25 @@ class CaseContext:
         self.emit("evidence.attached", {"ref": reference})
         return reference
 
+    def attach_bytes(self, name: str, content: bytes) -> str:
+        """Write binary evidence (e.g. collected server logs) under a safe name."""
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+            raise ValueError("证据文件名无效")
+        directory = self.output_dir / "artifacts" / self.execution_id
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / name
+        temporary = directory / (name + ".tmp")
+        with temporary.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        reference = "artifacts/" + self.execution_id + "/" + name
+        if reference not in self._evidence:
+            self._evidence.append(reference)
+        self.emit("evidence.attached", {"ref": reference})
+        return reference
+
     def attach_file(self, name: str, source: Path) -> str:
         """Keep a run's source artifact after its product package is removed."""
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
@@ -228,6 +384,10 @@ class CaseContext:
         self.check_cancel()
         nodes = self.environment.get("nodes") or {}
         endpoint = nodes.get(node)
+        if not isinstance(endpoint, dict):
+            # Native cases address nodes by product aliases; resolve them to
+            # the canonical endpoint key like the single-target context did.
+            endpoint = nodes.get(self.resolve_node(node))
         if not isinstance(endpoint, dict):
             raise Blocked(f"未配置测试节点: {node}")
         host, port = endpoint.get("host"), endpoint.get("port")
@@ -277,15 +437,21 @@ class CaseContext:
         return result
 
     def command(self, argv: list[str], *, cwd: Path | None = None,
-                timeout_seconds: float = 30) -> CommandResult:
+                timeout_seconds: float | None = 30, input_text: str | None = None,
+                merge_stderr: bool = False) -> CommandResult:
         """Run a product command without a shell and retain its output as evidence.
 
         A nonzero exit is returned to the case, which owns the business
         assertion. Timeout and cancellation interrupt the whole process group.
+        ``timeout_seconds=None`` waits without a deadline (cancellation still
+        applies). ``input_text`` is written to the process stdin. With
+        ``merge_stderr`` stderr folds into stdout like ``stderr=STDOUT``;
+        on timeout the raised ``TimeoutError`` carries ``partial_stdout`` and
+        ``partial_stderr`` so callers can keep legacy rc=124 semantics.
         """
         if not argv or any(not isinstance(arg, str) for arg in argv):
             raise ValueError("命令必须是非空字符串参数数组")
-        if timeout_seconds <= 0:
+        if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("命令超时必须大于零")
         self.check_cancel()
         self._sql_sequence += 1
@@ -294,39 +460,61 @@ class CaseContext:
         started = time.monotonic()
         try:
             process = subprocess.Popen(
-                argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                argv, cwd=cwd,
+                stdin=subprocess.PIPE if input_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
                 text=True, start_new_session=True,
             )
         except OSError as exc:
             self.emit("command.failed", {"step_key": key, "reason": str(exc)})
             raise
+        if input_text is not None:
+            try:
+                process.stdin.write(input_text)
+                process.stdin.close()
+            except OSError:
+                # The child exited before consuming stdin; its exit status
+                # remains the authoritative fact for the case's assertion.
+                pass
+            finally:
+                process.stdin = None
         try:
             while True:
                 self.check_cancel()
-                remaining = timeout_seconds - (time.monotonic() - started)
-                if remaining <= 0:
-                    raise TimeoutError(f"命令超过 {timeout_seconds:g} 秒")
+                if timeout_seconds is None:
+                    wait_slice = 0.2
+                else:
+                    remaining = timeout_seconds - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise TimeoutError(f"命令超过 {timeout_seconds:g} 秒")
+                    wait_slice = min(remaining, 0.2)
                 try:
-                    stdout, stderr = process.communicate(timeout=min(remaining, 0.2))
+                    stdout, stderr = process.communicate(timeout=wait_slice)
                     break
                 except subprocess.TimeoutExpired:
                     continue
         except (Cancelled, TimeoutError) as exc:
             # A case can launch child processes; stop the process group so a
             # timed-out test cannot keep modifying its environment afterward.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            # TERM first, then KILL after a grace — the legacy runner's
+            # two-stage termination lets postmasters release their ports.
+            self._terminate_process_group(process)
             stdout, stderr = process.communicate()
+            if merge_stderr:
+                stderr = ""
             reference = self.attach_text(key + ".json", json.dumps({
                 "stdout": stdout, "stderr": stderr, "error": str(exc),
             }, ensure_ascii=False, indent=2) + "\n")
             self.emit("command.failed", {"step_key": key, "reason": str(exc), "evidence": reference})
+            if isinstance(exc, TimeoutError):
+                exc.partial_stdout = stdout
+                exc.partial_stderr = stderr
             raise
-        result = CommandResult(process.returncode, stdout, stderr, time.monotonic() - started)
+        result = CommandResult(process.returncode, stdout or "", stderr or "",
+                               time.monotonic() - started)
         reference = self.attach_text(key + ".json", json.dumps({
-            "returncode": result.returncode, "stdout": stdout, "stderr": stderr,
+            "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
             "duration_seconds": result.duration_seconds,
         }, ensure_ascii=False, indent=2) + "\n")
         self.emit("command.finished", {
@@ -334,6 +522,88 @@ class CaseContext:
         })
         self.check_cancel()
         return result
+
+    def start_command(self, argv: list[str],
+                      input_text: str | None = None) -> subprocess.Popen:
+        """Spawn argv as a background process and return its handle.
+
+        Mirrors the legacy runner's ``start``: stderr folds into stdout and
+        ``input_text`` is fed into stdin which is then closed. Pair with
+        :meth:`finish_command` which preserves the legacy timeout semantics
+        (returncode 124 plus a ``，已终止`` marker on partial output).
+        """
+        if not argv or any(not isinstance(arg, str) for arg in argv):
+            raise ValueError("命令必须是非空字符串参数数组")
+        self.check_cancel()
+        process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        )
+        if input_text is not None:
+            try:
+                process.stdin.write(input_text)
+                process.stdin.close()
+            except OSError:
+                # The child exited before consuming stdin; its exit status
+                # remains the authoritative fact for the caller's assertion.
+                pass
+            finally:
+                process.stdin = None
+        return process
+
+    def finish_command(self, argv: list[str], process: subprocess.Popen,
+                       timeout_seconds: float | None = None,
+                       input_text: str | None = None) -> subprocess.CompletedProcess:
+        """Wait for a process spawned by :meth:`start_command`.
+
+        On timeout the process group is terminated (TERM, then KILL after a
+        grace period) and a CompletedProcess with ``returncode == 124`` and
+        the legacy ``命令执行超时（…），已终止`` marker is returned, matching
+        ``command_runner.finish`` exactly.
+        """
+        started = time.monotonic()
+        timed_out = False
+        try:
+            while True:
+                self.check_cancel()
+                if timeout_seconds is None:
+                    wait_slice = 0.2
+                else:
+                    remaining = timeout_seconds - (time.monotonic() - started)
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    wait_slice = min(remaining, 0.2)
+                try:
+                    stdout, _ = process.communicate(timeout=wait_slice)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except Cancelled:
+            self._terminate_process_group(process)
+            process.communicate()
+            raise
+        if timed_out:
+            self._terminate_process_group(process)
+            stdout, _ = process.communicate()
+            output = (stdout or "") + "\n命令执行超时（%ss），已终止" % timeout_seconds
+            return subprocess.CompletedProcess(list(argv), 124, output, None)
+        return subprocess.CompletedProcess(
+            list(argv), process.returncode, stdout or "", None)
+
+    @staticmethod
+    def _terminate_process_group(process: subprocess.Popen) -> None:
+        """SIGTERM the process group, escalating to SIGKILL after a grace."""
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
 
     def tcp_exchange(self, host: str, port: int, payload: bytes = b"",
                      *, timeout_seconds: float = 5,

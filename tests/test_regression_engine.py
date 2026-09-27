@@ -161,6 +161,60 @@ def test_platform_cli_runs_a_suite_batch_and_writes_aggregate(tmp_path):
     assert (output / "demo.two" / "result.json").is_file()
 
 
+def test_platform_cli_failed_target_reruns_only_recorded_failures(tmp_path):
+    from platform_regress.cli import main
+
+    package = tmp_path / "demo"
+    package.mkdir()
+    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    flag = tmp_path / "healed.flag"
+    ran = tmp_path / "ran.json"
+    (package / "cases.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "FLAG = Path(r'%s')\n"
+        "RAN = Path(r'%s')\n"
+        "class Case:\n"
+        "    def __init__(self, name): self.name = name\n"
+        "    def run(self, context):\n"
+        "        seen = set(json.loads(RAN.read_text()) if RAN.exists() else [])\n"
+        "        seen.add(self.name); RAN.write_text(json.dumps(sorted(seen)))\n"
+        "        return self.name != 'bad' or FLAG.exists()\n"
+        "CASES = {'demo.good': Case('good'), 'demo.bad': Case('bad')}\n" % (flag, ran),
+        encoding="utf-8",
+    )
+    output = tmp_path / "batch"
+    assert main(["--product-dir", str(package), "--output-dir", str(output),
+                 "--suite", "demo"]) == 1
+    recorded = json.loads((output / "last_failed.json").read_text())
+    assert recorded["targets"] == ["demo.bad"]
+
+    ran.unlink()
+    flag.touch()
+    assert main(["--product-dir", str(package), "--output-dir", str(output),
+                 "failed"]) == 0
+    assert json.loads(ran.read_text()) == ["bad"]
+    assert json.loads((output / "last_failed.json").read_text())["targets"] == []
+
+
+def test_platform_cli_failed_with_no_record_is_a_noop(tmp_path):
+    from platform_regress.cli import main
+
+    package = tmp_path / "demo"
+    package.mkdir()
+    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    (package / "cases.py").write_text(
+        "class Case:\n"
+        "    def run(self, context): return True\n"
+        "CASES = {'demo.good': Case()}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "batch"
+    assert main(["--product-dir", str(package), "--output-dir", str(output),
+                 "failed"]) == 0
+    assert json.loads((output / "last_failed.json").read_text())["targets"] == []
+
+
 def test_evidence_name_cannot_escape_case_directory(tmp_path):
     context = CaseContext("demo.case", tmp_path)
     with pytest.raises(ValueError, match="证据文件名"):

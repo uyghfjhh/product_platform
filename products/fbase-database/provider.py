@@ -2,10 +2,13 @@
 
 import json
 import importlib.util
+import os
+import re
 import sys
 from pathlib import Path
 
 import psycopg
+import yaml
 
 from platform_app.providers import CommandSpec, Observation
 from platform_app.replication_observations import parse_replication
@@ -14,38 +17,115 @@ from platform_app.scene import emit_observation, endpoint_id
 from platform_app.topology import configured_topology
 
 
-SHARED_ENGINE_TARGETS = frozenset({
-    "mmr.installation.runtime_prerequisites",
-    "mmr.cluster_verification.basic",
-    "mmr.cluster_verification.same_priority_errors",
-    "mac.separation_of_duties.dba_metadata_access_restrictions",
-    "mac.separation_of_duties.dba_metadata_function_restrictions",
-    "mac.separation_of_duties.dba_metadata_index_restrictions",
-    "mac.separation_of_duties.dba_metadata_sequence_restrictions",
-    "mac.separation_of_duties.dba_metadata_view_restrictions",
-    "mac.separation_of_duties.dba_security_configuration_restrictions",
-    "mac.tlcp.server_client_generation",
-    "mmr.node_function_control.two_phase_change_unsupported",
-    "mac.password.account_rename",
-    "mac.separation_of_duties.role_membership_restrictions",
-    "mac.separation_of_duties.sao_role_membership_restrictions",
-    "mac.separation_of_duties.sso_role_membership_restrictions",
-    "mac.mac.table_creation_and_grants",
-    "mac.separation_of_duties.dba_object_privilege_separation",
-    "mac.audit.server_audit_logs",
-    "mac.separation_of_duties.dba_user_management_separation_on",
-})
-
-
-def migrated_cases():
-    """Load metadata from this product's new SDK case module."""
+def _load_cases_module():
+    """Load this product's platform case module."""
     path = Path(__file__).with_name("cases.py")
     spec = importlib.util.spec_from_file_location("_fbase_platform_cases", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("无法加载 FBase 平台用例")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.CASE_METADATA
+    return module
+
+
+def migrated_cases():
+    """Load metadata from this product's new SDK case module."""
+    return _load_cases_module().CASE_METADATA
+
+
+def native_case(target):
+    """Return this target's platform case instance, or None for the wrapper."""
+    module = _load_cases_module()
+    case = module.CASES.get(target)
+    if case is None or isinstance(case, module.LegacyFbaseCase):
+        return None
+    return case
+
+
+def _node_roles(groups):
+    """Node roles like legacy Topology.roles(): streaming -> primary/standby,
+    logical -> publisher/logical_subscriber, mmr -> mmr_primary:<member> and
+    mmr_standby:<member>."""
+    roles = {}
+    relation = groups.get("streaming") or {}
+    if relation.get("primary"):
+        roles[relation["primary"]] = "primary"
+    for standby in relation.get("standbys") or []:
+        roles[standby] = "standby"
+    logical = groups.get("logical") or {}
+    if logical.get("publisher"):
+        roles[logical["publisher"]] = "publisher"
+    for subscriber in logical.get("subscribers") or {}:
+        roles[subscriber] = "logical_subscriber"
+    mmr = groups.get("mmr") or {}
+    for member, relation in (mmr.get("members") or {}).items():
+        if relation.get("primary"):
+            roles[relation["primary"]] = "mmr_primary:%s" % member
+        for standby in relation.get("standbys") or []:
+            roles[standby] = "mmr_standby:%s" % member
+    return roles
+
+
+def _legacy_cluster_context(settings, cluster, with_nodes=True):
+    """Read product plugins, binaries, nodes and relation groups from the
+    legacy regress config (the same source the old executor used)."""
+    context = {"plugins": [], "plugins_detail": {}, "node_groups": {},
+               "node_order": [], "cluster_name": cluster}
+    path = Path(settings.fbase_regress_root) / "regress.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        context["topology_error"] = "无法读取回归集群定义: %s" % path
+        return context
+    clusters = data.get("clusters") or {}
+    cluster_config = clusters.get(cluster)
+    if cluster_config is None:
+        context["topology_error"] = "回归集群 %s 未定义" % cluster
+        return context
+    plugins = cluster_config.get("plugins") or {}
+    context["plugins"] = sorted(plugins.keys())
+    context["plugins_detail"] = plugins
+    groups = cluster_config.get("groups") or {}
+    context["node_groups"] = groups
+    context["transport"] = cluster_config.get("transport") or {}
+    home = str((data.get("postgres") or {}).get("home") or "")
+    home = re.sub(r"\$\{(\w+)\}",
+                  lambda match: os.environ.get(match.group(1), ""), home)
+    if home and Path(home).is_dir():
+        context["fbase_bin_dir"] = str(Path(home) / "bin")
+    if not with_nodes:
+        context.pop("topology_error", None)
+        return context
+    roles = _node_roles(groups)
+    nodes = {}
+    for name, node in (cluster_config.get("nodes") or {}).items():
+        endpoint = {"host": node["host"], "port": node["port"],
+                    "data_dir": node.get("data_dir") or "",
+                    "role": roles.get(name, "standalone")}
+        nodes[name] = endpoint
+    context["nodes"] = nodes
+    context["node_order"] = list(nodes)
+    # Convenience aliases keep hand-written native cases working inside suite
+    # runs where the full node map replaces the minimal selector map. They are
+    # resolved last in resolve_selector, so real selectors always win.
+    from platform_regress.engine import resolve_selector
+    aliases = {}
+    candidates = ["primary", "writable", "standby", "publisher",
+                  "subscriber", "logical_subscriber"]
+    prefixed = {
+        member: "mmr:" + member
+        for member in (groups.get("mmr") or {}).get("members") or {}
+    }
+    for candidate in candidates + list(prefixed):
+        if candidate in nodes:
+            continue
+        try:
+            aliases[candidate] = resolve_selector(
+                context, prefixed.get(candidate, candidate))
+        except Exception:
+            continue
+    context["node_aliases"] = aliases
+    return context
 
 
 def exported_cases():
@@ -78,7 +158,8 @@ class FbaseProvider:
         return target == "all" or target in targets or any(item.startswith(target + ".") for item in targets)
 
     def discover(self, settings):
-        return [case for case in exported_cases() if case["target"] not in SHARED_ENGINE_TARGETS] + migrated_cases()
+        native = {entry["target"]: entry for entry in migrated_cases()}
+        return [native.get(case["target"], case) for case in exported_cases()]
 
     def after_command(self, store, settings, environment, task_id, action, success):
         """Capture database replication facts without changing test verdict."""
@@ -195,6 +276,50 @@ class FbaseProvider:
         finally:
             connection.close()
 
+    def _test_context(self, settings, environment, cluster, with_topology,
+                      extended=False):
+        """Build the platform CLI context for a single target or suite."""
+        if extended:
+            # Exported cases need the complete legacy node graph: every
+            # instance with data_dir/role, relation groups and plugin details
+            # straight from regress.yaml so all selectors resolve like the
+            # old executor.
+            context = {"user": environment.get("database_user") or "postgres",
+                       "users": environment.get("database_users") or {},
+                       "legacy_source": str(settings.fbase_regress_root),
+                       "cluster": cluster}
+            context.update(_legacy_cluster_context(settings, cluster))
+            return context
+        nodes, topology_error = {}, None
+        if with_topology:
+            try:
+                topology = configured_topology(settings, environment)
+                if cluster == "mmr":
+                    primary = {
+                        node.get("group"): node for node in topology["nodes"]
+                        if node.get("role") == "primary"
+                    }
+                    nodes = {
+                        name: {"host": primary[name]["host"], "port": primary[name]["port"]}
+                        for name in ("mmr1", "mmr2", "mmr3") if name in primary
+                    }
+                else:
+                    primary = [node for node in topology["nodes"] if node.get("role") == "primary"]
+                    if len(primary) != 1:
+                        raise ValueError("等保测试需要唯一的可写主节点")
+                    nodes = {"primary": {"host": primary[0]["host"], "port": primary[0]["port"]}}
+            except (ValueError, FileNotFoundError) as exc:
+                topology_error = str(exc)
+        context = {"nodes": nodes, "user": environment.get("database_user") or "postgres",
+                   "users": environment.get("database_users") or {},
+                   "legacy_source": str(settings.fbase_regress_root),
+                   "cluster": cluster}
+        context.update(_legacy_cluster_context(settings, cluster,
+                                               with_nodes=False))
+        if topology_error:
+            context["topology_error"] = topology_error
+        return context
+
     def command(self, settings, environment, action, target, parameters):
         if action != "tests.fbase":
             raise ValueError("FBase 未注册操作: %s" % action)
@@ -204,31 +329,11 @@ class FbaseProvider:
         if target in ALL_CASE_TARGETS:
             if cluster != target.split(".", 1)[0]:
                 raise ValueError("用例目标与所选集群不一致")
-            nodes, topology_error = {}, None
-            if target in SHARED_ENGINE_TARGETS:
-                try:
-                    topology = configured_topology(settings, environment)
-                    if cluster == "mmr":
-                        primary = {
-                            node.get("group"): node for node in topology["nodes"]
-                            if node.get("role") == "primary"
-                        }
-                        nodes = {
-                            name: {"host": primary[name]["host"], "port": primary[name]["port"]}
-                            for name in ("mmr1", "mmr2", "mmr3") if name in primary
-                        }
-                    else:
-                        primary = [node for node in topology["nodes"] if node.get("role") == "primary"]
-                        if len(primary) != 1:
-                            raise ValueError("等保测试需要唯一的可写主节点")
-                        nodes = {"primary": {"host": primary[0]["host"], "port": primary[0]["port"]}}
-                except (ValueError, FileNotFoundError) as exc:
-                    topology_error = str(exc)
-            context = {"nodes": nodes, "user": environment.get("database_user") or "postgres",
-                       "users": environment.get("database_users") or {},
-                       "legacy_source": str(settings.fbase_regress_root)}
-            if topology_error:
-                context["topology_error"] = topology_error
+            case_impl = native_case(target)
+            context = self._test_context(
+                settings, environment, cluster,
+                with_topology=case_impl is not None,
+                extended=type(case_impl).__name__ == "ExportedCommandCase")
             output = settings.environment_dir / "regression" / environment["id"] / target
             target_args = ["--suite", target] if "." not in target else [target]
             return CommandSpec([
@@ -238,13 +343,16 @@ class FbaseProvider:
                 "--context-json", json.dumps(context, ensure_ascii=False), *target_args,
             ], settings.data_dir)
         if "." not in target and target != "all":
+            # Suite runs mix native and legacy cases; inject the extended node
+            # map so every native target gets its selectors for free.
+            context = self._test_context(settings, environment, cluster,
+                                         with_topology=True, extended=True)
             output = settings.environment_dir / "regression" / environment["id"] / target
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
                 "--product-dir", str(Path(__file__).resolve().parent),
-                "--output-dir", str(output), "--context-json", json.dumps({
-                    "legacy_source": str(settings.fbase_regress_root),
-                }, ensure_ascii=False), "--suite", target,
+                "--output-dir", str(output), "--context-json",
+                json.dumps(context, ensure_ascii=False), "--suite", target,
             ], settings.data_dir)
         script = settings.fbase_regress_root / "run.sh"
         if not script.is_file():

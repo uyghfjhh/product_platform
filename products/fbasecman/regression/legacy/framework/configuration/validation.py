@@ -2,9 +2,13 @@
 
 from pathlib import Path
 
-
-class ConfigurationError(ValueError):
-    pass
+from platform_regress.configuration.validation import (  # noqa: F401
+    ConfigurationError,
+    port_value as _port,
+    reject_unknown as _reject_unknown,
+    require_mapping as _require_mapping,
+    require_text as _require_text,
+)
 
 
 PORT_NAMES = (
@@ -48,32 +52,6 @@ STABLE_RELOAD_STATUS_TOGGLE_FIELDS = {
     "enabled", "datasource", "interval_seconds",
 }
 STABLE_HA_COMMAND_FIELDS = {"enabled"}
-
-
-def _require_mapping(config, name):
-    value = config.get(name)
-    if not isinstance(value, dict):
-        raise ConfigurationError("configuration section %r must be a mapping" % name)
-    return value
-
-
-def _reject_unknown(mapping, allowed, location):
-    unknown = sorted(set(mapping) - set(allowed))
-    if unknown:
-        raise ConfigurationError("unknown field(s) in %s: %s" % (location, ", ".join(unknown)))
-
-
-def _require_text(mapping, names, location):
-    for name in names:
-        value = mapping.get(name)
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigurationError("%s.%s must be a non-empty string" % (location, name))
-
-
-def _port(value, location):
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-        raise ConfigurationError("%s must be an integer in range 1..65535" % location)
-    return value
 
 
 def validate_config(config, profile):

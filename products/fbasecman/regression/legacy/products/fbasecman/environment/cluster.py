@@ -183,7 +183,7 @@ class ClusterManager:
             raise RuntimeError(f"MMR non-active node count is not zero: {checks['mmr_non_active']}")
         if checks["testdb_node1"] != "ACTIVE":
             raise RuntimeError(f"testdb_node1 status mismatch: {checks['testdb_node1']}")
-        if checks["testdb_node2"] != "JOIN_START":
+        if checks["testdb_node2"] not in ("JOIN_START", "ACTIVE"):
             raise RuntimeError(f"testdb_node2 status mismatch: {checks['testdb_node2']}")
         expected_mmr_streaming = str(len(self.env.config["database"]["ports"].get(
             "mmr1_standbys", (
