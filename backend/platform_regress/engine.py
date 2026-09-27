@@ -210,7 +210,7 @@ class CaseContext:
         return reference
 
     def sql(self, node: str, query: str, *, database: str = "postgres",
-            user: str | None = None) -> SqlResult:
+            user: str | None = None, password: str | None = None) -> SqlResult:
         """Execute one SQL statement against a declared product node.
 
         SQL text and returned rows become evidence. Product cases own the
@@ -228,8 +228,10 @@ class CaseContext:
         key = f"sql-{self._sql_sequence}"
         users = self.environment.get("users") or {}
         selected_user = user or self.environment.get("user") or "postgres"
-        selected_password = (users.get(selected_user, {}).get("password")
-                             if isinstance(users, dict) else None)
+        selected_password = password
+        if selected_password is None:
+            selected_password = (users.get(selected_user, {}).get("password")
+                                 if isinstance(users, dict) else None)
         self.emit("sql.started", {"step_key": key, "node": node, "database": database,
                                    "user": selected_user})
         try:

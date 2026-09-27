@@ -36,7 +36,7 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
         while True:
             try:
                 result = context.sql(node, step["sql"], database=step.get("database") or "postgres",
-                                     user=step.get("user"))
+                                     user=step.get("user"), password=step.get("password"))
                 expected = tuple(tuple(str(cell) for cell in row) for row in assertion.get("rows", []))
                 if result.rows == expected:
                     context.step(f"step-{index}", step["title"], details={"poll": "matched"})
@@ -58,6 +58,8 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
     sql_kwargs = {"database": database}
     if step.get("user"):
         sql_kwargs["user"] = step["user"]
+    if step.get("password"):
+        sql_kwargs["password"] = step["password"]
     if kind in {"sql_error", "sql_fails"}:
         try:
             context.sql(node, query, **sql_kwargs)
