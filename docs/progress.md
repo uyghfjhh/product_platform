@@ -97,6 +97,9 @@
 - 2026-09-26：按快速批量迁移要求，`platform_regress.cli` 新增 suite 批量执行模式（`--suite`），逐目标输出独立 result/evidence，并写入聚合 `suite-result.json`；不再要求人工逐条调用和验收。单条目标入口保持兼容，批内 FAIL/BLOCKED/CANCELLED 维持原判定。
 - 2026-09-26：Web/CLI 的整组 suite 目标已改为统一调用 `platform_regress --suite`；FBase 和 fbasecman Provider 不再直接把 suite 目标交给旧聚合 runner。平台负责逐目标生命周期和批量聚合，旧执行器只作为尚未原生改写的产品实现。Provider/API/Runtime 定向测试 32 passed。
 - 2026-09-26：按“先整批迁移代码、后调试”的要求完成本阶段结构切换：产品 provider 入口统一为 `provider.py`，单条和 suite 目标统一进入平台批处理器，suite 结果逐条发布；平台 Runtime 公共模块和 pgcluster Provider 已进入平台目录，旧框架仅保留产品专属实现/兼容入口。一次性验证：平台 94 passed，fbasecman 259 OK，FBase 149 OK，前端 build 通过。
+- 2026-09-27：按旧工程保真原则完成 fbasecman 原生协议迁移。`sql_parse.savepoint_recovery_after_local_25p02` 在真实 cman-lab 双主环境 PASS；平台原生启动 fbasecman、执行 13 个 Extended Query 事务步骤、核对 SQLSTATE/ReadyForQuery/CommandComplete/结果值和同一 client 日志中的内部 rollback，并归档配置、协议记录和产品日志。
+- 2026-09-27：继续原生迁移 fbasecman SQL_PARSE heartbeat 三个目标：`heartbeat_bind_normal`、`heartbeat_bind_invalid`、`heartbeat_bind_unsupported`。真实环境 normal/malformed PASS；binary fallback 按旧版本语义保留 FAIL。平台不再要求原生目标存在旧 `test_context.yaml`，拓扑、MMR UUID、system identifier、二进制和 license 从 pgcluster/产品配置注入。平台全量测试 97 passed。
+- 2026-09-27：迁移保真原则固定写入 `docs/design.md`，参考路径为 `/home/postgres/fly_dev/fbasecman_dev/fbasecman_regress_v2`、`/home/postgres/fly_dev/postgresql_for_fbase_dev/fbase_regress`、`/home/postgres/fly_dev/pgcluster`。用户已明确允许正常处理未跟踪 core dump、scratch 和锁文件；本阶段未清理它们，也未使用 destructive git 操作。
 
 - 路线图 P1–P6 未开始(见 [设计文档](design.md) 第二部分第 4 节)。
 - P7 相关遗留:报告 Modal 的 3D canvas 像素/取景/步骤播放/节点点击/手机截图未验收;部署画布需重做(深色完整画布、节点操作);2D 拓扑需继续按参考截图校准布局、连线、3D 视角和动效;`stable.sh env` 需要独立 stable pgcluster 配置才能实际运行;真实执行/停止及部署流程端到端验证未做。
