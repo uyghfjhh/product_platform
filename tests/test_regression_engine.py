@@ -303,3 +303,18 @@ def test_product_case_uses_shared_engine_through_web_task(tmp_path, monkeypatch)
     assert app.state.store.get_task(queued[0])["status"] == "SUCCEEDED"
     assert app.state.store.list_results("lab")[0]["status"] == "PASS"
     assert (settings.data_dir / "runs" / "demo.case" / "events.jsonl").is_file()
+
+
+def test_fixture_cleanup_runs_when_case_fails(tmp_path, monkeypatch):
+    context = CaseContext("demo.fixtures", tmp_path,
+                          environment={"nodes": {"primary": {"host": "db", "port": 5432}}})
+    calls = []
+    context.defer_cleanup(lambda: calls.append("cleanup"))
+
+    class FailingCase:
+        def run(self, _context):
+            raise AssertionError("expected failure")
+
+    result = RegressionEngine().run(FailingCase(), context)
+    assert result.verdict == "FAIL"
+    assert calls == ["cleanup"]
