@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import time
 
 import psycopg
 
@@ -29,6 +30,25 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
         context.reload(node)
         context.step(f"step-{index}", step["title"], details={"action": "reload"})
         return
+    if step.get("type") == "wait_sql":
+        deadline = time.monotonic() + float(step.get("timeout", 30))
+        interval = float(step.get("interval", 1))
+        while True:
+            try:
+                result = context.sql(node, step["sql"], database=step.get("database") or "postgres",
+                                     user=step.get("user"))
+                expected = tuple(tuple(str(cell) for cell in row) for row in assertion.get("rows", []))
+                if result.rows == expected:
+                    context.step(f"step-{index}", step["title"], details={"poll": "matched"})
+                    return
+            except psycopg.Error:
+                pass
+            if time.monotonic() >= deadline:
+                context.step(f"step-{index}", step["title"], status="FAIL",
+                             details={"timeout": step.get("timeout", 30)})
+                raise AssertionError(f"{step['title']}: 轮询超时")
+            context.check_cancel()
+            time.sleep(interval)
     if step.get("type") != "sql" or kind not in SUPPORTED_SQL_ASSERTIONS:
         raise ValueError(f"平台不支持 SQL 步骤或断言: {kind}")
     key = f"step-{index}"

@@ -32,6 +32,7 @@ SHARED_ENGINE_TARGETS = frozenset({
     "mac.separation_of_duties.sso_role_membership_restrictions",
     "mac.mac.table_creation_and_grants",
     "mac.separation_of_duties.dba_object_privilege_separation",
+    "mac.audit.server_audit_logs",
 })
 
 
@@ -223,6 +224,7 @@ class FbaseProvider:
                 except (ValueError, FileNotFoundError) as exc:
                     topology_error = str(exc)
             context = {"nodes": nodes, "user": environment.get("database_user") or "postgres",
+                       "users": environment.get("database_users") or {},
                        "legacy_source": str(settings.fbase_regress_root)}
             if topology_error:
                 context["topology_error"] = topology_error

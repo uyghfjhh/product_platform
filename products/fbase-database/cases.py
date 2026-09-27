@@ -306,6 +306,13 @@ class FixtureSqlCase(DeclarativeSqlCase):
         super().setup(context)
         node = self.definition["steps"][0]["node"].split(":")[-1]
         for fixture in self.definition.get("fixtures", [])[1:]:
+            if fixture.get("type") == "settings":
+                node = fixture.get("node", self.definition["steps"][0].get("node", "primary"))
+                node = node.split(":")[-1]
+                user = fixture.get("user")
+                for name, value in fixture.get("values", {}).items():
+                    context.set_setting(node, name, str(value), user=user)
+                continue
             if fixture.get("type") != "roles":
                 if fixture.get("type") == "table":
                     context.defer_drop_table(node, fixture["name"])
@@ -346,15 +353,19 @@ def load_native_sql_cases():
     # These targets intentionally stay on the legacy executor until their
     # product-specific privilege/session semantics have a platform contract.
     unsafe = {"mac.audit.log_access_restrictions"}
+    allowed_settings = {"mac.audit.server_audit_logs"}
     selected = {}
     for target, definition in definitions.items():
         if target in unsafe:
             continue
         steps = definition.get("steps") or []
         fixtures = definition.get("fixtures") or []
+        if (any(isinstance(item, dict) and item.get("type") == "settings"
+                for item in fixtures) and target not in allowed_settings):
+            continue
         valid_fixture = fixtures == ["cluster"] or (
             len(fixtures) >= 2 and fixtures[0] == "cluster"
-            and all(isinstance(item, dict) and item.get("type") in {"roles", "table"}
+            and all(isinstance(item, dict) and item.get("type") in {"roles", "table", "settings"}
                     for item in fixtures[1:])
         )
         if (not valid_fixture or not steps
@@ -362,10 +373,12 @@ def load_native_sql_cases():
                     (step.get("type") == "cluster_action" and
                      step.get("action") == "reload" and
                      step.get("assertion", {}).get("type") == "command_succeeds")
+                    or (step.get("type") == "wait_sql"
+                        and step.get("assertion", {}).get("type") == "rows_equal")
                     or (step.get("type") == "sql"
                         and step.get("user", "postgres") == "postgres"
                         and step.get("assertion", {}).get("type") in supported)
-                    for step in steps) is False):
+                    for step in steps)):
             continue
         selected[target] = definition
     return selected
