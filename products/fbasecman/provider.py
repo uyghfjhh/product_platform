@@ -146,6 +146,7 @@ class FbasecmanProvider:
                 "sql_parse.heartbeat_bind_invalid",
                 "sql_parse.heartbeat_bind_unsupported",
                 "ha_commands.sql_parse_extended_protocol",
+                "ha_commands.jdbc_console_ha_commands",
             }
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():
@@ -193,6 +194,20 @@ class FbasecmanProvider:
                         case_context.update({
                             "sql_parse_java_asset": str(settings.fbasecman_regress_root /
                                 "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
+                            "jdbc_jar": str(settings.fbasecman_regress_root /
+                                "lib_jdbc/postgresql-42.7.7.jar"),
+                        })
+                    if target == "ha_commands.jdbc_console_ha_commands":
+                        extras = {}
+                        for alias, group in (("pg_3", "mmr1"), ("pg_4", "mmr2")):
+                            standby = next((node for node in topology["nodes"]
+                                            if node.get("group") == group and node.get("role") == "standby"), None)
+                            if standby:
+                                extras[alias] = {"host": standby["host"], "port": standby["port"]}
+                        case_context["extra_nodes"] = extras
+                        case_context.update({
+                            "ha_console_java_asset": str(settings.fbasecman_regress_root /
+                                "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
                             "jdbc_jar": str(settings.fbasecman_regress_root /
                                 "lib_jdbc/postgresql-42.7.7.jar"),
                         })

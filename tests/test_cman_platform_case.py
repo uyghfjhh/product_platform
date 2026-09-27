@@ -81,3 +81,8 @@ def test_savepoint_protocol_case_is_native():
     module = load_cases()
     case = module.CASES["sql_parse.savepoint_recovery_after_local_25p02"]
     assert type(case).__name__ == "SavepointRecoveryCase"
+
+
+def test_jdbc_console_case_is_native():
+    module = load_cases()
+    assert type(module.CASES["ha_commands.jdbc_console_ha_commands"]).__name__ == "JdbcConsoleHaCommandsCase"

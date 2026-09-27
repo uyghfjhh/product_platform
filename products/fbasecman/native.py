@@ -35,9 +35,11 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
         raise Blocked("数据库没有可用的 MMR g1 group UUID")
     group_uuid = group_uuid_rows[0][0]
     selected_nodes = {"pg_1": nodes[first], "pg_2": nodes[second]}
+    selected_nodes.update(env.get("extra_nodes") or {})
     identifiers = {}
     for alias, node in selected_nodes.items():
-        rows = context.sql(first if alias == "pg_1" else second,
+        query_node = first if alias in {"pg_1", "pg_3"} else second
+        rows = context.sql(query_node,
                            "SELECT system_identifier::text FROM pg_control_system()").rows
         if not rows or not rows[0][0]:
             raise Blocked(f"无法读取 {alias} system_identifier")
@@ -71,10 +73,12 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
         '    check "auto"', '}',
     ]
     for name, node in selected_nodes.items():
-        cluster = "pg_cluster_1" if name == "pg_1" else "pg_cluster_2"
+        cluster = "pg_cluster_1" if name in {"pg_1", "pg_3"} else "pg_cluster_2"
+        app_name = "pg_240" if name == "pg_3" else ("pg_250" if name == "pg_4" else None)
         data += [f'datasources "{name}" {{', f'    host "{node["host"]}"',
                  f'    port {node["port"]}', f'    cluster_name "{cluster}"',
                  '    weight 10', '    status "active"',
+                 *([f'    application_name "{app_name}"'] if app_name else []),
                  f'    system_identifier "{identifiers[name]}"', '    tls "disable"', '}',]
     data += ['user "postgres" {', '    group_names "mmr_group"',
              '    authentication "none"', '    storage_user "postgres"',
@@ -287,6 +291,47 @@ class SqlParseExtendedProtocolCase:
                      details={"output": result.stdout, "required": required_markers})
         if not passed:
             raise AssertionError("SQL_PARSE JDBC 扩展协议结果与旧用例预期不符")
+        return True
+
+
+class JdbcConsoleHaCommandsCase:
+    """Native host for the complete JDBC HA console command matrix."""
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        asset = Path(context.environment.get("ha_console_java_asset", ""))
+        jar = Path(context.environment.get("jdbc_jar", ""))
+        if not asset.is_file() or not jar.is_file():
+            raise Blocked("缺少 JDBC HA 控制台资产或驱动")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        context.command(["javac", "-cp", str(jar), "-d", str(context.output_dir), str(asset)],
+                        cwd=context.output_dir, timeout_seconds=60)
+        nodes = context.environment.get("nodes") or {}
+        ports = [str(nodes[name]["port"]) for name in ("mmr1", "mmr2") if name in nodes]
+        extra = context.environment.get("extra_nodes") or {}
+        ports += [str(extra[name]["port"]) for name in ("pg_3",) if name in extra]
+        if len(ports) < 3:
+            raise Blocked("HA JDBC 用例缺少 MMR 主节点或备节点")
+        snapshots = context.output_dir / "jdbc-config-snapshots"
+        urls = [f"jdbc:postgresql://127.0.0.1:{port}/console?preferQueryMode=simple",
+                f"jdbc:postgresql://127.0.0.1:{port}/mmr_group?preferQueryMode=simple",
+                f"jdbc:postgresql://127.0.0.1:{port}/single_group?preferQueryMode=simple"]
+        args = ["java", "-cp", f"{context.output_dir}:{jar}", "HaConsoleCommands",
+                urls[0], "admin", "", str(config), str(snapshots), urls[1], urls[2], *ports]
+        result = context.command(args, cwd=context.output_dir, timeout_seconds=180)
+        markers = ("JDBC_CONNECT=OK", "SET_NODE_PARTED=OK", "SET_NODE_ACTIVE=OK",
+                   "SET_NODE_WEIGHT=OK", "SET_NODE_WRITE=OK", "SET_NODE_PROMOTED=OK",
+                   "SET_CLUSTER_PARTED=OK", "SET_CLUSTER_ACTIVE=OK", "REFRESH_CLUSTER=OK",
+                   "ALL_HA_COMMANDS=OK")
+        passed = result.returncode == 0 and all(marker in result.stdout for marker in markers)
+        context.attach_text("ha-command-markers.txt", result.stdout)
+        context.step("ha-command-verdict", "核对 JDBC 高可用命令矩阵和路由结果",
+                     status="PASS" if passed else "FAIL",
+                     details={"markers": markers, "output": result.stdout})
+        if not passed:
+            raise AssertionError("JDBC 高可用命令结果与旧用例预期不符")
         return True
 
 
