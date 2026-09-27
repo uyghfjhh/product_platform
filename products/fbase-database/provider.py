@@ -26,6 +26,10 @@ SHARED_ENGINE_TARGETS = frozenset({
     "mac.separation_of_duties.dba_security_configuration_restrictions",
     "mac.tlcp.server_client_generation",
     "mmr.node_function_control.two_phase_change_unsupported",
+    "mac.password.account_rename",
+    "mac.separation_of_duties.role_membership_restrictions",
+    "mac.separation_of_duties.sao_role_membership_restrictions",
+    "mac.separation_of_duties.sso_role_membership_restrictions",
 })
 
 
