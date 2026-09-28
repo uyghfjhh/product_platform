@@ -9,7 +9,7 @@
 | 产品 | 用例数 | 执行路径 | 实测基线 | 未完成原因 |
 | --- | --- | --- | --- | --- |
 | fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 161 PASS + 2 FAIL + 2 BLOCKED | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
-| fbasecman | 212（202 legacy + 10 native） | 平台引擎 + 进程内 `LegacySuiteCase` 适配，套件 `run_case` 全权持有业务语义 | 见 §4.3 分套件 | 引擎已收敛；产品 runtime 内部通用件未上收完 |
+| fbasecman | 212（158 legacy + 54 native） | 平台引擎 + 进程内 `LegacySuiteCase` 适配，套件 `run_case` 全权持有业务语义 | 见 §4.3 分套件 | native 已覆盖 sql_parse 4、ha_commands 6、tmp 1、outstanding 11、rw_toggle 14、guc 18（全套真实环境 PASS）；剩余 158 条按 suite 分批迁移中 |
 
 **唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。`run.py`/`run.sh`/`tools/cli.py` 保留为独立入口，内部委托同一批 `run_case`，不是第二执行引擎。
 

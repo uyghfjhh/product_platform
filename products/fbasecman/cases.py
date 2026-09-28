@@ -17,7 +17,7 @@ from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        ReloadDisableMonitorRouteLossCase,
                                        OutstandingConsistencyCase, RwToggleCase,
                                        SqlParseExtendedProtocolCase,
-                                       JdbcConsoleHaCommandsCase)
+                                       JdbcConsoleHaCommandsCase, guc_case)
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
                                         SetNodeWeightIdempotentCase)
 
@@ -140,6 +140,20 @@ NATIVE_CASES = {
         initial_query="SHOW CLUSTERS;"),
     "ha_commands.set_node_weight_idempotent": SetNodeWeightIdempotentCase(),
     "tmp.reload_disable_monitor_route_loss": ReloadDisableMonitorRouteLossCase(),
+    **{
+        "guc." + name: guc_case(name)
+        for name in (
+            "search_path_reuse_sql_parse", "search_path_reuse_hint",
+            "search_path_multivalue_sql_parse", "search_path_multivalue_hint",
+            "search_path_empty_normalize", "search_path_mixed_quotes_cleanup",
+            "reset_param_sql_parse", "reset_param_hint",
+            "reset_all_sql_parse", "reset_all_hint",
+            "discard_all_sql_parse", "discard_all_hint",
+            "set_local_transaction_sql_parse", "set_local_transaction_hint",
+            "case_insensitive_quotes_sql_parse", "case_insensitive_quotes_hint",
+            "report_param_timezone_sql_parse", "report_param_timezone_hint",
+        )
+    },
     **{
         "outstanding." + name: OutstandingConsistencyCase(mode)
         for name, mode in (

@@ -1117,3 +1117,350 @@ class RwToggleCase:
                         "\n".join(route_lines[-8:]) if route_lines else "<none>",
                         "\n".join(level_lines[-8:]) if level_lines else "<none>"),
                     bool(route_lines) and route_ok and not level_lines)
+
+
+# ---------------------------------------------------------------------------
+# guc 套件：GUC 部署/重放与前后端缓存一致性（SQL_PARSE/HINT 模式参数化）
+# ---------------------------------------------------------------------------
+
+_GUC_PROBE_SCHEMAS = ("public", "postgres", "schema1", "schema2")
+
+
+def _guc_pred(*all_of, **kwargs):
+    """把 legacy executor 的子串断言编译为谓词。
+
+    ``any_of`` 组内命中任一即可；``none_of`` 全部不得出现。
+    """
+    any_of = tuple(kwargs.get("any_of") or ())
+    none_of = tuple(kwargs.get("none_of") or ())
+
+    def predicate(output):
+        if any(needle not in output for needle in all_of):
+            return False
+        if any_of and not any(needle in output for needle in any_of):
+            return False
+        return all(needle not in output for needle in none_of)
+
+    return predicate
+
+
+def _guc_primaries(context: CaseContext):
+    nodes = context.environment.get("nodes") or {}
+    primaries = [name for name in ("mmr1", "mmr2") if name in nodes]
+    if len(primaries) != 2:
+        raise Blocked("pgcluster 拓扑缺少两个 MMR 主节点")
+    return primaries
+
+
+def _guc_prepare_tables(context: CaseContext):
+    """在双主库创建同名探针表（对齐 legacy prepare_search_path_tables）。
+
+    返回各节点本次新建的 schema 清单，清理时只删新建 schema。
+    """
+    created = {}
+    for node in _guc_primaries(context):
+        rows = context.sql(
+            node, "SELECT nspname FROM pg_namespace "
+                  "WHERE nspname IN ('postgres','schema1','schema2')").rows
+        existing = {str(row[0]).strip() for row in rows}
+        created[node] = [name for name in ("postgres", "schema1", "schema2")
+                         if name not in existing]
+        for schema in _GUC_PROBE_SCHEMAS:
+            if schema != "public":
+                context.sql(node, "CREATE SCHEMA IF NOT EXISTS %s" % schema)
+            context.sql(node, "CREATE TABLE IF NOT EXISTS %s.guc_search_path_probe "
+                              "(marker text PRIMARY KEY)" % schema)
+            context.sql(node, "INSERT INTO %s.guc_search_path_probe VALUES ('%s') "
+                              "ON CONFLICT (marker) DO NOTHING" % (schema, schema))
+    return created
+
+
+def _guc_cleanup_tables(context: CaseContext, created):
+    for node in _guc_primaries(context):
+        for schema in _GUC_PROBE_SCHEMAS:
+            context.sql(node, "DROP TABLE IF EXISTS %s.guc_search_path_probe" % schema)
+        for schema in created.get(node, ()):
+            context.sql(node, "DROP SCHEMA IF EXISTS %s" % schema)
+
+
+def _guc_verify_search_path(context: CaseContext, psql: str, port: int,
+                            path_sql: str, expected_schema):
+    """经代理以指定 search_path 解析未限定同名表（对齐 legacy
+    verify_search_path_table：expected_schema=None 断言报 does not exist）。"""
+    sql = ("SET search_path = %s; SELECT marker || '|' || current_schemas(true)::text "
+           "FROM guc_search_path_probe;" % path_sql)
+    if expected_schema is None:
+        _expect(
+            context, "guc-verify-empty-schemas",
+            "检查空 search_path 的有效 schema 列表",
+            "current_schemas(true) 不包含 public/postgres/schema1/schema2",
+            _guc_pred("pg_catalog",
+                      none_of=("public", "postgres", "schema1", "schema2")),
+            lambda: _business_query(
+                context, psql, port,
+                "SET search_path = %s; SELECT current_schemas(true)::text;" % path_sql))
+        result = _business_query(context, psql, port, sql)
+        output = (result.stdout or "").rstrip() or "<empty>"
+        passed = (result.returncode != 0 and "guc_search_path_probe" in output
+                  and "does not exist" in output)
+        context.step("guc-verify-empty-error",
+                     "空 search_path 下未限定表名不可解析",
+                     status="PASS" if passed else "FAIL",
+                     details={"expected": "relation guc_search_path_probe does not exist",
+                              "actual": "returncode=%s" % result.returncode,
+                              "output": output})
+        if not passed:
+            raise AssertionError("空 search_path 下未限定表名未按预期失败")
+        return
+    _expect(
+        context, "guc-verify-%s" % expected_schema,
+        "验证 search_path 实际解析同名表",
+        "未限定表名应命中 %s.guc_search_path_probe" % expected_schema,
+        lambda out: any(line.strip().startswith(expected_schema + "|{")
+                        and expected_schema in line
+                        for line in out.splitlines()) and "(1 row)" in out,
+        lambda: _business_query(context, psql, port, sql))
+
+
+def _guc_log_evidence(context: CaseContext, config: Path,
+                      patterns=(r"guc-sync", r"ParameterStatus", r"search_path",
+                                r"fb_guc_deploy", r"fb_hint_parse_guc_batch"),
+                      max_lines=8):
+    """抓取代理日志中 GUC 相关片段作证（对齐 legacy extract_guc_log_evidence）。"""
+    log = config.with_suffix(".log")
+    if not log.is_file():
+        return "日志文件尚未生成"
+    regexes = [re.compile(p, re.IGNORECASE) for p in patterns]
+    matched = [line.strip() for line in
+               log.read_text(encoding="utf-8", errors="replace").splitlines()
+               if any(rx.search(line.strip()) for rx in regexes)]
+    if not matched:
+        return "无匹配的 GUC 同步或解析日志"
+    return "\n".join(matched[-max_lines:])
+
+
+class GucSessionCase:
+    """guc 套件原生宿主（对齐 legacy suites/guc/executors.py）。
+
+    每条用例 = 启动代理（rw_split_method 参数化）→ 业务面 psql 断言序列
+    → （可选）search_path 双主库同名表实解析验证。``actions`` 中 ``sql``
+    为 None 的条目是纯叙述步骤（会话断开/连接复用，psql -c 单命令本身
+    即一次会话）。
+    """
+
+    def __init__(self, mode, actions, verify=None):
+        self.mode = mode
+        self.actions = actions
+        self.verify = verify
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode=self.mode)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        text = config.read_text(encoding="utf-8")
+        required = ('rw_split_method "%s"' % self.mode, "enable_guc_sync yes")
+        missing = [item for item in required if item not in text]
+        context.step("boot-config",
+                     "启动 fbasecman 代理并加载 GUC 配置 (rw_split_method=%s)" % self.mode,
+                     status="PASS" if not missing else "FAIL",
+                     details={"expected": "且".join(required),
+                              "actual": "缺失字段: %s" % missing if missing
+                              else "配置字段已生效"})
+        context.attach_text("fbasecman.conf", text)
+        if missing:
+            raise AssertionError("GUC 配置字段未生效: %s" % missing)
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port,
+                              timeout_seconds=30)
+        _wait_mmr_routing(context, port, psql)
+        for index, (title, expected, sql, predicate) in enumerate(self.actions, 1):
+            key = "guc-%02d" % index
+            if sql is None:
+                context.step(key, title,
+                             details={"expected": expected,
+                                      "actual": "会话级复用由连接池承接 (pool=transaction)"})
+                continue
+            output = _expect(context, key, title, expected, predicate,
+                             lambda sql=sql: _business_query(context, psql, port, sql))
+            context.attach_text("guc-log-%02d.txt" % index,
+                                _guc_log_evidence(context, config))
+        if self.verify:
+            created = _guc_prepare_tables(context)
+            context.step("guc-fixture", "双主库准备 search_path 同名表验证数据",
+                         details={"schemas": list(_GUC_PROBE_SCHEMAS),
+                                  "created": created})
+            try:
+                for path_sql, expected_schema in self.verify:
+                    _guc_verify_search_path(context, psql, port,
+                                            path_sql, expected_schema)
+            finally:
+                _guc_cleanup_tables(context, created)
+                context.step("guc-fixture-cleanup", "清理 search_path 验证表")
+        return True
+
+
+# actions 三元组: (title, expected, sql|None, predicate|None)
+_GUC_REUSE_ACTIONS = [
+    ("客户端 1 设置 search_path 为 public 并即时查看",
+     "SET 成功且 SHOW 返回 public，前后端 GUC 缓存更新为 public",
+     "SET search_path = 'public'; SHOW search_path;",
+     _guc_pred("SET", "public")),
+    ("客户端 1 会话断开，客户端 2 建立新连接并复用后端连接",
+     "前后端 GUC 差异触发自动重放部署",
+     None, None),
+    ("客户端 2 验证 search_path 恢复结果与嵌套引号防范",
+     'search_path 恢复为正常 "$user", public，且无多重转义嵌套双引号',
+     "SHOW search_path;",
+     _guc_pred('"$user", public',
+              none_of=('"""$user"", public"', "E'\"$user\", public'"))),
+]
+
+_GUC_MULTIVALUE_ACTIONS = [
+    ('显式执行 SET search_path = "$user", public;',
+     "返回 SET，GUC 缓存正常记录多值表达式",
+     'SET search_path = "$user", public;',
+     _guc_pred("SET")),
+    ("校验 SHOW search_path 输出",
+     '返回 "$user", public，且无嵌套引号',
+     "SHOW search_path;",
+     _guc_pred('"$user", public', none_of=('"""$user"", public"',))),
+    ("新会话复用后端连接校验一致性",
+     '依然返回 "$user", public，无污染',
+     "SHOW search_path;",
+     _guc_pred('"$user", public', none_of=('"""$user"", public"',))),
+]
+
+_GUC_VERIFY_REUSE = (("'public'", "public"), ('"$user", public', "postgres"))
+_GUC_VERIFY_MULTIVALUE = (('"$user", public', "postgres"),)
+
+_GUC_SPECS = {
+    "search_path_reuse": (_GUC_REUSE_ACTIONS, _GUC_VERIFY_REUSE),
+    "search_path_multivalue": (_GUC_MULTIVALUE_ACTIONS, _GUC_VERIFY_MULTIVALUE),
+    "search_path_empty_normalize": ([
+        ("客户端执行 SET search_path = '' 设置为空",
+         "SET 成功且 SHOW 返回空（后端 \"\" 规范化）",
+         "SET search_path = ''; SHOW search_path;",
+         _guc_pred("SET", none_of=('"$user"',))),
+        ("新会话复用后端连接验证恢复为默认 search_path",
+         '返回 "$user", public，且无嵌套双引号',
+         "SHOW search_path;",
+         _guc_pred('"$user", public', none_of=('"""$user"", public"',))),
+    ], (("''", None), ('"$user", public', "postgres"))),
+    "search_path_mixed_quotes_cleanup": ([
+        ("客户端执行多 schema 混合引号 search_path 设置",
+         "SET 成功且 SHOW 返回 schema1、schema2、public",
+         "SET search_path = 'schema1', \"schema2\", public; SHOW search_path;",
+         _guc_pred("SET", "schema1", "schema2", "public")),
+        ("新会话复用后端连接验证会话状态重置",
+         '返回 "$user", public，无 schema1 残留与嵌套引号',
+         "SHOW search_path;",
+         _guc_pred('"$user", public',
+                  none_of=("schema1", '"""$user"", public"'))),
+    ], (("'schema1', \"schema2\", public", "schema1"),
+        ('"schema2", public', "schema2"),
+        ('"$user", public', "postgres"))),
+    "reset_param": ([
+        ("客户端执行 SET work_mem = '64MB'",
+         "SET 成功且 SHOW 返回 64MB",
+         "SET work_mem = '64MB'; SHOW work_mem;",
+         _guc_pred("SET", "64MB")),
+        ("客户端执行 RESET work_mem 并验证后端状态重置",
+         "RESET 成功且 SHOW 返回数据库默认值 4MB",
+         "RESET work_mem; SHOW work_mem;",
+         _guc_pred("RESET", "4MB")),
+        ("新会话复用连接验证后端无残留污染",
+         "SHOW work_mem 返回 4MB 且无 64MB 残留",
+         "SHOW work_mem;",
+         _guc_pred("4MB", none_of=("64MB",))),
+    ], None),
+    "reset_all": ([
+        ("客户端批量修改多个不同类型的 GUC",
+         "work_mem=32MB 且 statement_timeout 生效",
+         "SET work_mem = '32MB'; SET statement_timeout = '10000'; "
+         "SHOW work_mem; SHOW statement_timeout;",
+         _guc_pred("32MB", any_of=("10s", "10000"))),
+        ("客户端执行 RESET ALL 批量重置",
+         "各参数恢复数据库初始值 (4MB/0)",
+         "RESET ALL; SHOW work_mem; SHOW statement_timeout;",
+         _guc_pred("4MB", any_of=("0", "0ms"))),
+        ("新会话复用连接验证缓存清空",
+         "SHOW 返回默认值且无 32MB 残留",
+         "SHOW work_mem; SHOW statement_timeout;",
+         _guc_pred("4MB", any_of=("0", "0ms"), none_of=("32MB",))),
+    ], None),
+    "discard_all": ([
+        ("客户端修改多个 GUC 参数",
+         "work_mem=16MB 且 DateStyle=German",
+         "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; "
+         "SHOW work_mem; SHOW DateStyle;",
+         _guc_pred("16MB", "German")),
+        ("客户端执行 DISCARD ALL",
+         "返回 DISCARD ALL",
+         "DISCARD ALL;",
+         _guc_pred("DISCARD ALL")),
+        ("SHOW 校验所有参数恢复默认",
+         "work_mem=4MB 且 DateStyle=ISO",
+         "SHOW work_mem; SHOW DateStyle;",
+         _guc_pred("4MB", "ISO")),
+        ("新连接复用后端验证状态干净",
+         "默认值且无 16MB/German 残留",
+         "SHOW work_mem; SHOW DateStyle;",
+         _guc_pred("4MB", "ISO", none_of=("16MB", "German"))),
+    ], None),
+    "set_local_transaction": ([
+        ("事务内 SET LOCAL work_mem = '128MB' 并提交",
+         "事务内 SHOW 返回 128MB 且 COMMIT 成功",
+         "BEGIN; SET LOCAL work_mem = '128MB'; SHOW work_mem; COMMIT;",
+         _guc_pred("128MB", "COMMIT")),
+        ("提交后验证 work_mem 恢复事务前值",
+         "SHOW 返回 4MB 且无 128MB 残留",
+         "SHOW work_mem;",
+         _guc_pred("4MB", none_of=("128MB",))),
+        ("事务内 SET LOCAL 后 ROLLBACK 验证同样不残留",
+         "ROLLBACK 成功且 SHOW 返回 4MB",
+         "BEGIN; SET LOCAL work_mem = '256MB'; ROLLBACK; SHOW work_mem;",
+         _guc_pred("ROLLBACK", "4MB", none_of=("256MB",))),
+    ], None),
+    "case_insensitive_quotes": ([
+        ("SET \"TimeZone\" = 'UTC' 双引号标识符",
+         "SET 成功且 SHOW TimeZone 返回 UTC",
+         "SET \"TimeZone\" = 'UTC'; SHOW TimeZone;",
+         _guc_pred("SET", "UTC")),
+        ("SET timezone = 'Asia/Shanghai' 小写名",
+         "SET 成功且返回 Asia/Shanghai",
+         "SET timezone = 'Asia/Shanghai'; SHOW timezone;",
+         _guc_pred("SET", "Asia/Shanghai")),
+        ("SET TIMEZONE = 'PRC' 大写名覆盖",
+         "SET 成功且 SHOW TimeZone 返回 PRC（key 统一规范化）",
+         "SET TIMEZONE = 'PRC'; SHOW TimeZone;",
+         _guc_pred("SET", "PRC")),
+    ], None),
+    "report_param_timezone": ([
+        ("客户端执行 SET TimeZone = 'Asia/Shanghai'",
+         "SET 成功且 SHOW 返回 Asia/Shanghai（ParameterStatus 同步缓存）",
+         "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone;",
+         _guc_pred("SET", "Asia/Shanghai")),
+        ("同会话再次 SHOW 校验一致性",
+         "返回 Asia/Shanghai",
+         "SHOW TimeZone;",
+         _guc_pred("Asia/Shanghai")),
+        ("新会话复用后端连接验证 TimeZone 保持",
+         "返回 Asia/Shanghai",
+         "SHOW TimeZone;",
+         _guc_pred("Asia/Shanghai")),
+    ], None),
+}
+
+
+def guc_case(name):
+    """按 manifest 名称构造 guc 原生用例（<stem>_<sql_parse|hint> 或无后缀）。"""
+    if name.endswith("_sql_parse"):
+        mode, stem = "sql_parse", name[:-len("_sql_parse")]
+    elif name.endswith("_hint"):
+        mode, stem = "hint", name[:-len("_hint")]
+    else:
+        # empty_normalize 为 sql_parse 专用，mixed_quotes_cleanup 为 hint 专用
+        stem = name
+        mode = "hint" if name == "search_path_mixed_quotes_cleanup" else "sql_parse"
+    actions, verify = _GUC_SPECS[stem]
+    return GucSessionCase(mode, actions, verify)
