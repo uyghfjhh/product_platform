@@ -8,6 +8,8 @@
 #   ./web.sh status               # 查看当前 Web 服务运行状态及访问地址
 #   ./web.sh restart [port]       # 平滑重启服务
 #   ./web.sh logs                 # 实时查看 Web 与任务执行日志
+#   ./web.sh build [--restart]    # 编译前端静态资源产物 (React 19 + Vite)
+#   ./web.sh setup                # 一键初始化运行环境
 # ==============================================================================
 set -euo pipefail
 
@@ -282,6 +284,83 @@ do_setup() {
     fi
 }
 
+# 检测 Node.js / npm 路径 (系统路径、nvm 版本等)
+find_npm_bin() {
+    if command -v npm >/dev/null 2>&1; then
+        command -v npm
+        return 0
+    fi
+    for candidate in \
+        "$HOME/.nvm/versions/node"/*/bin/npm \
+        /usr/local/bin/npm \
+        /usr/bin/npm; do
+        if [ -x "$candidate" ] 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 编译前端静态资源 (React 19 + TypeScript + Vite)
+do_build() {
+    local frontend_dir="$ROOT_DIR/frontend"
+    if [ ! -d "$frontend_dir" ]; then
+        echo "❌ 错误: 未找到前端目录: $frontend_dir" >&2
+        return 1
+    fi
+
+    local npm_bin
+    npm_bin="$(find_npm_bin || true)"
+    if [ -z "$npm_bin" ]; then
+        echo "❌ 错误: 未检测到 npm 工具，请先安装 Node.js/npm 环境 (推荐 v18+)" >&2
+        return 1
+    fi
+
+    # 确保 npm 所在的目录位于 PATH 中，以便子进程能调用 node 和 npx/tsc
+    local node_dir
+    node_dir="$(dirname "$npm_bin")"
+    export PATH="$node_dir:$PATH"
+
+    echo "=================================================================="
+    echo "📦 开始编译前端静态资源 (React 19 + TypeScript + Vite)..."
+    echo "   npm:  $npm_bin ($("$npm_bin" --version 2>/dev/null || echo 'unknown'))"
+    echo "   node: $(command -v node 2>/dev/null || echo "$node_dir/node") ($(node --version 2>/dev/null || echo 'unknown'))"
+    echo "=================================================================="
+
+    # 如果尚未安装依赖，自动执行安装
+    if [ ! -d "$frontend_dir/node_modules" ]; then
+        echo "🔍 未检测到 frontend/node_modules，正在自动安装前端依赖..."
+        if [ -f "$frontend_dir/package-lock.json" ]; then
+            (cd "$frontend_dir" && "$npm_bin" ci)
+        else
+            (cd "$frontend_dir" && "$npm_bin" install)
+        fi
+    fi
+
+    echo "🔨 正在执行前端构建 (npm run build)..."
+    (cd "$frontend_dir" && "$npm_bin" run build)
+
+    if [ -d "$frontend_dir/dist" ] && [ -f "$frontend_dir/dist/index.html" ]; then
+        echo "=================================================================="
+        echo "✅ 前端构建成功！产物已输出至: $frontend_dir/dist"
+        echo "=================================================================="
+        if [ "${1:-}" = "--restart" ] || [ "${1:-}" = "-r" ]; then
+            echo "🔄 检测到 --restart 参数，正在重启 Web 平台服务..."
+            do_stop
+            sleep 1
+            do_start
+        else
+            if get_running_pid >/dev/null 2>&1; then
+                echo "ℹ️  提示: Web 平台服务正在运行中。如需立即加载新前端代码，请执行: ./web.sh restart"
+            fi
+        fi
+    else
+        echo "❌ 错误: 构建完成但未在 $frontend_dir/dist 发现 index.html" >&2
+        return 1
+    fi
+}
+
 # 脚本命令行分支路由
 COMMAND="${1:-status}"
 shift || true
@@ -304,21 +383,25 @@ case "$COMMAND" in
     logs|log)
         do_logs
         ;;
+    build|compile)
+        do_build "$@"
+        ;;
     setup|init)
         do_setup "$@"
         ;;
     help|--help|-h)
-        echo "用法: ./web.sh {start|stop|restart|status|logs|setup} [port] [host]"
+        echo "用法: ./web.sh {start|stop|restart|status|logs|build|setup} [port] [host]"
         echo "  start [port] [host]  启动后台 Web 服务 (默认端口: 8080)"
         echo "  stop                 停止服务"
         echo "  restart [port]       重启服务"
         echo "  status               查看状态"
         echo "  logs                 跟踪日志"
+        echo "  build [--restart]    编译前端静态页面 (生成 frontend/dist)"
         echo "  setup                一键初始化 Python 虚拟环境并安装所需依赖"
         ;;
     *)
         echo "未知命令: $COMMAND"
-        echo "用法: ./web.sh {start|stop|restart|status|logs|setup} [port] [host]"
+        echo "用法: ./web.sh {start|stop|restart|status|logs|build|setup} [port] [host]"
         exit 1
         ;;
 esac

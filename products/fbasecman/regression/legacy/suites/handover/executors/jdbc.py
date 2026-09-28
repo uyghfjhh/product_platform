@@ -2,6 +2,7 @@
 
 import re
 from framework.clients.psql import build_psql_command
+from platform_regress.clients import jdbc as jdbc_client
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess
 from platform_regress.execution.shell import quote_arguments
@@ -13,15 +14,15 @@ def execute_jdbc(rt):
     rt.start()
     version = "42.2.7" if "4227" in rt.case.name else ("42.7.0" if "4270" in rt.case.name else "42.7.7")
     source = rt.root / "suites" / "handover" / "assets" / "jdbc" / "HandoverJdbcRouting.java"
-    jar = rt.root / rt.env.config["local"]["jdbc_lib_dir"] / ("postgresql-%s.jar" % version)
+    jar = jdbc_client.resolve_jar(rt.root / rt.env.config["local"]["jdbc_lib_dir"], version)
     build = rt.workdir / "jdbc"
     build.mkdir(parents=True, exist_ok=True)
     compile_log = rt.logs_dir / "jdbc_compile.log"
-    compile_result = run_logged_command(["javac", "-cp", str(jar), "-d", str(build), str(source)], compile_log, cwd=build)
+    compile_result = run_logged_command(jdbc_client.javac_argv(jar, source, dest_dir=build), compile_log, cwd=build)
     if compile_result.returncode != 0:
         raise HandoverFailure("JDBC compile failed: %s" % compile_result.output)
 
-    url = "jdbc:postgresql://127.0.0.1:%s/postgres?user=postgres" % rt.listen_port
+    url = jdbc_client.build_url("127.0.0.1", rt.listen_port, "postgres", {"user": "postgres"})
     run_log = rt.logs_dir / "jdbc_run.log"
     protocol_mode = "old" if version == "42.2.7" else "new"
     phase_groups = ("OLD_11", "OLD_12", "OLD_13", "OLD_14") if protocol_mode == "old" else (
@@ -45,7 +46,8 @@ def execute_jdbc(rt):
         }
 
     process = PhasedProcess(
-        ["java", "-cp", "%s:%s" % (jar, build), "HandoverJdbcRouting", url, protocol_mode],
+        jdbc_client.java_argv(
+            jdbc_client.classpath(jar, build), "HandoverJdbcRouting", url, protocol_mode),
         run_log, cwd=build,
     )
     actions = [

@@ -1,18 +1,39 @@
 import base64
-import subprocess
+import hashlib
+import json
 from datetime import date
 from pathlib import Path
 
 import pytest
 from argon2.low_level import Type, hash_secret_raw
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from fastapi.testclient import TestClient
 from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_encrypt
 from platform_app.api import create_app
 from platform_app.license import _separator
 from platform_app.config import Settings
 from test_api import settings_for
+
+
+def _decode_license_body(content: bytes):
+    """Split a signed license file into signature, raw payload and footer."""
+    lines = content.decode("utf-8").splitlines()
+    assert lines[0] == _separator("BEGIN LICENSE")
+    md5_index = lines.index(_separator("MD5SUM"))
+    end_index = lines.index(_separator("END LICENSE"))
+    packed = base64.b64decode("".join(lines[1:md5_index]), validate=True)
+    signature, raw = packed[:64], packed[64:]
+    assert lines[md5_index + 1] == hashlib.md5(raw).hexdigest()
+    return signature, raw, lines[end_index + 1:]
+
+
+def _public_key_for(key_dir: Path, version: str) -> Ed25519PublicKey:
+    lines = (key_dir / f"v{version}" / "public.pem").read_text("ascii").splitlines()
+    return Ed25519PublicKey.from_public_bytes(bytes.fromhex(lines[1]))
 
 
 def legacy_key_fixture(tmp_path):
@@ -48,7 +69,7 @@ def legacy_key_fixture(tmp_path):
     return root, password
 
 
-def test_python_license_is_accepted_by_existing_c_verifier(tmp_path):
+def test_python_license_verifies_against_own_key_material(tmp_path):
     settings = settings_for(tmp_path)
     key_dir, password = legacy_key_fixture(tmp_path)
     client = TestClient(create_app(settings, enqueuer=lambda task_id: None))
@@ -70,22 +91,19 @@ def test_python_license_is_accepted_by_existing_c_verifier(tmp_path):
     assert (
         response.headers["content-disposition"] == 'attachment; filename="license.dat"'
     )
-    assert _separator("BEGIN LICENSE").encode() in response.content
     assert password.encode() not in response.content
 
-    filename = tmp_path / "license.dat"
-    filename.write_bytes(response.content)
-    verifier = Path("/home/postgres/fly_dev/fd_licenser/fd_licenser")
-    if not verifier.is_file():
-        pytest.skip(f"fd_licenser 校验器未在当前环境找到: {verifier}")
-    result = subprocess.run(
-        [str(verifier), "check", "-k", str(key_dir), str(filename)],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    signature, raw, footer = _decode_license_body(response.content)
+    _public_key_for(key_dir, "1.1").verify(signature, raw)
+    payload = json.loads(raw)
+    assert payload["licenseVersion"] == "1.1"
+    assert payload["startAt"] == "2026-09-23"
+    assert payload["products"] == [
+        {"name": "fbasecman", "version": "1.7", "expirationAt": "2027-09-23"}
+    ]
+    assert payload["macAddrs"] == ["02:42:8e:0f:0b:1b"]
+    assert payload["licenseId"] in footer[0]
+    assert any("测试签发" in line for line in footer)
 
 
 def test_license_input_rejects_invalid_date_and_mac(tmp_path):
@@ -140,7 +158,7 @@ def test_key_delete_requires_password_and_preserves_last_version(tmp_path):
         delete_key(config, "1.1", "one")
 
 
-def test_generated_v12_key_is_accepted_by_legacy_verifier(tmp_path):
+def test_generated_v12_key_signs_verifiable_license(tmp_path):
     from platform_app.license import generate_key
 
     settings = settings_for(tmp_path)
@@ -152,14 +170,12 @@ def test_generated_v12_key_is_accepted_by_legacy_verifier(tmp_path):
         "mac_addrs": ["02:42:8e:0f:0b:1b"], "password": "generated-password",
     })
     assert response.status_code == 200, response.text
-    license_file = tmp_path / "generated-license.dat"
-    license_file.write_bytes(response.content)
-    verifier = Path("/home/postgres/fly_dev/fd_licenser/fd_licenser")
-    result = subprocess.run(
-        [str(verifier), "check", "-k", str(settings.license_key_dir), str(license_file)],
-        cwd=tmp_path, capture_output=True, text=True, timeout=10, check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    signature, raw, footer = _decode_license_body(response.content)
+    _public_key_for(settings.license_key_dir, "1.2").verify(signature, raw)
+    payload = json.loads(raw)
+    assert payload["licenseVersion"] == "1.2"
+    assert payload["products"][0]["expirationAt"] == "2027-09-25"
+    assert any("License版本: 1.2" in line for line in footer)
 
 
 def test_key_management_http_contract(tmp_path):

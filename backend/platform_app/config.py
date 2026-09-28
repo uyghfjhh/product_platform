@@ -84,7 +84,7 @@ def load_settings() -> Settings:
         .resolve(),
         license_key_dir=Path(
             os.environ.get(
-                "PRODUCT_PLATFORM_LICENSE_KEYS", fly_root / "fd_licenser" / "keys"
+                "PRODUCT_PLATFORM_LICENSE_KEYS", data_dir / "license" / "keys"
             )
         )
         .expanduser()

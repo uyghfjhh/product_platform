@@ -2,8 +2,9 @@
 
 import os
 import re
-import shutil
 
+from platform_regress.clients import jdbc as jdbc_client
+from platform_regress.clients.jdbc import JdbcError
 from platform_regress.execution.phased_process import PhasedProcess
 from platform_regress.execution.shell import quote_arguments
 from platform_regress.evidence.jdbc import (
@@ -14,8 +15,8 @@ from platform_regress.execution.phased_process import PhaseAction
 from suites.global_cache.paths import asset_path
 
 
-class DriverError(RuntimeError):
-    pass
+# Driver contract failures share the platform JDBC error type.
+DriverError = JdbcError
 
 
 # These drivers keep a real JDBC connection alive at the point where the
@@ -287,34 +288,26 @@ def normalize_phased_prepared_operations(operations):
 
 
 def jdbc_jar(rt, version=None):
-    jar = rt.root / rt.env.config["local"]["jdbc_lib_dir"] / (
-        "postgresql-%s.jar" % (version or rt.case.jdbc.get("version", "42.7.7"))
+    return jdbc_client.resolve_jar(
+        rt.root / rt.env.config["local"]["jdbc_lib_dir"],
+        version or rt.case.jdbc.get("version", "42.7.7"),
     )
-    if not jar.exists():
-        raise DriverError("missing jdbc jar: %s" % jar)
-    return jar
 
 
 def jdbc_url(rt, options=None):
-    options = options or {}
-    params = []
-    for key, value in options.items():
-        if value is not None:
-            params.append("%s=%s" % (key, value))
-    return "jdbc:postgresql://localhost:%s/postgres?%s" % (rt.listen_port, "&".join(params))
+    return jdbc_client.build_url("localhost", rt.listen_port, "postgres", options)
 
 
 def jdbc_source_file(root, case, safe_name):
-    path = asset_path(root, "jdbc", "GC_%s.java" % safe_name(case.name))
-    if not path.exists():
-        raise DriverError("missing jdbc driver source: %s" % path)
-    return path
+    return jdbc_client.source_file(
+        asset_path(root, "jdbc"), "GC_%s.java" % safe_name(case.name)
+    )
 
 
 def compile_java(rt, source, logfile, step_title):
     jar = jdbc_jar(rt)
     rt.run_command(
-        ["javac", "-cp", str(jar), str(source)],
+        jdbc_client.javac_argv(jar, source),
         logfile,
         cwd=rt.driver_dir,
         step_title=step_title,
@@ -325,10 +318,9 @@ def compile_java(rt, source, logfile, step_title):
 def run_java(rt, class_name, jar, logfile, user="postgres", password="", options=None,
              allow_failure=False, step_title="执行 JDBC driver", source=None):
     url = jdbc_url(rt, options)
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), class_name,
-        url, user, password,
-    ]
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar), class_name, url, user, password,
+    )
     if source is not None:
         rc, output = rt.execute_jdbc(
             command, source, logfile, step_title, url, cwd=rt.driver_dir,
@@ -349,17 +341,16 @@ def run_jdbc_asset(rt, source_name, class_name, arguments=None, user="postgres",
     source = asset_path(rt.root, "jdbc", source_name)
     if not source.exists():
         raise DriverError("missing jdbc driver source: %s" % source)
-    target = rt.driver_dir / source.name
-    shutil.copyfile(str(source), str(target))
+    target = jdbc_client.stage_source(source, rt.driver_dir)
     jar = compile_java(
         rt, target, rt.logs_dir / ("%s.javac.log" % class_name),
         "编译外置 JDBC driver",
     )
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), class_name,
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar), class_name,
         jdbc_url(rt, options or {"prepareThreshold": 1, "preferQueryMode": "extended"}),
-        user, password,
-    ] + list(arguments or [])
+        user, password, *list(arguments or []),
+    )
     url = command[3]
     dynamic_operations = [
         {"sql": argument, "parameters": []}
@@ -392,17 +383,16 @@ def run_jdbc_asset_phased(rt, source_name, class_name, arguments=None, user="pos
     source = asset_path(rt.root, "jdbc", source_name)
     if not source.exists():
         raise DriverError("missing jdbc driver source: %s" % source)
-    target = rt.driver_dir / source.name
-    shutil.copyfile(str(source), str(target))
+    target = jdbc_client.stage_source(source, rt.driver_dir)
     jar = compile_java(
         rt, target, rt.logs_dir / ("%s.javac.log" % class_name),
         "编译阶段 JDBC driver",
     )
     url = jdbc_url(rt, options or {"prepareThreshold": 1, "preferQueryMode": "extended"})
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), class_name,
-        url, user, password,
-    ] + list(arguments or [])
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar), class_name,
+        url, user, password, *list(arguments or []),
+    )
     process = rt.start_jdbc_phase_process(
         command, target, url, rt.logs_dir / ("%s.java.log" % class_name),
         step_title, cwd=rt.driver_dir, sql_operations=sql_operations,
@@ -505,10 +495,10 @@ def run_case_jdbc(rt, safe_name, noise_patterns):
         "socketTimeout": case.jdbc.get("socketTimeout"),
     }
     url = jdbc_url(rt, options)
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar),
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar),
         "GC_" + safe_name(case.name), url, "postgres", "",
-    ]
+    )
     if case.name in PHASED_JDBC_ACTIONS:
         _, rc, output = _run_phased_case_jdbc(
             rt, source, target, jar, command, url, run_title,
@@ -541,10 +531,10 @@ def run_prepared_sequence(rt, operations, log_stem="GC_prepared_sql_sequence", a
     target = rt.driver_dir / source.name
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     jar = compile_java(rt, target, rt.logs_dir / "GC_prepared_sql_sequence.javac.log", "编译外置通用 JDBC driver")
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), "GC_prepared_sql_sequence",
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar), "GC_prepared_sql_sequence",
         jdbc_url(rt, {"prepareThreshold": 1, "preferQueryMode": "extended"}), "postgres", "",
-    ]
+    )
     for operation in normalized:
         command.extend([operation["output_key"], operation["mode"], operation["sql"]])
     report_operations = [
@@ -593,11 +583,11 @@ def start_phased_prepared(rt, operations, log_stem="GC_phased_prepared"):
         rt.logs_dir / "GC_phased_prepared.javac.log",
         "编译外置阶段 JDBC driver",
     )
-    command = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), "GC_phased_prepared",
+    command = jdbc_client.java_argv(
+        jdbc_client.classpath(rt.driver_dir, jar), "GC_phased_prepared",
         jdbc_url(rt, {"prepareThreshold": 1, "preferQueryMode": "extended"}),
         "postgres", "",
-    ]
+    )
     for operation in normalized:
         command.extend([
             operation["output_key"], operation["sql"], str(operation["bind_value"]),

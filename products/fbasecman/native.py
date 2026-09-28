@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from platform_regress import Blocked, CaseContext
+from platform_regress.clients import jdbc as jdbc_client
 
 
 def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") -> int:
@@ -280,12 +281,15 @@ class SqlParseExtendedProtocolCase:
         jar = Path(context.environment.get("jdbc_jar", ""))
         if not asset.is_file() or not jar.is_file():
             raise Blocked("缺少 SQL_PARSE JDBC 测试资产或驱动")
-        context.command(["javac", "-cp", str(jar), "-d", str(context.output_dir), str(asset)],
+        context.command(jdbc_client.javac_argv(jar, asset, dest_dir=context.output_dir),
                         cwd=context.output_dir, timeout_seconds=60)
-        url = f"jdbc:postgresql://127.0.0.1:{port}/mmr_group?prepareThreshold=1&preferQueryMode=extended"
-        result = context.command(["java", "-cp", f"{context.output_dir}:{jar}",
-                                  "HaSqlParseExtended", url, "postgres", ""],
-                                 cwd=context.output_dir, timeout_seconds=120)
+        url = jdbc_client.build_url(
+            "127.0.0.1", port, "mmr_group",
+            {"prepareThreshold": 1, "preferQueryMode": "extended"})
+        result = context.command(
+            jdbc_client.java_argv(jdbc_client.classpath(context.output_dir, jar),
+                                  "HaSqlParseExtended", url, "postgres", ""),
+            cwd=context.output_dir, timeout_seconds=120)
         required_markers = ("ROLLBACK_RECOVERY=OK", "COMMIT_RECOVERY=OK", "PARAM_VALUE=42",
                             "READ_PORT=", "WRITE_PORT=")
         passed = result.returncode == 0 and all(marker in result.stdout for marker in required_markers)
@@ -309,7 +313,7 @@ class JdbcConsoleHaCommandsCase:
             raise Blocked("缺少 JDBC HA 控制台资产或驱动")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
-        context.command(["javac", "-cp", str(jar), "-d", str(context.output_dir), str(asset)],
+        context.command(jdbc_client.javac_argv(jar, asset, dest_dir=context.output_dir),
                         cwd=context.output_dir, timeout_seconds=60)
         nodes = context.environment.get("nodes") or {}
         ports = [str(nodes[name]["port"]) for name in ("mmr1", "mmr2") if name in nodes]
@@ -318,11 +322,12 @@ class JdbcConsoleHaCommandsCase:
         if len(ports) < 3:
             raise Blocked("HA JDBC 用例缺少 MMR 主节点或备节点")
         snapshots = context.output_dir / "jdbc-config-snapshots"
-        urls = [f"jdbc:postgresql://127.0.0.1:{port}/console?preferQueryMode=simple",
-                f"jdbc:postgresql://127.0.0.1:{port}/mmr_group?preferQueryMode=simple",
-                f"jdbc:postgresql://127.0.0.1:{port}/single_group?preferQueryMode=simple"]
-        args = ["java", "-cp", f"{context.output_dir}:{jar}", "HaConsoleCommands",
-                urls[0], "admin", "", str(config), str(snapshots), urls[1], urls[2], *ports]
+        urls = [jdbc_client.build_url("127.0.0.1", port, db,
+                                      {"preferQueryMode": "simple"})
+                for db in ("console", "mmr_group", "single_group")]
+        args = jdbc_client.java_argv(
+            jdbc_client.classpath(context.output_dir, jar), "HaConsoleCommands",
+            urls[0], "admin", "", str(config), str(snapshots), urls[1], urls[2], *ports)
         result = context.command(args, cwd=context.output_dir, timeout_seconds=180)
         markers = ("JDBC_CONNECT=OK", "SET_NODE_PARTED=OK", "SET_NODE_ACTIVE=OK",
                    "SET_NODE_WEIGHT=OK", "SET_NODE_WRITE=OK", "SET_NODE_PROMOTED=OK",

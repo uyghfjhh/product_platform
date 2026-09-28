@@ -10,6 +10,7 @@ import shlex
 from pathlib import Path
 
 from framework.configuration import load_regression_config
+from platform_regress.clients import jdbc as jdbc_client
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
 from suites.ha_commands.helpers import *
 
@@ -24,25 +25,23 @@ def _run_jdbc_console_ha_commands(rt):
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC asset or jar: %s %s" % (source, jar))
     rt.run_command(
-        ["javac", "-cp", str(jar), "-d", str(rt.workdir), str(source)],
+        jdbc_client.javac_argv(jar, source, dest_dir=rt.workdir),
         rt.logs_dir / "HaConsoleCommands.javac.log", cwd=rt.workdir,
         step_title="编译 JDBC 控制台高可用命令 driver")
-    jdbc_url = (
-        "jdbc:postgresql://127.0.0.1:%s/console?preferQueryMode=simple" %
-        rt.listen_port)
-    business_url = (
-        "jdbc:postgresql://127.0.0.1:%s/mmr_group?preferQueryMode=simple" %
-        rt.listen_port)
-    single_url = (
-        "jdbc:postgresql://127.0.0.1:%s/single_group?preferQueryMode=simple" %
-        rt.listen_port)
+    jdbc_url = jdbc_client.build_url(
+        "127.0.0.1", rt.listen_port, "console", {"preferQueryMode": "simple"})
+    business_url = jdbc_client.build_url(
+        "127.0.0.1", rt.listen_port, "mmr_group", {"preferQueryMode": "simple"})
+    single_url = jdbc_client.build_url(
+        "127.0.0.1", rt.listen_port, "single_group", {"preferQueryMode": "simple"})
     snapshots = rt.workdir / "jdbc-config-snapshots"
     ports = rt.env.config["database"]["ports"]
     _, output = rt.run_command(
-        ["java", "-cp", "%s:%s" % (rt.workdir, jar),
-         "HaConsoleCommands", jdbc_url, "admin", "", str(conf),
-         str(snapshots), business_url, single_url, str(ports["mmr1"]),
-         str(ports["mmr2"]), str(ports["mmr1_standby1"])],
+        jdbc_client.java_argv(
+            jdbc_client.classpath(rt.workdir, jar), "HaConsoleCommands",
+            jdbc_url, "admin", "", str(conf), str(snapshots),
+            business_url, single_url, str(ports["mmr1"]),
+            str(ports["mmr2"]), str(ports["mmr1_standby1"])),
         rt.logs_dir / "HaConsoleCommands.log", cwd=rt.workdir,
         step_title="通过 JDBC 控制台执行全部高可用命令")
     markers = (
