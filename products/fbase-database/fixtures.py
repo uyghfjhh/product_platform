@@ -19,6 +19,7 @@ from pathlib import Path
 from platform_regress import Blocked
 from platform_regress import steps as platform_steps
 from platform_regress.engine import resolve_selector
+from platform_regress.execution.forensics import CoreSnapshot
 
 
 class SafetyError(Exception):
@@ -583,43 +584,6 @@ def finish_log_collectors(context, collectors):
     return "服务端日志收集失败: %s" % "; ".join(errors) if errors else ""
 
 
-_CORE_NAME = re.compile(r"^(core($|[._-])|.+\.core($|[._-]))")
-
-
-def _core_files(roots):
-    import os
-    snapshot = {}
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for directory, _, files in os.walk(str(root)):
-            for name in files:
-                if not _CORE_NAME.match(name.lower()):
-                    continue
-                path = Path(directory) / name
-                try:
-                    stat = path.stat()
-                    snapshot[str(path.resolve())] = (stat.st_mtime_ns, stat.st_size)
-                except OSError:
-                    pass
-    return snapshot
-
-
-def collect_new_core_files(context, before, output_dir):
-    """Return core files created or modified since the ``before`` snapshot."""
-    nodes = context.environment.get("nodes") or {}
-    roots = [Path(output_dir)]
-    for endpoint in nodes.values():
-        if not isinstance(endpoint, dict):
-            continue
-        data_dir = endpoint.get("data_dir")
-        if data_dir and context.is_local(endpoint.get("host", "")):
-            roots.append(Path(str(data_dir)))
-    after = _core_files(roots)
-    return sorted(path for path, signature in after.items()
-                  if before.get(path) != signature)
-
-
 def core_file_roots(context, output_dir):
     nodes = context.environment.get("nodes") or {}
     roots = [Path(output_dir)]
@@ -630,6 +594,17 @@ def core_file_roots(context, output_dir):
         if data_dir and context.is_local(endpoint.get("host", "")):
             roots.append(Path(str(data_dir)))
     return roots
+
+
+def _core_files(roots):
+    return CoreSnapshot(roots).before
+
+
+def collect_new_core_files(context, before, output_dir):
+    """Return core files created or modified since the ``before`` snapshot."""
+    snapshot = CoreSnapshot(core_file_roots(context, output_dir))
+    snapshot.before = dict(before)
+    return [str(p) for p in snapshot.detect_new_cores()]
 
 
 # ---------------------------------------------------------------------------

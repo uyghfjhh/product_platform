@@ -2,12 +2,13 @@
 
 import glob
 import os
+import re
 import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def find_core_files(search_paths: List[Path], binary_name: str, since_time: Optional[float] = None) -> List[Path]:
@@ -125,3 +126,50 @@ def diagnose_crash(
         "all_cores": [str(c) for c in core_files],
         "backtrace": backtrace,
     }
+
+
+CORE_PATTERN = re.compile(r"^(core($|[._-])|.+\.core($|[._-]))", re.IGNORECASE)
+IGNORED_SUFFIXES = {".py", ".sh", ".c", ".h", ".txt", ".md", ".json", ".yaml", ".yml", ".log"}
+
+
+class CoreSnapshot:
+    """Snapshot core files across directories before test execution,
+    and detect newly generated core dumps after test execution.
+    """
+
+    def __init__(self, roots: List[Path]) -> None:
+        self.roots = [Path(r) for r in roots]
+        self.before: Dict[str, Tuple[int, int]] = self._scan()
+
+    def _scan(self) -> Dict[str, Tuple[int, int]]:
+        snapshot: Dict[str, Tuple[int, int]] = {}
+        for root in self.roots:
+            if not root.is_dir():
+                continue
+            for directory, _, files in os.walk(str(root)):
+                for name in files:
+                    if not CORE_PATTERN.match(name) or Path(name).suffix.lower() in IGNORED_SUFFIXES:
+                        continue
+                    path = Path(directory) / name
+                    try:
+                        stat = path.stat()
+                        snapshot[str(path.resolve())] = (stat.st_mtime_ns, stat.st_size)
+                    except OSError:
+                        pass
+        return snapshot
+
+    def detect_new_cores(self) -> List[Path]:
+        """Return newly created or modified core files since this snapshot."""
+        current = self._scan()
+        new_cores = []
+        for path_str, signature in current.items():
+            if self.before.get(path_str) != signature:
+                new_cores.append(Path(path_str))
+        return sorted(new_cores)
+
+    def attach_evidence(self, context: Any, artifact_name: str = "core-files.txt") -> List[Path]:
+        """Detect new cores, and if any found, attach to context and return them."""
+        new_cores = self.detect_new_cores()
+        if new_cores and hasattr(context, "attach_text"):
+            context.attach_text(artifact_name, "\n".join(str(p) for p in new_cores) + "\n")
+        return new_cores
