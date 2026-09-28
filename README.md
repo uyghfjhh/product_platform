@@ -24,6 +24,7 @@
 ```bash
 # Web 控制台(默认 http://<IP>:8080)
 ./web.sh setup      # 首次:初始化虚拟环境并安装依赖
+./web.sh build      # 编译前端静态资源产物 (生成 frontend/dist)
 ./web.sh start      # 启动(可带参数:./web.sh start 9000 0.0.0.0)
 ./web.sh status | logs | restart | stop
 

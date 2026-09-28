@@ -25,13 +25,13 @@
 | `clients/psql.py` | argv 构建、标准/expanded 表解析、assert_table_rows | 已上收 |
 | `clients/jdbc.py` | pgjdbc jar 解析、JDBC URL、javac/java argv、classpath 与源文件暂存、`JdbcError` | 已上收（14 单测） |
 | `clients/pgwire.py` | PostgreSQL 前后端裸协议客户端：startup、报文帧、extended_execute 周期记录（SQLSTATE/CommandComplete/ReadyForQuery）、分片字节、ProtocolClient 会话 | 已上收（15 单测） |
-| `execution/` | command、phased_process（stdin 相位 JDBC 驱动）、polling、ports（动态挑口）、forensics（core 检测）、locking（ExclusiveFileLock） | 已上收 |
+| `execution/` | command、daemon（ManagedDaemon 守护进程内核：ready 探针/pid+port 清理/crash forensics）、phased_process（stdin 相位 JDBC 驱动）、polling、ports（动态挑口）、forensics（core 检测）、locking（ExclusiveFileLock） | 已上收 |
 | `evidence/` | assertions、jdbc、log_checks、log_window、step | 已上收 |
 | `suites/` | contracts（CaseSpec/SuitePlugin/validate_cases）、registry（preflight 策略+quiet_env 挂点）、failed（last_failed/case_status/rerun）、legacy（`LegacySuiteCase`/`LegacyCaseBinding` 引擎适配器） | 已上收 |
 | `reporting/` | model、renderer、junit、html | 已上收 |
 | `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
 
-平台侧测试：**182 passed**；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
+平台侧测试：**190 passed**；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
 
 ## 3. 已完成的结构性工作
 
@@ -91,7 +91,7 @@
 ### A. 平台能力缺口（按价值序）
 
 1. ~~**`clients/jdbc`**~~（2026-09-28 完成）——`platform_regress/clients/jdbc.py` 已提供 jar 解析/URL/argv/暂存；`drivers.py`、`ha_commands`、`handover`、`native.py` 全部改调平台 helper，`.java` 驱动与相位动作表留产品包。
-2. **`execution/daemon`（ManagedDaemon）**——`FbasecmanProcess`（219 行）已是 DI 形态：渲染 conf→端口冲突重试→spawn+ready probe→pid/port 两级 kill→crash forensics。抽通用内核，产品注入 ready 探针与 conf 渲染器。
+2. ~~**`execution/daemon`（ManagedDaemon）**~~（2026-09-28 完成）——`platform_regress/execution/daemon.py` 提供通用内核（ready 探针注入、pid/port 两级清理、crash forensics、stop 竞态容忍）；`FbasecmanProcess` 降为 51 行薄 adapter（conf 渲染器 + console psql 探针），构造签名与日志文件名/报错文案逐字兼容，`FbasecmanProcessError` 别名保留。
 3. **`requirements` 门框架**——"用例声明依赖→不满足即 BLOCKED"目前在 `fbase-database/cases.py`；上收门注册表，产品注册 evaluator（clusters/plugins/system_time_control 等）。
 4. **`FbasecmanCaseRuntime` 通用件继续上收**——`assert_table`/`wait_node_monitor`/`psql_monitor`/`diff_contains`/`backup_checkpoint` 中通用 psql 断言轮询部分；产品语义部分留在产品包。908 行收敛目标：产品 runtime 只剩 fixture 装配+断言函数。
 5. **报告统一**——JUnit/HTML 导出目前 cman 走 vendored `tools/cli.py`、平台走 `reporting/`；收敛到平台渲染器对同一事实模型出双格式。
