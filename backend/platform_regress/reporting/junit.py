@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 def generate_junit_xml(
     results: List[Dict[str, Any]],
     output_file: Optional[Path] = None,
-    suite_name: str = "fbasecman_regression",
+    suite_name: str = "regression",
 ) -> str:
     """Generate standard JUnit XML string from a list of test case result dicts.
 
@@ -213,7 +213,9 @@ def collect_results_from_runs(runs_dir: Path) -> List[Dict[str, Any]]:
     return results
 
 
-def export_junit_from_runs(runs_dir: Path, output_file: Optional[Path] = None) -> str:
+def export_junit_from_runs(runs_dir: Path, output_file: Optional[Path] = None,
+                           suite_name: str = "regression") -> str:
     """Convenience helper to read all runs and export a JUnit XML."""
     results = collect_results_from_runs(runs_dir)
-    return generate_junit_xml(results, output_file=output_file)
+    return generate_junit_xml(results, output_file=output_file,
+                              suite_name=suite_name)

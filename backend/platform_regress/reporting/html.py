@@ -13,7 +13,7 @@ from platform_regress.reporting.junit import collect_results_from_runs
 def generate_html_report(
     results: List[Dict[str, Any]],
     output_file: Optional[Path] = None,
-    title: str = "fbasecman 回归测试执行报告",
+    title: str = "回归测试执行报告",
 ) -> str:
     """Generate a self-contained, interactive modern HTML report from test result dicts."""
     total_tests = len(results)
@@ -518,7 +518,8 @@ def generate_html_report(
     return html_content
 
 
-def export_html_from_runs(runs_dir: Path, output_file: Optional[Path] = None, title: str = "fbasecman 回归测试执行报告") -> str:
+def export_html_from_runs(runs_dir: Path, output_file: Optional[Path] = None,
+                          title: str = "回归测试执行报告") -> str:
     """Convenience helper to read all runs and generate a self-contained HTML report."""
     results = collect_results_from_runs(runs_dir)
     return generate_html_report(results, output_file=output_file, title=title)

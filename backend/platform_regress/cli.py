@@ -25,6 +25,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user", default=None)
     parser.add_argument("target", nargs="?")
     parser.add_argument("--suite", help="只运行指定 suite 的全部用例")
+    parser.add_argument("--junit", metavar="PATH",
+                        help="运行结束后导出 JUnit XML 报告（相对路径落在 --output-dir 下）")
+    parser.add_argument("--html", metavar="PATH",
+                        help="运行结束后导出自包含 HTML 报告（相对路径落在 --output-dir 下）")
+    parser.add_argument("--report-title", default="回归测试执行报告",
+                        help="HTML 报告标题")
+    parser.add_argument("--suite-name", default="regression",
+                        help="JUnit testsuites 的 name 属性")
     args = parser.parse_args(argv)
     product_dir = args.product_dir.resolve()
     module_path = product_dir / "cases.py"
@@ -199,6 +207,20 @@ def main(argv: list[str] | None = None) -> int:
     failed_bookkeeping.write_last_failed(
         args.output_dir,
         [item.target for item in results if item.verdict != "PASS"])
+    if args.junit or args.html:
+        # Reports render from the in-memory CaseResult fact model — the same
+        # data result.json/suite-result.json persist — never from report text.
+        from .reporting.export import export_run_reports
+
+        def _resolve(path_text):
+            path = Path(path_text)
+            return path if path.is_absolute() else args.output_dir / path
+
+        export_run_reports(
+            results,
+            junit_path=_resolve(args.junit) if args.junit else None,
+            html_path=_resolve(args.html) if args.html else None,
+            title=args.report_title, suite_name=args.suite_name)
     if len(results) == 1 and not suite_errors:
         return EXIT_CODES[results[0].verdict]
     counts = {status: sum(item.verdict == status for item in results) for status in EXIT_CODES}

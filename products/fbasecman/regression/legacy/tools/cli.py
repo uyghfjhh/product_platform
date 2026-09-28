@@ -317,7 +317,8 @@ def _export_junit(junit_arg):
         junit_path = Path(junit_arg)
         if not junit_path.is_absolute():
             junit_path = ROOT_DIR / junit_path
-        export_junit_from_runs(ROOT_DIR / "output" / "runs", output_file=junit_path)
+        export_junit_from_runs(ROOT_DIR / "output" / "runs", output_file=junit_path,
+                               suite_name="fbasecman_regression")
         print(f"[JUnit] 已生成 JUnit XML 测试报告: {junit_path}")
     except Exception as exc:
         print(f"[JUnit] 生成 JUnit 报告失败: {exc}", file=sys.stderr)
@@ -329,7 +330,8 @@ def _export_html(html_arg):
         html_path = Path(html_arg)
         if not html_path.is_absolute():
             html_path = ROOT_DIR / html_path
-        export_html_from_runs(ROOT_DIR / "output" / "runs", output_file=html_path)
+        export_html_from_runs(ROOT_DIR / "output" / "runs", output_file=html_path,
+                              title="fbasecman 回归测试执行报告")
         print(f"[HTML] 已生成交互式 HTML 测试报告: {html_path}")
     except Exception as exc:
         print(f"[HTML] 生成 HTML 报告失败: {exc}", file=sys.stderr)
