@@ -6,7 +6,6 @@ product runtimes and executors through the platform ``RuntimeExecutorCase``.
 """
 
 import json
-import sys
 from pathlib import Path
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        ReloadDisableMonitorRouteLossCase,
@@ -28,47 +27,24 @@ if CATALOG.get("schema_version") != 1:
     raise ValueError("fbasecman 用例目录版本无效")
 CASE_METADATA = CATALOG["cases"]
 
-# Extra config files merged into every regression-config load.  The platform
-# supplies the current environment's override through the case context; the
-# list is evaluated at call time so one process can retarget environments.
-_EXTRA_CONFIGS = []
-_LOADER_PROFILED = False
 
-
-def _ensure_imports(source):
-    """Isolate the legacy suite import path and install the override loader."""
-    global _LOADER_PROFILED
-    for path in (REPO_ROOT, REPO_ROOT / "backend", source):
-        value = str(path)
-        while value in sys.path:
-            sys.path.remove(value)
-        sys.path.insert(0, value)
-    import cmanconf
-
-    if _LOADER_PROFILED:
-        return
-    original = cmanconf.load_regression_config
-
-    def load_with_profile(root_dir, extra_configs=None, validate=True):
-        extras = list(extra_configs or []) + list(_EXTRA_CONFIGS)
-        return original(root_dir, extra_configs=extras, validate=validate)
-
-    cmanconf.load_regression_config = load_with_profile
-    _LOADER_PROFILED = True
-
-
-def _load_registry(source):
-    """Import the suite registry after the override loader is installed."""
-    _ensure_imports(source)
-    from suites.registry import get_default_registry
-    return get_default_registry()
+_MIGRATING_SUITES = ("ha_commands", "high_availability", "handover",
+                     "global_cache")
 
 
 def _suite_specs(source):
-    registry = _load_registry(source)
+    """Catalog specs straight from suite manifests — no registry/plugin
+    modules (they import ``suite.py``/the legacy runner, which the platform
+    path must not touch)."""
+    import importlib
+
+    from products.fbasecman.runtime_cases import (
+        _ensure_imports, _suite_case_items)
+    _ensure_imports(source)
     specs = {}
-    for plugin in registry.all_suites():
-        for spec in plugin.get_cases():
+    for suite_id in _MIGRATING_SUITES:
+        manifest = importlib.import_module("suites.%s.manifest" % suite_id)
+        for spec in _suite_case_items(manifest, suite_id):
             specs[spec.target] = spec
     return specs
 

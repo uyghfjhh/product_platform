@@ -72,12 +72,23 @@ def _environment(context):
     return source, env
 
 
+def _suite_case_items(manifest, suite_id):
+    """Mirror each plugin's ``case_loader`` without importing suite.py/runner."""
+    if suite_id == "handover":
+        return [case for case in manifest.case_items(include_long_time=True)
+                if case.enabled]
+    if suite_id == "global_cache":
+        return manifest.formal_case_items()
+    return manifest.case_items()
+
+
 def _spec(source, suite_id, name):
-    from suites.registry import get_default_registry
-    plugin = get_default_registry().get(suite_id)
-    if plugin is None:
+    try:
+        manifest = importlib.import_module("suites.%s.manifest" % suite_id)
+    except ImportError:
         raise Blocked("未注册的 fbasecman 套件: %s" % suite_id)
-    spec = next((item for item in plugin.get_cases() if item.name == name), None)
+    spec = next((item for item in _suite_case_items(manifest, suite_id)
+                 if item.name == name), None)
     if spec is None:
         raise Blocked("套件 %s 没有用例 %s" % (suite_id, name))
     return spec
@@ -171,29 +182,30 @@ def resolve_runtime_binding(context, suite_id, name):
     source, env = _environment(context)
     spec = _spec(source, suite_id, name)
     if suite_id == "ha_commands":
-        module = importlib.import_module("suites.ha_commands.suite")
-        module.validate_manifest()
+        executors = importlib.import_module("suites.ha_commands.dispatch").EXECUTORS
+        importlib.import_module("suites.ha_commands.manifest").validate_manifest()
         runtime_type = importlib.import_module(
             "suites.ha_commands.runtime").HaCommandRuntime
         failure_class = runtime_type.failure_class
 
         def executor(runtime):
             try:
-                function = module.EXECUTORS[spec.executor]
+                function = executors[spec.executor]
             except KeyError:
                 raise failure_class("missing executor %s" % spec.executor)
             return function(runtime)
 
         reason = "命令输入输出及用例声明的配置、日志和运行态证据均符合预期。"
     elif suite_id == "high_availability":
-        module = importlib.import_module("suites.high_availability.suite")
+        executors = importlib.import_module(
+            "suites.high_availability.dispatch").EXECUTORS
         runtime_type = importlib.import_module(
             "suites.high_availability.runtime").HighAvailabilityRuntime
         failure_class = importlib.import_module(
             "suites.high_availability.runtime").HighAvailabilityFailure
 
         def executor(runtime):
-            function = module.EXECUTORS.get(spec.name)
+            function = executors.get(spec.name)
             if function is None:
                 raise failure_class("Executor for %s not implemented" % spec.name)
             return function(runtime)
@@ -207,8 +219,9 @@ def resolve_runtime_binding(context, suite_id, name):
             on_failure=lambda runtime, exc: runtime.add_failure_diagnostic(exc),
             finalize=_finalize_run)
     elif suite_id == "handover":
-        module = importlib.import_module("suites.handover.suite")
-        module.validate_manifest()
+        dispatch_executor = importlib.import_module(
+            "suites.handover.executors").dispatch_executor
+        importlib.import_module("suites.handover.manifest").validate_manifest()
         runtime_type = type(
             "HandoverRuntimeLocked",
             (_LockedHandoverRuntimeMixin,
@@ -219,9 +232,8 @@ def resolve_runtime_binding(context, suite_id, name):
             "suites.handover.runtime").HandoverFailure
 
         def executor(runtime):
-            function = module.EXECUTORS.get(spec.executor, module._dispatch_case)
             try:
-                return function(runtime)
+                return dispatch_executor(spec)(runtime)
             except KeyError as exc:
                 raise failure_class(
                     "missing executor for %s: %s" % (spec.name, exc)) from exc
@@ -277,8 +289,9 @@ class _GlobalCachePlatformCase:
     def setup(self, context):
         source, env = _environment(context)
         spec = _spec(source, "global_cache", self._name)
-        module = importlib.import_module("suites.global_cache.suite")
-        module._validate_report_levels()
+        dispatch = importlib.import_module("suites.global_cache.dispatch")
+        importlib.import_module(
+            "suites.global_cache.runtime")._validate_report_levels()
         runtime_type = importlib.import_module(
             "suites.global_cache.runtime").CaseRuntime
         context_data = yaml.safe_load(
@@ -286,8 +299,9 @@ class _GlobalCachePlatformCase:
         runtime = runtime_type(source, env, context_data, spec)
         runtime.platform_case_context = context
         self._runtime = runtime
-        self._execute_case = module._execute_case
-        self._assert_negative_logs = module._assert_negative_logs
+        self._execute_case = dispatch._execute_case
+        self._assert_negative_logs = importlib.import_module(
+            "suites.global_cache.domains.common_assertions")._assert_negative_logs
         self._failure_class = importlib.import_module(
             "suites.global_cache.errors").GlobalCacheFailure
 

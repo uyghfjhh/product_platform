@@ -135,3 +135,52 @@ def test_common_table_parser_matches_legacy_psql_shape():
     headers, rows = _parse_table(output)
     assert headers == ["node_name", "group_name"]
     assert rows == [{"node_name": "pg_1", "group_name": "mmr_group"}]
+
+
+def test_platform_case_path_never_loads_suite_runner_or_run_case():
+    """§5.0.1 architecture guard: the modules the platform engine reaches for
+    resolving fbasecman cases must not import the legacy suite runner, the
+    per-suite ``suite.py`` orchestration modules, the plugin registry, or
+    ``run_case`` — those remain only as manual ``run.sh``/vendored-test entry
+    points.  Run in a subprocess so ``sys.modules`` is pristine."""
+    import subprocess
+
+    repo = Path(__file__).parents[1]
+    legacy = repo / "products" / "fbasecman" / "regression" / "legacy"
+    code = """
+import importlib, sys
+sys.path[:0] = [%r, %r, %r]
+for name in (
+    "suites.ha_commands.manifest",
+    "suites.ha_commands.dispatch",
+    "suites.ha_commands.runtime",
+    "suites.high_availability.manifest",
+    "suites.high_availability.dispatch",
+    "suites.high_availability.runtime",
+    "suites.handover.manifest",
+    "suites.handover.executors",
+    "suites.handover.runtime",
+    "suites.global_cache.manifest",
+    "suites.global_cache.dispatch",
+    "suites.global_cache.domains.common_assertions",
+    "suites.global_cache.runtime",
+    "products.fbasecman.runtime_cases",
+    "products.fbasecman.cases",
+):
+    importlib.import_module(name)
+banned = [
+    "platform_regress.suites.runner",
+    "suites.registry",
+    "suites.ha_commands.suite",
+    "suites.high_availability.suite",
+    "suites.handover.suite",
+    "suites.global_cache.suite",
+    "suites.ha_commands.plugin",
+    "suites.high_availability.plugin",
+    "suites.handover.plugin",
+    "suites.global_cache.plugin",
+]
+loaded = [name for name in banned if name in sys.modules]
+assert not loaded, loaded
+""" % (str(repo), str(repo / "backend"), str(legacy))
+    subprocess.run([sys.executable, "-c", code], check=True)
