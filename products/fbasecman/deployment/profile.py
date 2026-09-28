@@ -25,7 +25,7 @@ def build_profile(
     data_root: str,
     license_file: str,
 ) -> tuple[dict, dict]:
-    source = settings.fbasecman_regress_root / "regress.yaml"
+    source = settings.product_regress_root("fbasecman") / "regress.yaml"
     old = yaml.safe_load(source.read_text(encoding="utf-8"))
     local = source.with_name("regress.local.yaml")
     if local.is_file():
@@ -161,7 +161,7 @@ def save_profile(settings: Settings, environment: dict, **options) -> tuple[Path
     # 旧报告解析器从根目录读有效配置；此副本只供展示，不参与测试执行。
     legacy = legacy_root(settings, environment["id"])
     legacy.mkdir(parents=True, exist_ok=True)
-    source = settings.fbasecman_regress_root / "regress.yaml"
+    source = settings.product_regress_root("fbasecman") / "regress.yaml"
     merged = yaml.safe_load(source.read_text(encoding="utf-8"))
     local = source.with_name("regress.local.yaml")
     if local.is_file():

@@ -86,7 +86,7 @@ def runner_run(context, argv, check=True, timeout=None, input_text=None):
 
 def binary(context, name):
     """Return the managed FBase binary path used by the environment."""
-    return platform_steps._fbase_binary(context, name)
+    return platform_steps._db_binary(context, name)
 
 
 def pg_ctl(context, node, action, check=True):

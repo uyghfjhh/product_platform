@@ -23,7 +23,7 @@ def main() -> int:
     settings = load_settings()
     _, override = profile_paths(settings, args.environment)
     context = {
-        "legacy_source": str(settings.fbasecman_regress_root),
+        "legacy_source": str(settings.product_regress_root("fbasecman")),
         "legacy_override": str(override),
         "legacy_report_root": str(legacy_root(settings, args.environment)),
     }

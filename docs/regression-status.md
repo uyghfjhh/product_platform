@@ -32,7 +32,7 @@
 | `reporting/` | model、renderer、junit、html、export（CaseResult 事实模型→双格式；BLOCKED/CANCELLED→SKIPPED） | 已上收 |
 | `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
 
-平台侧测试：**228 passed**；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
+平台侧测试：**226 passed**（D1 删除 `LegacyFbaseCase` 后两个桥接构造测试随删）；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
 
 ## 3. 已完成的结构性工作
 
@@ -123,8 +123,10 @@
 - `run.py`/`tools/cli.py`/`run.sh` 退役进展（2026-09-28）：
   - `products/fbasecman/regression/run.py` 收缩为纯 `--check-profile` 校验工具，case 执行循环已删（平台 `platform_regress.cli` 是唯一执行入口）。
   - `products/fbasecman/regression/legacy/tools/cli.py` `do_run` 增加 deprecation 警告；`legacy/run.sh` 头注标明仅保留 env/doctor/show/test 人工诊断入口。
-  - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`；**`fbase-database/regression/legacy/run.sh` 仍是 `LegacyFbaseCase.run` 的运行时依赖**（每条 legacy 用例 spawn `run.sh run <cluster> <target> --enable-run-id`），在用例迁完前不能删。
-  - `framework/*` shim 保留：vendored `unit_tests`（258 项）大量 patch 点落在 shim 模块名上，物理删除须先迁移单测。
+  - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`。
+  - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）——`fbase-database/regression/legacy/run.sh` 失去最后一个平台运行时调用方，现为 vendored `unit_tests/test_cli.py` 的 patch 目标与人工入口，随单测迁移一并退役。
+  - **fbasecman `framework/` shim 已物理删除**（提交 772e9b3）：全部 `framework.*` import retarget 到 `platform_regress.*`；产品私有胶水并入 `legacy/cmanconf.py`；平台 `runtime.py` 改用 `set_legacy_config_loader()` 注入契约；`tools/architecture.py` 改守 cmanconf 边界。
+  - `fbase-database/regression/legacy/framework/` 仍保留：vendored 单测 patch 点待迁移。
 
 ## 7. 验收标准与红线
 

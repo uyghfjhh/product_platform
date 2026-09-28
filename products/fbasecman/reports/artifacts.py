@@ -31,7 +31,7 @@ def report_root(settings: Settings, environment_id: str | None) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", environment_id):
             raise ValueError("环境 ID 无效")
         return legacy_root(settings, environment_id)
-    return settings.fbasecman_regress_root
+    return settings.product_regress_root("fbasecman")
 
 
 def case_directory(settings: Settings, target: str, environment_id: str | None = None) -> Path:
@@ -62,7 +62,7 @@ def case_artifacts(settings: Settings, target: str, environment_id: str | None =
         )
         result = subprocess.run(
             [sys.executable, "-c", script, target, str(report_root(settings, environment_id))],
-            cwd=settings.fbasecman_regress_root,
+            cwd=settings.product_regress_root("fbasecman"),
             capture_output=True,
             text=True,
             timeout=20,
@@ -285,7 +285,7 @@ def export_source_report(settings: Settings, environment_id: str, format_name: s
     env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.run(
         [sys.executable, "-c", script, str(root)],
-        cwd=settings.fbasecman_regress_root,
+        cwd=settings.product_regress_root("fbasecman"),
         capture_output=True,
         text=True,
         encoding="utf-8",
