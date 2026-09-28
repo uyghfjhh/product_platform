@@ -14,6 +14,7 @@
 """
 
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -173,6 +174,51 @@ class CaseRuntime(object):
         if check and result.returncode != 0:
             raise self.failure_class("command failed rc=%s: %s" % (result.returncode, result.command))
         return result.returncode, result.output
+
+    def asserted_command(self, command, title, expected, judge, *,
+                         retry_timeout=0, interval=0.2, log_stem="command",
+                         failure=None):
+        """Run ``command`` inside an evidence step, polling until it matches.
+
+        ``judge(result, output, attempt, elapsed) -> (passed, actual)`` is
+        evaluated once per attempt; retries stop at ``retry_timeout`` seconds.
+        Log files land in ``logs/<log_stem>_<step_order>_<attempt>.log``.
+        ``failure(title, actual, result) -> message`` customises the raised
+        error text; the default is ``"<title>: <actual>"``.  Returns
+        ``(output, result)`` of the final attempt.
+        """
+        with self.evidence_step(title, expected=expected) as step:
+            deadline = time.time() + max(0, retry_timeout)
+            started = time.time()
+            attempt = 0
+            passed = False
+            actual = ""
+            while True:
+                attempt += 1
+                result = run_logged_command(
+                    command,
+                    self.logs_dir / ("%s_%02d_%02d.log" % (
+                        log_stem, self._step_order, attempt)),
+                    cwd=self.workdir)
+                output = result.output.rstrip() or "<empty>"
+                passed, actual = judge(
+                    result, output, attempt, time.time() - started)
+                if passed or time.time() >= deadline:
+                    break
+                time.sleep(interval)
+            step.actual_execution("$ %s" % result.command, output)
+            step.assess(expected, actual, passed)
+        if not passed:
+            message = (failure(title, actual, result) if failure is not None
+                       else "%s: %s" % (title, actual))
+            raise self.failure_class(message)
+        return output, result
+
+    def file_diff(self, before, after, log_name="config_diff.log"):
+        """Run ``diff -u`` between two files and return the logged result."""
+        return run_logged_command(
+            ["diff", "-u", str(before), str(after)],
+            self.logs_dir / log_name, cwd=self.workdir)
 
     # ------------------------------------------------------------------
     # 报告渲染

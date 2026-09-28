@@ -22,20 +22,16 @@ import time
 from pathlib import Path
 
 from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import parse_expanded_rows
+from platform_regress.evidence.backup import (
+    BackupCheckpoint, backup_content_matches, backup_dir_path, backup_files,
+    created_backups, snapshot_backup,
+)
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.ports import free_port_pair, port_is_free
 from platform_regress.reporting.model import ReportStep
 from platform_regress.runtime import CaseRuntime
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
-
-
-class BackupCheckpoint(object):
-    """配置备份目录快照：记录某时刻已有的 .bak 文件集合与配置原文。"""
-
-    def __init__(self, files, config_content, backup_dir=None):
-        self.files = frozenset(files)
-        self.config_content = config_content
-        self.backup_dir = backup_dir
 
 
 class FbasecmanCaseRuntime(CaseRuntime):
@@ -466,30 +462,16 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1",
             self.listen_port, "admin", "console", sql,
         )
-        with self.evidence_step(title, expected=expected) as step:
-            retry_enabled = sql.lstrip().upper().startswith("SHOW ")
-            deadline = time.time() + (30 if retry_enabled else 0)
-            started = time.time()
-            order = self._next_order()
-            attempt = 0
-            while True:
-                attempt += 1
-                result = run_logged_command(
-                    command,
-                    self.logs_dir / ("psql_%02d_%02d.log" % (order, attempt)),
-                    cwd=self.workdir,
-                )
-                output = result.output.rstrip() or "<empty>"
-                passed = result.returncode == 0 and predicate(output)
-                if passed or time.time() >= deadline:
-                    break
-                time.sleep(0.2)
-            step.actual_execution("$ %s" % result.command, output)
-            actual = "returncode=%s attempts=%s elapsed=%.2fs" % (
-                result.returncode, attempt, time.time() - started)
-            step.assess(expected, actual, passed)
-        if not passed:
-            raise self.failure_class("%s: %s" % (title, actual))
+        retry_enabled = sql.lstrip().upper().startswith("SHOW ")
+
+        def judge(result, output, attempt, elapsed):
+            return (result.returncode == 0 and predicate(output),
+                    "returncode=%s attempts=%s elapsed=%.2fs" % (
+                        result.returncode, attempt, elapsed))
+
+        output, result = self.asserted_command(
+            command, title, expected, judge,
+            retry_timeout=30 if retry_enabled else 0, log_stem="psql")
         if config_before is not None:
             config_after = self.active_conf.read_text(encoding="utf-8")
             if config_before != config_after:
@@ -519,48 +501,22 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1", self.listen_port,
             "admin", "console", sql, expanded=True,
         )
-        with self.evidence_step(title, expected=expected) as step:
-            deadline = time.time() + max(0, retry_timeout)
-            started = time.time()
-            attempt = 0
-            while True:
-                attempt += 1
-                result = run_logged_command(
-                    command,
-                    self.logs_dir / ("psql_monitor_%02d_%02d.log" %
-                                     (self._step_order, attempt)),
-                    cwd=self.workdir)
-                output = result.output.rstrip() or "<empty>"
-                passed = result.returncode == 0 and predicate(output)
-                if passed or time.time() >= deadline:
-                    break
-                time.sleep(0.2)
-            step.actual_execution("$ %s" % result.command, output)
-            step.assess(expected,
-                        "returncode=%s attempts=%s elapsed=%.2fs" %
-                        (result.returncode, attempt, time.time() - started),
-                        passed)
-        if not passed:
-            raise self.failure_class("%s: returncode=%s" % (title, result.returncode))
-        return output
+
+        def judge(result, output, attempt, elapsed):
+            return (result.returncode == 0 and predicate(output),
+                    "returncode=%s attempts=%s elapsed=%.2fs" % (
+                        result.returncode, attempt, elapsed))
+
+        return self.asserted_command(
+            command, title, expected, judge, retry_timeout=retry_timeout,
+            log_stem="psql_monitor",
+            failure=lambda t, _a, r: "%s: returncode=%s" % (t, r.returncode),
+        )[0]
 
     @staticmethod
     def _expanded_rows(output, key):
         """Parse psql expanded output into rows indexed by one text column."""
-        rows = {}
-        current = {}
-        for line in output.splitlines():
-            if re.match(r"^-\[ RECORD", line):
-                if current.get(key):
-                    rows[current[key]] = current
-                current = {}
-                continue
-            match = re.match(r"^([a-z_]+)\s*\|\s*(.*?)\s*$", line)
-            if match:
-                current[match.group(1)] = match.group(2)
-        if current.get(key):
-            rows[current[key]] = current
-        return rows
+        return parse_expanded_rows(output, key)
 
     def wait_node_monitor(self, title, expected_rows, retry_timeout=30):
         """Wait until named node projections expose the requested trusted fields."""
@@ -595,31 +551,16 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1", self.listen_port,
             "admin", "console", sql,
         )
-        with self.evidence_step(title, expected=expected_desc) as step:
-            deadline = time.time() + max(0, retry_timeout)
-            started = time.time()
-            attempt = 0
-            last_summary = ""
-            while True:
-                attempt += 1
-                result = run_logged_command(
-                    command,
-                    self.logs_dir / ("assert_table_%02d_%02d.log" % (self._step_order, attempt)),
-                    cwd=self.workdir,
-                )
-                output = result.output.rstrip() or "<empty>"
-                passed, summary, _ = assert_table_rows(output, expected_rows, key=key)
-                last_summary = summary
-                if (result.returncode == 0 and passed) or time.time() >= deadline:
-                    break
-                time.sleep(0.3)
 
-            step.actual_execution("$ %s" % result.command, output)
-            step.assess(expected_desc, last_summary, result.returncode == 0 and passed)
+        def judge(result, output, attempt, elapsed):
+            passed, summary, _ = assert_table_rows(output, expected_rows, key=key)
+            return result.returncode == 0 and passed, summary
 
-        if result.returncode != 0 or not passed:
-            raise self.failure_class("%s 失败:\n%s" % (title, last_summary))
-        return output
+        return self.asserted_command(
+            command, title, expected_desc, judge,
+            retry_timeout=retry_timeout, interval=0.3, log_stem="assert_table",
+            failure=lambda t, a, _r: "%s 失败:\n%s" % (t, a),
+        )[0]
 
     def psql_business(self, sql, title, expected, predicate, group="mmr_group",
                       port=None, user="postgres", retry_timeout=0):
@@ -628,27 +569,14 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1",
             port or self.listen_port, user, group, sql,
         )
-        deadline = time.time() + retry_timeout
-        attempt = 0
-        order = self._next_order()
-        with self.evidence_step(title, expected=expected) as step:
-            while True:
-                attempt += 1
-                result = run_logged_command(
-                    command, self.logs_dir / ("psql_business_%02d_%02d.log" % (order, attempt)),
-                    cwd=self.workdir,
-                )
-                output = result.output.rstrip() or "<empty>"
-                passed = result.returncode == 0 and predicate(output)
-                if passed or time.time() >= deadline:
-                    break
-                time.sleep(0.2)
-            step.actual_execution("$ %s" % result.command, output)
-            actual = "returncode=%s attempts=%s" % (result.returncode, attempt)
-            step.assess(expected, actual, passed)
-        if not passed:
-            raise self.failure_class("%s: %s" % (title, actual))
-        return output
+
+        def judge(result, output, attempt, elapsed):
+            return (result.returncode == 0 and predicate(output),
+                    "returncode=%s attempts=%s" % (result.returncode, attempt))
+
+        return self.asserted_command(
+            command, title, expected, judge, retry_timeout=retry_timeout,
+            log_stem="psql_business")[0]
 
     def psql_business_error(self, sql, title, expected, predicate,
                             group="mmr_group", port=None, user="postgres"):
@@ -657,19 +585,13 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1",
             port or self.listen_port, user, group, sql,
         )
-        with self.evidence_step(title, expected=expected) as step:
-            result = run_logged_command(
-                command, self.logs_dir / ("psql_business_error_%02d.log" % self._next_order()),
-                cwd=self.workdir,
-            )
-            output = result.output.rstrip() or "<empty>"
-            step.actual_execution("$ %s" % result.command, output)
-            passed = result.returncode != 0 and predicate(output)
-            actual = "returncode=%s" % result.returncode
-            step.assess(expected, actual, passed)
-        if not passed:
-            raise self.failure_class("%s: %s" % (title, actual))
-        return output
+
+        def judge(result, output, attempt, elapsed):
+            return (result.returncode != 0 and predicate(output),
+                    "returncode=%s" % result.returncode)
+
+        return self.asserted_command(
+            command, title, expected, judge, log_stem="psql_business_error")[0]
 
     def psql_error(self, sql, title, expected, predicate, compare_config=True):
         """执行 console 命令并断言被拒绝；可选校验配置未被污染。"""
@@ -678,18 +600,13 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.env.config["local"]["postgres_dir"], "127.0.0.1",
             self.listen_port, "admin", "console", sql,
         )
-        with self.evidence_step(title, expected=expected) as step:
-            result = run_logged_command(
-                command, self.logs_dir / ("psql_error_%02d.log" % self._next_order()),
-                cwd=self.workdir,
-            )
-            output = result.output.rstrip() or "<empty>"
-            step.actual_execution("$ %s" % result.command, output)
-            passed = result.returncode != 0 and predicate(output)
-            actual = "returncode=%s" % result.returncode
-            step.assess(expected, actual, passed)
-        if not passed:
-            raise self.failure_class("%s: %s" % (title, actual))
+
+        def judge(result, output, attempt, elapsed):
+            return (result.returncode != 0 and predicate(output),
+                    "returncode=%s" % result.returncode)
+
+        output, result = self.asserted_command(
+            command, title, expected, judge, log_stem="psql_error")
         if config_before is not None and compare_config:
             config_after = self.active_conf.read_bytes()
             unchanged = config_before == config_after
@@ -710,8 +627,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
 
     def diff(self, before, after):
         """断言配置文件与测试开始时的基线完全一致（diff 为空）。"""
-        command = ["diff", "-u", str(before), str(after)]
-        result = run_logged_command(command, self.logs_dir / "config_diff.log", cwd=self.workdir)
+        result = self.file_diff(before, after, "config_diff.log")
         output = result.output.rstrip() or "<no differences>"
         self.record_step("检查配置文件 diff（与测试开始时初始配置比较）", result.command,
                          "与测试开始时保存的初始配置无差异", output,
@@ -721,11 +637,8 @@ class FbasecmanCaseRuntime(CaseRuntime):
 
     def diff_contains(self, before, after, expected, title):
         """断言配置 diff 恰好包含 expected 中列出的变化内容。"""
-        command = ["diff", "-u", str(before), str(after)]
-        result = run_logged_command(
-            command, self.logs_dir / ("config_diff_%02d.log" % (self._step_order + 1)),
-            cwd=self.workdir,
-        )
+        result = self.file_diff(
+            before, after, "config_diff_%02d.log" % (self._step_order + 1))
         output = result.output.rstrip() or "<no differences>"
         passed = result.returncode == 1 and all(item in output for item in expected)
         self.record_step(
@@ -737,26 +650,18 @@ class FbasecmanCaseRuntime(CaseRuntime):
 
     @staticmethod
     def _backup_dir_path(config_path, backup_dir):
-        if backup_dir is not None:
-            return Path(backup_dir)
-        return Path(config_path).parent / "conf-backup"
+        return backup_dir_path(config_path, backup_dir)
 
     def backup_checkpoint(self, config_path, backup_dir=None):
         """记录备份目录现状快照，供命令执行后对比新增备份文件。"""
-        backup_dir = self._backup_dir_path(config_path, backup_dir)
-        files = tuple(path.name for path in backup_dir.iterdir()
-                      if ".bak." in path.name) if backup_dir.is_dir() else ()
-        return BackupCheckpoint(files, Path(config_path).read_bytes(), backup_dir)
+        return snapshot_backup(config_path, backup_dir)
 
     def assert_backup_created(self, checkpoint, config_path, title="验证配置备份文件"):
         """断言恰好新增一个 .bak 备份且内容与命令前配置逐字节一致。"""
-        backup_dir = checkpoint.backup_dir or self._backup_dir_path(config_path, None)
-        current = set(path.name for path in backup_dir.iterdir()
-                      if ".bak." in path.name) if backup_dir.is_dir() else set()
-        created = sorted(current - set(checkpoint.files))
-        content_matches = False
-        if len(created) == 1:
-            content_matches = (backup_dir / created[0]).read_bytes() == checkpoint.config_content
+        backup_dir = checkpoint.backup_dir or backup_dir_path(config_path, None)
+        created, current = created_backups(checkpoint, backup_dir)
+        content_matches = len(created) == 1 and backup_content_matches(
+            checkpoint, backup_dir, created[0])
         actual = "新增备份=%s；备份数量 %d -> %d；内容与命令前配置%s" % (
             created[0] if len(created) == 1 else created,
             len(checkpoint.files), len(current),
@@ -773,10 +678,8 @@ class FbasecmanCaseRuntime(CaseRuntime):
     def assert_no_backup_created(self, checkpoint, config_path,
                                  title="验证未创建配置备份"):
         """断言备份文件集合未发生任何变化（用于拒绝类命令）。"""
-        backup_dir = checkpoint.backup_dir or self._backup_dir_path(config_path, None)
-        current = set(path.name for path in backup_dir.iterdir()
-                      if ".bak." in path.name) if backup_dir.is_dir() else set()
-        created = sorted(current - set(checkpoint.files))
+        backup_dir = checkpoint.backup_dir or backup_dir_path(config_path, None)
+        created, current = created_backups(checkpoint, backup_dir)
         actual = "新增备份=%s；备份数量 %d -> %d" % (
             created, len(checkpoint.files), len(current),
         )

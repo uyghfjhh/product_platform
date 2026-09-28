@@ -1,5 +1,6 @@
 """psql command construction."""
 
+import re
 from pathlib import Path
 
 
@@ -155,3 +156,26 @@ def assert_table_rows(output, expected_rows, key="node_name"):
             details.append({"key": key_val, "status": "PASS", "matches": field_matches})
 
     return all_passed, "\n".join(summary_lines), details
+
+
+def parse_expanded_rows(output, key):
+    """Parse psql ``-x`` output into rows indexed by one text column.
+
+    Field names are restricted to ``[a-z_]+`` (console SHOW projection
+    style); rows are keyed by the value of the ``key`` column and later
+    records with the same key overwrite earlier ones.
+    """
+    rows = {}
+    current = {}
+    for line in output.splitlines():
+        if re.match(r"^-\[ RECORD", line):
+            if current.get(key):
+                rows[current[key]] = current
+            current = {}
+            continue
+        match = re.match(r"^([a-z_]+)\s*\|\s*(.*?)\s*$", line)
+        if match:
+            current[match.group(1)] = match.group(2)
+    if current.get(key):
+        rows[current[key]] = current
+    return rows
