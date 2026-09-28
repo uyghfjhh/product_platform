@@ -38,7 +38,7 @@ def test_migrated_case_blocks_without_real_cluster_topology(tmp_path):
     result = app.state.store.list_results("fbase-lab")[0]
     assert task["status"] == "FAILED"
     assert result["status"] == "BLOCKED"
-    payload = json.loads((settings.data_dir / "regression" / "fbase-lab" / TARGET / "result.json").read_text())
+    payload = json.loads((settings.environment_dir / "regression" / "fbase-lab" / TARGET / "result.json").read_text())
     assert payload["operation_id"] == queued[0]
     assert "拓扑" in payload["reason"]
 
@@ -52,7 +52,7 @@ def test_migrated_case_replaces_stale_result_with_error(tmp_path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     settings = settings_for(tmp_path)
-    output = settings.data_dir / "regression" / "lab" / TARGET
+    output = settings.environment_dir / "regression" / "lab" / TARGET
     output.mkdir(parents=True)
     (output / "result.json").write_text(json.dumps({
         "target": TARGET, "operation_id": "old-task", "verdict": "PASS",

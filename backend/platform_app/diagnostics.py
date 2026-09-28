@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .product_catalog import discover_products
-from .storage import Store
+from .filestore import FileStore
 
 
 class AIUnavailable(RuntimeError):
@@ -186,7 +186,7 @@ def build_evidence_bundle(settings: Settings, result: dict) -> dict:
     }
 
 
-def diagnose(store: Store, settings: Settings, result: dict) -> dict:
+def diagnose(store: FileStore, settings: Settings, result: dict) -> dict:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise AIUnavailable("未配置 OPENAI_API_KEY，无法调用 AI 诊断")

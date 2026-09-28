@@ -1,13 +1,14 @@
 import json
 
 from products.fbasecman.reports.artifacts import CaseProgressObserver
-from platform_app.storage import Store
+from platform_app.filestore import FileStore
 from test_api import settings_for
 
 
 def test_recorded_console_rows_become_scene_entities(tmp_path):
     settings = settings_for(tmp_path)
-    path = (settings.data_dir / "legacy_cman" / "lab" / "output" / "runs" /
+    store = FileStore(settings.data_dir)
+    path = (settings.environment_dir / "legacy_cman" / "lab" / "output" / "runs" /
             "rw_toggle" / "read" / "steps.json")
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"steps": [{
@@ -18,7 +19,6 @@ def test_recorded_console_rows_become_scene_entities(tmp_path):
             " mmr_group  | pg_2           | AVAILABLE    | active\n(1 row)"
         )}],
     }]}), encoding="utf-8")
-    store = Store(settings.database)
     store.put_environment({
         "id": "lab", "product_id": "fbasecman", "title": "Lab",
         "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
@@ -41,7 +41,8 @@ def test_recorded_console_rows_become_scene_entities(tmp_path):
 
 def test_repeated_monitor_polls_discover_entity_once(tmp_path):
     settings = settings_for(tmp_path)
-    path = (settings.data_dir / "legacy_cman" / "lab" / "output" / "runs" /
+    store = FileStore(settings.data_dir)
+    path = (settings.environment_dir / "legacy_cman" / "lab" / "output" / "runs" /
             "ha_commands" / "refresh" / "steps.json")
     path.parent.mkdir(parents=True)
     output = ("$ psql -x -c 'SHOW NODE_MONITOR;'\n"
@@ -51,7 +52,6 @@ def test_repeated_monitor_polls_discover_entity_once(tmp_path):
     path.write_text(json.dumps({"steps": [{
         "title": "poll", "result": "PASS", "execution": [{"text": output}, {"text": output}],
     }]}), encoding="utf-8")
-    store = Store(settings.database)
     store.put_environment({"id": "lab", "product_id": "fbasecman", "title": "Lab",
                            "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
                            "database_user": "postgres", "deployment_config": None,

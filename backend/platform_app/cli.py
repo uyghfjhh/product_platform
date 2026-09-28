@@ -7,10 +7,10 @@ import sys
 import uvicorn
 
 from .config import load_settings
-from .storage import Store
+from .filestore import FileStore
 
 
-def recover_unfinished(store: Store) -> list[str]:
+def recover_unfinished(store: FileStore) -> list[str]:
     """重启后只重投未领取任务；执行中任务须先核对外部进程。"""
     queued = []
     for task in store.unfinished_tasks():
@@ -31,12 +31,12 @@ def main() -> int:
     commands.add_parser("check", help="检查本地存储和产品集成")
     args = parser.parse_args()
     settings = load_settings()
-    store = Store(settings.database)
+    store = FileStore(settings.data_dir)
 
     if args.command == "check":
         from .product_catalog import discover_products
 
-        print("SQLite: %s" % store.path)
+        print("数据目录: %s" % store.root)
         checks = [("pgcluster", settings.pgcluster_root, "pgcluster")]
         for product_id in sorted(discover_products(settings.products_root)):
             checks.append(

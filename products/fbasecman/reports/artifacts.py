@@ -21,7 +21,7 @@ from products.fbasecman.observations import (
     parse_nodes,
 )
 from platform_app.scene import emit_observation
-from platform_app.storage import Store
+from platform_app.filestore import FileStore
 
 TARGET = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 
@@ -132,7 +132,7 @@ class CaseProgressObserver:
         self.observed_steps: set[tuple[str, int]] = set()
         self.discovered_entities: set[str] = set()
 
-    def poll(self, store: Store, task_id: str) -> None:
+    def poll(self, store: FileStore, task_id: str) -> None:
         if not self.root.is_dir():
             return
         for path in self.root.glob("*/*/steps.json"):
@@ -215,7 +215,7 @@ def case_log(settings: Settings, target: str, filename: str, *,
     return {"target": target, "name": filename, "lines": [line.rstrip("\n") for line in lines]}
 
 
-def sync_current_results(store: Store, settings: Settings, environment: dict,
+def sync_current_results(store: FileStore, settings: Settings, environment: dict,
                          target: str, started_at: str,
                          operation_id: str | None = None) -> int:
     """只同步本次更新的产物，避免把此前 PASS 当成本次结论。"""

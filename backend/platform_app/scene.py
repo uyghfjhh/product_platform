@@ -17,7 +17,7 @@ from .event_contracts import (
     SceneObservationError,
     SceneTopology,
 )
-from .storage import Store
+from .filestore import FileStore
 from .topology import configured_topology, observed_status
 
 
@@ -41,7 +41,7 @@ def endpoint_id(environment: dict) -> str:
     return "endpoint:" + environment["id"]
 
 
-def emit_configured_scene(store: Store, settings: Settings, task_id: str,
+def emit_configured_scene(store: FileStore, settings: Settings, task_id: str,
                           environment: dict) -> None:
     """Publish a scene baseline without claiming that any node is healthy."""
     entities = [SceneEntity(
@@ -72,7 +72,7 @@ def emit_configured_scene(store: Store, settings: Settings, task_id: str,
     ).model_dump())
 
 
-def emit_observation(store: Store, task_id: str, entity_id: str, state: str,
+def emit_observation(store: FileStore, task_id: str, entity_id: str, state: str,
                      source: str, details: dict[str, Any] | None = None) -> None:
     event = EntityObserved(
         entity_id=entity_id, state=state, source=source, details=details or {},
@@ -80,7 +80,7 @@ def emit_observation(store: Store, task_id: str, entity_id: str, state: str,
     store.add_event(task_id, "scene.entity.observed", event.model_dump())
 
 
-def emit_action(store: Store, task_id: str, environment: dict, action: str,
+def emit_action(store: FileStore, task_id: str, environment: dict, action: str,
                 target: str, phase: str, success: bool | None = None) -> None:
     entity_id = target if action.startswith("deployment.") and "." not in target else endpoint_id(environment)
     store.add_event(task_id, f"scene.action.{phase}", SceneAction(
@@ -88,7 +88,7 @@ def emit_action(store: Store, task_id: str, environment: dict, action: str,
     ).model_dump())
 
 
-def emit_pgcluster_status(store: Store, settings: Settings, task_id: str,
+def emit_pgcluster_status(store: FileStore, settings: Settings, task_id: str,
                           environment: dict) -> None:
     """Add measured instance states after a deployment operation."""
     if not environment.get("deployment_config"):

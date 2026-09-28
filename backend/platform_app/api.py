@@ -29,7 +29,7 @@ from .license import (
     revoke_key,
 )
 from .product_routes import register_product_routes
-from .storage import ConflictError, Store
+from .filestore import ConflictError, FileStore
 from .topology import configured_topology, observed_status
 
 IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
@@ -90,7 +90,7 @@ def public_task(task: dict) -> dict:
 
 def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     settings = settings or load_settings()
-    store = Store(settings.database)
+    store = FileStore(settings.data_dir)
     # Bind existing environments only when a product profile has exactly one
     # compatible deployed topology. Ambiguous choices remain user decisions.
     try:
@@ -128,7 +128,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     @app.get("/api/v1/health")
     def health():
         return {
-            "status": "ok", "storage": "sqlite",
+            "status": "ok", "storage": "files",
             "platform_dir": str(settings.platform_dir),
             "environment_dir": str(settings.environment_dir),
         }

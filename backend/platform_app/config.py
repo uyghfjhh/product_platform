@@ -35,14 +35,6 @@ class Settings:
         return self.license_key_dir.parent / "config.json"
 
     @property
-    def database(self) -> Path:
-        return self.platform_dir / "platform.sqlite3"
-
-    @property
-    def queue_database(self) -> Path:
-        return self.platform_dir / "queue.sqlite3"
-
-    @property
     def frontend_dist(self) -> Path:
         return ROOT / "frontend" / "dist"
 

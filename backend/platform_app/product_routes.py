@@ -6,10 +6,10 @@ from fastapi import APIRouter, FastAPI
 
 from .config import Settings
 from .product_catalog import discover_products
-from .storage import Store
+from .filestore import FileStore
 
 
-def register_product_routes(app: FastAPI, settings: Settings, store: Store) -> None:
+def register_product_routes(app: FastAPI, settings: Settings, store: FileStore) -> None:
     for product in discover_products(settings.products_root).values():
         path = product.package_root / "router.py"
         if not path.is_file():

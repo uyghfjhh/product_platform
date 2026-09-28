@@ -27,7 +27,7 @@ from .scene import (
     emit_pgcluster_status,
     endpoint_id,
 )
-from .storage import Store
+from .filestore import FileStore
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}
 
@@ -136,7 +136,7 @@ def command_for_task(
     return spec.command, spec.cwd
 
 
-def _check_database(store: Store, settings: Settings, task_id: str, environment: dict) -> None:
+def _check_database(store: FileStore, settings: Settings, task_id: str, environment: dict) -> None:
     host, port = environment["host"], environment["port"]
     store.add_event(
         task_id, "step.started", {"title": "探测数据库连接", "host": host, "port": port}
@@ -162,11 +162,11 @@ def _check_database(store: Store, settings: Settings, task_id: str, environment:
 
 
 def _run_command(
-    store: Store, task_id: str, command: list[str], cwd: Path,
+    store: FileStore, task_id: str, command: list[str], cwd: Path,
     changes_environment: bool, observer=None,
 ) -> tuple[bool, str]:
     # 子进程组用于终止整条命令链；stdout/stderr 原样追加到本次证据文件。
-    log_dir = store.path.parent / "operations"
+    log_dir = store.platform_dir / "operations"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / (task_id + ".log")
     store.add_event(
@@ -278,7 +278,7 @@ def _run_command(
     )
 
 
-def run_task(store: Store, settings: Settings, task_id: str) -> None:
+def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
     task = store.get_task(task_id)
     if not task or not store.transition_task(task_id, ("QUEUED",), "RUNNING"):
         return
