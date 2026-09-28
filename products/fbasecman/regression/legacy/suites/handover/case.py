@@ -1,6 +1,6 @@
 """Declarative transfer-test case metadata."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class HandoverCase(CaseSpec):

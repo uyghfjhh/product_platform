@@ -4,7 +4,7 @@ import re
 import time
 from pathlib import Path
 
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from platform_regress.suites.runner import run_cases
 from suites.ha_commands.runtime import HaCommandFailure
 from .manifest import RW_TOGGLE_CASES, case_items, find_case, validate_manifest

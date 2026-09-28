@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from lib.rw_toggle_types import RwToggleCase
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
 
 RW_TOGGLE_CASE_ROOT = "tests/rw_toggle_cases"

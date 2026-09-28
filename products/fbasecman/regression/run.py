@@ -1,7 +1,7 @@
 """Validate a platform-generated regression override against the legacy catalog.
 
 This module is kept solely for ``--check-profile`` verification: it loads the
-product's vendored ``framework`` package in an isolated ``sys.path`` and checks
+product's vendored suite context in an isolated ``sys.path`` and checks
 that a generated override resolves to a valid configuration and known target.
 Case execution was migrated to ``platform_regress.cli``; this entry point no
 longer runs any test targets.
@@ -24,27 +24,25 @@ def main() -> int:
     if not (source / "suites" / "registry.py").is_file() or not override.is_file():
         parser.error("用例来源或测试配置不存在")
 
-    # The legacy suite still imports a top-level framework package. Isolate its
-    # import path here so the platform process never imports that package.
+    # The legacy suite still imports product-private modules (cmanconf,
+    # suites.*). Isolate its import path so the platform process stays clean.
     repo_root = Path(__file__).resolve().parents[3]
     for path in (repo_root, repo_root / "backend", source):
         value = str(path)
         while value in sys.path:
             sys.path.remove(value)
         sys.path.insert(0, value)
-    import framework.configuration as package
-    import framework.configuration.loader as loader
+    import cmanconf
 
-    original = loader.load_regression_config
+    original = cmanconf.load_regression_config
 
     def load_with_profile(root_dir, extra_configs=None, validate=True):
         extras = list(extra_configs or []) + [override]
         return original(root_dir, extra_configs=extras, validate=validate)
 
-    loader.load_regression_config = load_with_profile
-    package.load_regression_config = load_with_profile
+    cmanconf.load_regression_config = load_with_profile
 
-    from framework.configuration import validate_profile_isolation
+    from cmanconf import validate_profile_isolation
     from suites.registry import get_default_registry
 
     validate_profile_isolation(load_with_profile(source))

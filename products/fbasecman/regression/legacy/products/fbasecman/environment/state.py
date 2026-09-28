@@ -1,7 +1,7 @@
 import yaml
 import time
 
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 from platform_regress.persistence import atomic_write_text, blocking_file_lock
 
 yaml.SafeDumper.ignore_aliases = lambda *args: True

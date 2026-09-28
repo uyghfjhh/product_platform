@@ -2,7 +2,8 @@
 
 import importlib
 
-from framework.suites import SuiteRegistry
+import cmanconf  # noqa: F401  # installs suite preflight/quiet-env defaults
+from platform_regress.suites import SuiteRegistry
 
 
 PLUGIN_MODULES = (

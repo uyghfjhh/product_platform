@@ -1,6 +1,6 @@
 """Declarative high-availability command test case metadata."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class HaCommandCase(CaseSpec):

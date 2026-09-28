@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from platform_regress.execution.shell import LoggedShellRunner
-from framework.configuration import ConfigurationError, validate_profile_isolation
+from cmanconf import ConfigurationError, validate_profile_isolation
 
 
 class DoctorResult:

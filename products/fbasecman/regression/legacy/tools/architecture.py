@@ -15,11 +15,14 @@ TRANSITIONAL_SUBPROCESS_FUNCTIONS = {
 
 
 def _python_files(root):
-    for package in ("framework", "products", "suites"):
+    for package in ("products", "suites"):
         package_root = root / package
         if package_root.exists():
             for path in package_root.rglob("*.py"):
                 yield path
+    glue = root / "cmanconf.py"
+    if glue.is_file():
+        yield glue
 
 
 def _import_names(tree):
@@ -48,10 +51,10 @@ def architecture_violations(root):
 
         for imported in _import_names(tree):
             top = imported.split(".", 1)[0]
-            if relative.startswith("framework/") and top in {
+            if relative == "cmanconf.py" and top in {
                 "products", "suites", "tests", "env", "lib"
             }:
-                violations.append("%s: framework imports forbidden %s" % (relative, imported))
+                violations.append("%s: cmanconf imports forbidden %s" % (relative, imported))
             if relative.startswith("products/") and top in {"suites", "tests", "env", "lib"}:
                 violations.append("%s: product imports forbidden %s" % (relative, imported))
             if relative.startswith("suites/") and top == "tests":

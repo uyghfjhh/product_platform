@@ -1,6 +1,6 @@
 import unittest
 
-import framework.environment.registry as registry
+import platform_regress.environment.registry as registry
 
 
 class EnvironmentRegistryTest(unittest.TestCase):

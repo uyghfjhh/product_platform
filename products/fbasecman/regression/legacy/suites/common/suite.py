@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from platform_regress.suites.runner import run_cases
 from .manifest import COMMON_CASES, case_items, find_case, validate_manifest
 from .helpers import CommonRuntime

@@ -1,6 +1,6 @@
 """Declarative outstanding queue regression case metadata."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class OutstandingCase(CaseSpec):

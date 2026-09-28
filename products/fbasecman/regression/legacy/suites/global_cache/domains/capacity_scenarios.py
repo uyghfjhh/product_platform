@@ -19,7 +19,7 @@ from suites.global_cache.drivers import (
 from suites.global_cache.manifest import BACKEND_PS_LIMIT_KEY, GLOBAL_PS_LIMIT_KEY
 from suites.global_cache.errors import GlobalCacheFailure
 from products.fbasecman.config import extract_config_lines as _extract_conf_lines
-from framework.configuration.reload import config_lines_by_keys as _conf_lines_by_keys
+from platform_regress.configuration.reload import config_lines_by_keys as _conf_lines_by_keys
 from suites.global_cache.waits import (
     wait_target_entries_released,
     wait_target_entries_unref,

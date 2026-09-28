@@ -1,6 +1,6 @@
 import unittest
 
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 
 
 class PsqlClientTest(unittest.TestCase):

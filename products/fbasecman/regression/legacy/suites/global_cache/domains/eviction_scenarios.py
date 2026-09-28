@@ -11,7 +11,7 @@ from platform_regress.execution.phased_process import PhaseAction, observe_phase
 from platform_regress.evidence.log_checks import find_forbidden_log_patterns
 from products.fbasecman.console import parse_pipe_rows
 from platform_regress.reporting import render_psql_table_from_pipe_text
-from framework.configuration.reload import (
+from platform_regress.configuration.reload import (
     config_lines_by_keys as _conf_lines_by_keys,
     install_reload_config as _install_reload_config,
     record_config_transition as _record_reload_conf_steps,

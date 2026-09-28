@@ -10,8 +10,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from framework.clients.psql import build_psql_command
-from framework.configuration import load_regression_config
+from platform_regress.clients.psql import build_psql_command
+from cmanconf import load_regression_config
 from platform_regress.execution.command import run_logged_command
 from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime

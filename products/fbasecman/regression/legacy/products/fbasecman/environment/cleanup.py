@@ -1,6 +1,6 @@
 """Ownership-checked removal of managed PostgreSQL test nodes."""
 
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 from platform_regress.execution.shell import LoggedShellRunner
 
 from .ownership import build_cleanup_plan, cleanup_script

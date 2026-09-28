@@ -5,7 +5,7 @@ import shlex
 import time
 from pathlib import Path
 
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 
 
 class FbasecmanProcessError(RuntimeError):

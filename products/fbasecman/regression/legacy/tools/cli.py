@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from framework.configuration import load_regression_config, validate_profile_isolation
+from cmanconf import load_regression_config, validate_profile_isolation
 from platform_regress.suites import failed as failed_bookkeeping
 import products.fbasecman.environment  # Registers the product environment provider.
 from suites.registry import get_default_registry

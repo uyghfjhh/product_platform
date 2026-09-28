@@ -1,6 +1,6 @@
 """Executors for Chapter 4-7: MMR and REP routing and lifecycle."""
 
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from suites.handover.runtime import HandoverFailure
 
 

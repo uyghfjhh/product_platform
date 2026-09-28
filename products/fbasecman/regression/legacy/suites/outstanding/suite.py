@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from platform_regress.suites.runner import run_cases
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess, observe_phases
 from products.fbasecman.case_runtime import FbasecmanCaseRuntime
@@ -32,7 +32,7 @@ def _parse_pg_cache(output):
     return result
 
 
-from framework.clients.psql import parse_psql_table
+from platform_regress.clients.psql import parse_psql_table
 
 
 def _parse_console_cache(output, marker):

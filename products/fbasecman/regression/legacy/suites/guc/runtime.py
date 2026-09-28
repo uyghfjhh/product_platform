@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from platform_regress.persistence.atomic import atomic_write_text
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from platform_regress.execution.command import run_logged_command
 from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
 from products.fbasecman.case_runtime import FbasecmanCaseRuntime

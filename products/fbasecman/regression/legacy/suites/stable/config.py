@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from framework.configuration import load_config
+from cmanconf import load_config
 
 
 LEGACY_FIELDS = (

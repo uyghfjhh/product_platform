@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 
 
 def prepare_jdbc(env: RegressionConfig) -> None:

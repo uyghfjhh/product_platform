@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from framework.configuration import ConfigurationError, validate_config
+from cmanconf import ConfigurationError, validate_config
 from products.fbasecman.environment.mmr import build_mmr_setup_script
 from products.fbasecman.environment.replication import build_replication_setup_script
 

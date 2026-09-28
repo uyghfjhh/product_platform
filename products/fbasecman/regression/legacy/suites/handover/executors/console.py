@@ -133,7 +133,7 @@ def execute_console_statistics(rt):
         rt.check("SHOW SERVERS 包含统计字段: %s" % col, "包含字段 %s" % col, col if col in out_after else "<缺失>", col in out_after)
 
     # 进一步解析表格，核对读写计数已真实产生
-    from framework.clients.psql import parse_psql_table
+    from platform_regress.clients.psql import parse_psql_table
     rows = parse_psql_table(out_after)
     has_write = any(int(r.get("write_request", 0) or 0) > 0 for r in rows)
     rt.check("SHOW SERVERS 记录写请求统计", "write_request > 0", "写请求已记录" if has_write else "写请求为0", has_write)

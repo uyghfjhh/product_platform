@@ -30,6 +30,15 @@ class CaseRuntimeFailure(RuntimeError):
     """用例执行失败的统一异常类型；各 suite 可子类化保留自己的名字。"""
 
 
+_LEGACY_CONFIG_LOADER = None
+
+
+def set_legacy_config_loader(loader):
+    """产品侧注入 legacy 回归配置加载器，供 CaseRuntime 兼容路径使用。"""
+    global _LEGACY_CONFIG_LOADER
+    _LEGACY_CONFIG_LOADER = loader
+
+
 @dataclass(frozen=True)
 class EnvironmentRef:
     """A pgcluster-managed environment reference supplied by the platform."""
@@ -88,8 +97,10 @@ class CaseRuntime(object):
             # 旧框架兼容路径：产品包自带的 legacy 用例直接实例化本类时，
             # 按原 CaseRuntime 语义加载回归配置和 test_context。
             import yaml
-            from framework.configuration import load_regression_config
-            self.env = load_regression_config(self.root)
+            if _LEGACY_CONFIG_LOADER is None:
+                raise self.failure_class(
+                    "legacy 配置加载器未注册（产品侧需先调用 set_legacy_config_loader）")
+            self.env = _LEGACY_CONFIG_LOADER(self.root)
             if not self.env.test_context_file.exists():
                 raise self.failure_class(
                     "missing %s, run env setup first" % self.env.test_context_file)

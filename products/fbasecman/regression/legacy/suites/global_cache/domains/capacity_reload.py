@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from platform_regress.evidence.assertions import stats_delta
-from framework.configuration.reload import has_config_value, install_reload_config, record_config_transition
+from platform_regress.configuration.reload import has_config_value, install_reload_config, record_config_transition
 from suites.global_cache.domains.capacity import (
     ps_limit_conf_keys,
     ps_limit_replacements,

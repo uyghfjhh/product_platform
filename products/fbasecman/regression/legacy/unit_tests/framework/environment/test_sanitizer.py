@@ -2,15 +2,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from framework.environment.sanitizer import preflight_health_check
+from cmanconf import preflight_health_check
 
 
 class SanitizerTest(unittest.TestCase):
     def test_heal_error_and_unavailable_health_are_failures(self):
         config = {"database": {"ports": {"mmr1_standbys": [1, 2, 3]}}}
         env = type("Env", (), {"config": config})()
-        with patch("framework.environment.sanitizer.load_regression_config", return_value=env), \
-             patch("framework.environment.sanitizer.create_environment_provider") as create:
+        with patch("cmanconf.load_regression_config", return_value=env), \
+             patch("cmanconf.create_environment_provider") as create:
             create.return_value.heal.side_effect = RuntimeError("cluster cannot start")
             result = preflight_health_check(Path("/repo"))
             self.assertEqual("FAILED", result["status"])

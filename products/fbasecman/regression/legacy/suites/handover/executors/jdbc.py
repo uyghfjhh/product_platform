@@ -1,7 +1,7 @@
 """Executors for Chapter 9: JDBC read/write splitting scenarios (42.2.7, 42.7.0, 42.7.7)."""
 
 import re
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from platform_regress.clients import jdbc as jdbc_client
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess

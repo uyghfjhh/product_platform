@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhasedProcess
 from platform_regress.evidence import (
@@ -24,7 +24,7 @@ from platform_regress.evidence.log_window import (
     remote_collect_script,
     remote_snapshot_script,
 )
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from products.fbasecman.console import ConsoleQueryError, parse_pipe_rows
 from products.fbasecman.config import (
     apply_datasource_runtime,

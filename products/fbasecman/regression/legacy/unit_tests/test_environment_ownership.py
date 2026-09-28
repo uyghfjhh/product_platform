@@ -7,7 +7,7 @@ from products.fbasecman.environment.ownership import (
     EnvironmentOwnershipError, build_cleanup_plan, cleanup_script,
 )
 from products.fbasecman.environment.cluster import ClusterManager
-from framework.configuration.loader import RegressionConfig
+from cmanconf import RegressionConfig
 from platform_regress.execution.locking import ExclusiveFileLock
 
 

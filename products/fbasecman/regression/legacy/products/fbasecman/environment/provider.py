@@ -2,7 +2,7 @@
 
 from .cluster import ClusterManager
 from .inventory import format_inventory
-from framework.environment.provider import EnvironmentProvider
+from platform_regress.environment.provider import EnvironmentProvider
 
 
 class FbasecmanEnvironmentProvider(EnvironmentProvider):

@@ -1,6 +1,6 @@
 """GUC reload scenarios built from shared config and JDBC sequence capabilities."""
 
-from framework.configuration.reload import install_reload_config, record_config_transition
+from platform_regress.configuration.reload import install_reload_config, record_config_transition
 from suites.global_cache.domains.guc_sequences import run_guc_redeploy_phase
 
 

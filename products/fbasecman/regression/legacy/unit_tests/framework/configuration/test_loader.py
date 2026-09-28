@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framework.configuration import (
+from cmanconf import (
     ConfigurationError, isolation_errors, load_config, load_regression_config,
     validate_config,
 )

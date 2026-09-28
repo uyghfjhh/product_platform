@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
-from framework.suites import (
+from platform_regress.suites import (
     CaseResult, CaseSpec, SuitePlugin, SuiteRegistry,
 )
 from suites.registry import get_default_registry
@@ -93,7 +93,7 @@ class SuiteRegistryTest(unittest.TestCase):
                              lambda root, target=None: calls.append(target) or True)
         registry = SuiteRegistry()
         registry.register(plugin)
-        with patch("framework.environment.sanitizer.preflight_health_check",
+        with patch("cmanconf.preflight_health_check",
                    return_value={"status": "FAILED", "reason": "database unavailable"}) as check:
             self.assertEqual(2, registry.run_target(ROOT_DIR, "sample.missing"))
             check.assert_not_called()

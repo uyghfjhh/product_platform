@@ -16,8 +16,8 @@ from pathlib import Path
 
 import yaml
 
-from framework.clients.psql import build_psql_command, parse_psql_table, assert_table_rows
-from framework.configuration import load_regression_config
+from platform_regress.clients.psql import build_psql_command, parse_psql_table, assert_table_rows
+from cmanconf import load_regression_config
 from platform_regress.evidence.log_window import (
     LocalLogWindow,
     parse_remote_log_snapshot,

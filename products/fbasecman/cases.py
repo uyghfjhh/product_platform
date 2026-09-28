@@ -43,19 +43,17 @@ def _ensure_imports(source):
         while value in sys.path:
             sys.path.remove(value)
         sys.path.insert(0, value)
-    import framework.configuration as package
-    import framework.configuration.loader as loader
+    import cmanconf
 
     if _LOADER_PROFILED:
         return
-    original = loader.load_regression_config
+    original = cmanconf.load_regression_config
 
     def load_with_profile(root_dir, extra_configs=None, validate=True):
         extras = list(extra_configs or []) + list(_EXTRA_CONFIGS)
         return original(root_dir, extra_configs=extras, validate=validate)
 
-    loader.load_regression_config = load_with_profile
-    package.load_regression_config = load_with_profile
+    cmanconf.load_regression_config = load_with_profile
     _LOADER_PROFILED = True
 
 
@@ -108,7 +106,7 @@ class LegacyCmanCase(LegacySuiteCase):
         spec = next((item for item in plugin.get_cases() if item.name == name), None)
         if spec is None:
             raise Blocked("套件 %s 没有用例 %s" % (suite_id, name))
-        import framework.configuration as configuration
+        import cmanconf as configuration
         environment_cfg = configuration.load_regression_config(source)
         configuration.validate_profile_isolation(environment_cfg)
         suite_module = importlib.import_module("suites.%s.suite" % suite_id)

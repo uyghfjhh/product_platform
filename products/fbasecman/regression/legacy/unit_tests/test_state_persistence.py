@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import yaml
 
 from products.fbasecman.environment.state import EnvState, StateStore as EnvStateStore
-from framework.configuration.loader import RegressionConfig
+from cmanconf import RegressionConfig
 from suites.stable.state import StateStore as StableStateStore
 
 

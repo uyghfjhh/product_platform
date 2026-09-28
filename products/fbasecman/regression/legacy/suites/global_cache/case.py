@@ -1,6 +1,6 @@
 """Global-cache case declaration."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class GlobalCacheCase(CaseSpec):

@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from platform_regress.execution.daemon import ManagedDaemon, ManagedDaemonError
 
 FbasecmanProcessError = ManagedDaemonError

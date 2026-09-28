@@ -17,8 +17,8 @@ from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.background import capture_command, start_background
 from platform_regress.execution.locking import ExclusiveFileLock
 from platform_regress.execution.shell import LoggedShellRunner
-from framework.clients.psql import build_psql_command
-from framework.configuration import validate_profile_isolation
+from platform_regress.clients.psql import build_psql_command
+from cmanconf import validate_profile_isolation
 from products.fbasecman.process import FbasecmanProcess
 from suites.stable.config import StableConfig, render_fbasecman_config
 from suites.stable.manifest import WORKLOADS, find_workload

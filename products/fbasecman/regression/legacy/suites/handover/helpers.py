@@ -2,7 +2,7 @@
 
 import re
 import time
-from framework.clients.psql import parse_psql_table, build_psql_command
+from platform_regress.clients.psql import parse_psql_table, build_psql_command
 from platform_regress.execution.shell import quote_arguments
 
 

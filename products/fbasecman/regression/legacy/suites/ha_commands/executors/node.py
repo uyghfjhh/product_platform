@@ -9,7 +9,7 @@ import sys
 import shlex
 from pathlib import Path
 
-from framework.configuration import load_regression_config
+from cmanconf import load_regression_config
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
 from suites.ha_commands.helpers import *
 

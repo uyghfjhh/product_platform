@@ -1,6 +1,6 @@
 """Declarative High Availability test case metadata (Chapter 4)."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class HighAvailabilityCase(CaseSpec):

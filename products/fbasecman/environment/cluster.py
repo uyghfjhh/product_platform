@@ -1,7 +1,7 @@
 from functools import wraps
 import os
 
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 from platform_regress.execution.locking import ExclusiveFileLock
 
 from .cleanup import clean_environment
@@ -16,7 +16,7 @@ from .postgres import restart_environment_postgres, start_environment_postgres, 
 from platform_regress.execution.shell import LoggedShellRunner
 from .state import EnvState, StateStore
 from .ownership import authorize_environment, build_cleanup_plan
-from framework.configuration import validate_profile_isolation
+from cmanconf import validate_profile_isolation
 
 
 class Step:

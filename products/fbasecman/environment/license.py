@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 
 
 def check_license_dir(env: RegressionConfig) -> Path:

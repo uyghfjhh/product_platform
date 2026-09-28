@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framework.configuration.reload import (
+from platform_regress.configuration.reload import (
     ReloadConfigError,
     config_lines_by_keys,
     has_config_value,

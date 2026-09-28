@@ -1,13 +1,30 @@
-"""Typed configuration checks and cross-profile isolation rules."""
+"""fbasecman regression profile machinery (product-private, not platform).
+
+Consolidates the former ``framework.configuration`` / ``framework.environment``
+glue: legacy YAML mapping, typed config validation, stable/regression
+isolation checks, the deployment preflight hook, and suite-registry defaults.
+Generic primitives live in ``platform_regress``; this module only carries
+fbasecman-specific semantics.
+"""
 
 from pathlib import Path
+from typing import Any, Dict
 
+import platform_regress.configuration.loader as _platform_loader
+import platform_regress.environment.sanitizer as _sanitizer
+import platform_regress.suites.registry as _suite_registry
+from platform_regress.configuration.loader import (  # noqa: F401
+    RegressionConfig, _deep_merge, _parse_legacy_config, _strip_legacy_value,
+)
 from platform_regress.configuration.validation import (  # noqa: F401
     ConfigurationError,
     port_value as _port,
     reject_unknown as _reject_unknown,
     require_mapping as _require_mapping,
     require_text as _require_text,
+)
+from platform_regress.environment.registry import (  # noqa: F401
+    create_environment_provider, register_environment_provider,
 )
 
 
@@ -135,7 +152,9 @@ def validate_config(config, profile):
             "stable.reload_status_toggle",
         )
         if "enabled" in reload_toggle and not isinstance(reload_toggle["enabled"], bool):
-            raise ConfigurationError("stable.reload_status_toggle.enabled must be a boolean")
+            raise ConfigurationError(
+                "stable.reload_status_toggle.enabled must be a boolean"
+            )
         if "datasource" in reload_toggle and not isinstance(reload_toggle["datasource"], str):
             raise ConfigurationError("stable.reload_status_toggle.datasource must be a string")
         if "interval_seconds" in reload_toggle:
@@ -210,3 +229,112 @@ def isolation_errors(root, regress, stable):
             regress_env, stable_env,
         ))
     return errors
+
+
+def _legacy_to_regress_config(values):
+    if not values:
+        return {}
+
+    def int_value(name):
+        return int(values[name]) if name in values and str(values[name]).isdigit() else None
+
+    mapped = {"fbasecman": {}, "database": {"ports": {}}, "local": {}}
+    key_map = {
+        ("fbasecman", "fbasecman_bin"): "FBASECMAN_BIN",
+        ("fbasecman", "write_port"): "FBASECMAN_PORT",
+        ("fbasecman", "read_port"): "OTHER_PORT",
+        ("fbasecman", "log_level"): "TEST_LOG_LEVEL",
+        ("fbasecman", "license_dir"): "LICENSE_DIR",
+        ("database", "mmr_host"): "MMR_HOST",
+        ("database", "rep_host"): "REP_HOST",
+        ("database", "mmr_pg_user"): "MMR_PG_USER",
+        ("database", "rep_pg_user"): "REP_PG_USER",
+        ("database", "mmr_postgres_dir"): "MMR_POSTGRES_DIR",
+        ("database", "rep_postgres_dir"): "REP_POSTGRES_DIR",
+        ("local", "postgres_dir"): "LOCAL_POSTGRES_DIR",
+        ("local", "jdbc_lib_dir"): "LIB_JDBC",
+    }
+    for (section, key), legacy_key in key_map.items():
+        if legacy_key in values:
+            mapped[section][key] = values[legacy_key]
+
+    port_map = {
+        "mmr1": "MMR1_PORT", "mmr2": "MMR2_PORT",
+        "mmr1_standby1": "MMR1_S1_PORT", "mmr1_standby2": "MMR1_S2_PORT",
+        "mmr1_standby3": "MMR1_S3_PORT", "mmr2_standby1": "MMR2_S1_PORT",
+        "mmr2_standby2": "MMR2_S2_PORT", "mmr2_standby3": "MMR2_S3_PORT",
+        "rep_primary": "REP_PORT", "rep_standby1": "REP_S1_PORT",
+        "rep_standby2": "REP_S2_PORT",
+    }
+    for key, legacy_key in port_map.items():
+        value = int_value(legacy_key)
+        if value is not None:
+            mapped["database"]["ports"][key] = value
+    if "JDBC_VERSIONS" in values:
+        mapped["local"]["jdbc_versions"] = values["JDBC_VERSIONS"]
+    return mapped
+
+
+def load_config(root_dir, config_name, local_config_name=None, extra_configs=None,
+                validate=False, profile=None):
+    return _platform_loader.load_config(
+        root_dir, config_name, local_config_name=local_config_name,
+        extra_configs=extra_configs, validate=validate, profile=profile,
+        validator=validate_config, legacy_mapper=_legacy_to_regress_config,
+    )
+
+
+def load_regression_config(root_dir, extra_configs=None, validate=True):
+    return load_config(
+        root_dir, "regress.yaml", extra_configs=extra_configs,
+        validate=validate, profile="regression",
+    )
+
+
+def validate_profile_isolation(environment):
+    """Ensure stable and regression cannot address the same persistent resources."""
+    return _platform_loader.validate_profile_isolation(
+        environment, loader=load_config, isolation_check=isolation_errors,
+    )
+
+
+def _health_errors(health, config):
+    """Compare the baseline indicators used by the deployment health gate."""
+    ports = config["database"]["ports"]
+    expected_streaming = len(ports.get("mmr1_standbys", (
+        ports.get("mmr1_standby1"),
+        ports.get("mmr1_standby2"),
+        ports.get("mmr1_standby3"),
+    )))
+    expected = {
+        "mmr_non_active": {"0"},
+        "testdb_node1": {"ACTIVE"},
+        "testdb_node2": {"JOIN_START", "ACTIVE"},
+        "mmr_streaming": {str(expected_streaming)},
+    }
+    return [
+        "%s=%s (expected %s)" % (key, health.get(key, "<missing>"), "/".join(sorted(values)))
+        for key, values in expected.items()
+        if str(health.get(key, "<missing>")) not in values
+    ]
+
+
+def preflight_health_check(root_dir: Path, auto_heal: bool = True) -> Dict[str, Any]:
+    """Check the test environment and report failure without hiding its cause."""
+    return _sanitizer.preflight_health_check(
+        root_dir, "fbasecman", load_regression_config,
+        expected_errors=_health_errors, auto_heal=auto_heal,
+        provider_factory=create_environment_provider,
+    )
+
+
+def _preflight(root_dir):
+    return preflight_health_check(root_dir, auto_heal=True)
+
+
+_suite_registry.set_default_preflight_check(_preflight)
+_suite_registry.set_default_quiet_env_var("FBASECMAN_QUIET_ENV")
+
+import platform_regress.runtime as _runtime  # noqa: E402
+
+_runtime.set_legacy_config_loader(load_regression_config)

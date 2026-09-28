@@ -1,6 +1,6 @@
 """Declarative common regression test case metadata."""
 
-from framework.suites import CaseSpec
+from platform_regress.suites import CaseSpec
 
 
 class CommonCase(CaseSpec):

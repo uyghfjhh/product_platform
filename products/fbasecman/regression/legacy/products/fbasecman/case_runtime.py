@@ -21,7 +21,7 @@ import shlex
 import time
 from pathlib import Path
 
-from framework.clients.psql import build_psql_command
+from platform_regress.clients.psql import build_psql_command
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.ports import free_port_pair, port_is_free
 from platform_regress.reporting.model import ReportStep
@@ -585,7 +585,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
 
     def assert_table(self, sql, title, expected_rows, key="node_name", retry_timeout=15):
         """Execute a console query and assert table rows with structured diffs."""
-        from framework.clients.psql import assert_table_rows
+        from platform_regress.clients.psql import assert_table_rows
 
         expected_desc = "; ".join(
             "%s [%s]" % (k, ", ".join("%s=%s" % (col, val) for col, val in v.items()))

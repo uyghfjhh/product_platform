@@ -1,4 +1,4 @@
-from framework.configuration import RegressionConfig
+from cmanconf import RegressionConfig
 
 from platform_regress.execution.shell import LoggedShellRunner, ShellCommandError
 
