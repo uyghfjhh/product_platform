@@ -865,3 +865,255 @@ class OutstandingConsistencyCase:
         if "OUTSTANDING_TEST=OK" not in output:
             raise AssertionError("probe output did not report OUTSTANDING_TEST=OK")
         return True
+
+
+
+# ---------------------------------------------------------------------------
+# rw_toggle 读写路由（topology/route_mode/driver/scenario 参数化，14 条共用）
+# ---------------------------------------------------------------------------
+
+_RW_READ_SQL = (
+    "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; "
+    "SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery();")
+_RW_WRITE_SQL = (
+    "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; BEGIN; "
+    "CREATE TEMP TABLE rw_toggle_probe(id integer); "
+    "INSERT INTO rw_toggle_probe VALUES (1); "
+    "SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(); ROLLBACK;")
+
+
+def _rw_group_rows(output, group):
+    """Parse the psql table returned by SHOW GROUP_ROUTING."""
+    lines = [line.strip() for line in output.splitlines() if "|" in line]
+    header_index = next(
+        (index for index, line in enumerate(lines)
+         if line.startswith("group_name") and "group_mode" in line), None)
+    if header_index is None:
+        return []
+    headers = [item.strip() for item in lines[header_index].split("|")]
+    rows = []
+    for line in lines[header_index + 1:]:
+        if set(line.replace("|", "").replace("-", "").strip()) == set():
+            continue
+        values = [item.strip() for item in line.split("|")]
+        if len(values) != len(headers) or values[0] != group:
+            continue
+        rows.append(dict(zip(headers, values)))
+    return rows
+
+
+def _free_port(exclude=()):
+    while True:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        if port not in exclude:
+            return port
+
+
+class RwToggleCase:
+    """rw_toggle.<name> 的原生宿主：读写分离路由断言与产品日志核对。"""
+
+    def __init__(self, topology, route_mode, driver, scenario):
+        self.topology = topology
+        self.route_mode = route_mode
+        self.driver = driver
+        self.scenario = scenario
+
+    @property
+    def group(self):
+        return "mmr_group" if self.topology == "mmr" else "rep_group"
+
+    @property
+    def title(self):
+        return "%s %s/%s" % (self.topology.upper(), self.route_mode.upper(),
+                             self.driver.upper())
+
+    def _backend_ports(self, context):
+        nodes = context.environment.get("nodes") or {}
+        extra = context.environment.get("extra_nodes") or {}
+        def port_of(name, source):
+            node = source.get(name)
+            return str(node["port"]) if node else None
+        mmr1 = port_of("mmr1", nodes)
+        mmr2 = port_of("mmr2", nodes)
+        pg_3 = port_of("pg_3", extra)
+        pg_4 = port_of("pg_4", extra)
+        if self.topology == "mmr":
+            return {"write": mmr2,
+                    "read": tuple(p for p in (mmr1, pg_3, mmr2, pg_4) if p)}
+        return {"write": mmr1, "read": tuple(p for p in (mmr1, pg_3) if p)}
+
+    def _check(self, context, key, title, expected, actual, passed):
+        context.step(key, title, status="PASS" if passed else "FAIL",
+                     details={"expected": expected, "actual": actual})
+        if not passed:
+            raise AssertionError("%s: expected %s, actual %s" % (title, expected, actual))
+
+    def run(self, context: CaseContext) -> bool:
+        group = self.group
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        read_port = _free_port({port, port + 2}) if self.route_mode == "port" else None
+        text = config.read_text(encoding="utf-8")
+        text = text.replace(
+            'group_names "mmr_group,rep_group,balance_group,single_group"',
+            'group_names "%s"' % group, 1)
+        text = text.replace('    rw_split_method "none"',
+                            '    rw_split_method "%s"' % self.route_mode, 1)
+        if self.route_mode == "port":
+            text = text.replace('ports "%s"' % port,
+                                'ports "%s,%s"' % (port, read_port), 1)
+            marker = 'group "%s" {\n' % group
+            text = text.replace(marker, marker + '    write_port %s\n' % port, 1)
+        config.write_text(text, encoding="utf-8")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port,
+                              timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        if self.topology == "mmr":
+            _wait_mmr_routing(context, port, psql)
+
+        expected_mode = "mmr" if self.topology == "mmr" else "replication"
+        expected_role = "write-leader" if self.topology == "mmr" else "primary"
+        output = _console_expect(
+            context, psql, port, "SHOW GROUP_ROUTING %s;" % group,
+            "route-loaded", "%s：检查路由配置已加载" % self.title,
+            "%s group_mode=%s，且存在 active %s 候选" % (group, expected_mode, expected_role),
+            lambda out: (group in out and expected_mode in out
+                         and "active" in out and expected_role in out))
+        rows = _rw_group_rows(output, group)
+        fields = ("group_name", "group_mode", "cluster_name", "candidate_node",
+                  "effective_grouprole", "effective_state", "is_write_target",
+                  "route_status")
+        actual_rows = ["; ".join("%s=%s" % (field, row.get(field, "<missing>"))
+                                 for field in fields) for row in rows]
+        all_common = bool(rows) and all(
+            row.get("group_mode") == expected_mode
+            and row.get("effective_state") == "active"
+            and row.get("route_status") == "AVAILABLE" for row in rows)
+        role_rows = [row for row in rows
+                     if row.get("effective_grouprole") == expected_role
+                     and row.get("is_write_target") == "true"]
+        self._check(
+            context, "route-fields",
+            "%s：逐字段校验 SHOW GROUP_ROUTING" % self.title,
+            "每行 group_name=%s、group_mode=%s、effective_state=active、"
+            "route_status=AVAILABLE；至少一行 effective_grouprole=%s 且 "
+            "is_write_target=true" % (group, expected_mode, expected_role),
+            "返回行数=%d\n%s" % (len(rows), "\n".join(actual_rows) or "<no parsed rows>"),
+            all_common and bool(role_rows))
+
+        if self.driver == "jdbc":
+            self._run_jdbc(context, psql, port, read_port)
+        else:
+            self._run_psql(context, psql, port, read_port)
+        self._check_product_log(context, config)
+        return True
+
+    def _run_psql(self, context, psql, port, read_port):
+        group = self.group
+        backend = self._backend_ports(context)
+
+        def run_read():
+            target_port = read_port if self.route_mode == "port" else port
+            out = _expect(
+                context, "read-query", "%s：执行只读事务" % self.title,
+                "只读事务返回后端地址、端口和 recovery 状态",
+                lambda text: bool(re.search(r"\|\s*\d{4,5}\s*\|", text)),
+                lambda: _business_query(context, psql, target_port,
+                                        _RW_READ_SQL, group))
+            observed = re.findall(r"\|\s*(\d{4,5})\s*\|", out)
+            self._check(context, "read-backend",
+                        "%s：只读请求命中合法读候选" % self.title,
+                        "后端端口属于 %s" % ",".join(backend["read"]),
+                        "观测后端端口=%s\n%s" % (observed or ["<none>"], out.strip()),
+                        any(p in observed for p in backend["read"]))
+
+        def run_write():
+            out = _expect(
+                context, "write-query", "%s：执行写事务" % self.title,
+                "写事务创建临时表并返回后端地址、端口",
+                lambda text: bool(re.search(r"\|\s*\d{4,5}\s*\|", text)),
+                lambda: _business_query(context, psql, port,
+                                        _RW_WRITE_SQL, group))
+            observed = re.findall(r"\|\s*(\d{4,5})\s*\|", out)
+            self._check(context, "write-backend",
+                        "%s：写请求命中 write-leader" % self.title,
+                        "后端端口=%s" % backend["write"],
+                        "观测后端端口=%s\n%s" % (observed or ["<none>"], out.strip()),
+                        backend["write"] in observed)
+
+        if self.scenario == "read":
+            run_read()
+        elif self.scenario == "write":
+            run_write()
+        elif self.scenario == "switch":
+            run_write(); run_read(); run_write()
+        else:
+            raise AssertionError("unsupported psql scenario: %s" % self.scenario)
+
+    def _run_jdbc(self, context, psql, port, read_port):
+        group = self.group
+        asset = (Path(__file__).resolve().parent / "regression" / "legacy"
+                 / "suites" / "rw_toggle" / "assets" / "RwToggleJdbc.java")
+        jar = Path(context.environment.get("jdbc_jar", ""))
+        if not asset.is_file() or not jar.is_file():
+            raise Blocked("缺少 rw_toggle JDBC 资产或驱动")
+        driver_dir = context.output_dir / "driver"
+        driver_dir.mkdir(exist_ok=True)
+        import shutil
+        target = driver_dir / asset.name
+        shutil.copyfile(str(asset), str(target))
+        context.command(jdbc_client.javac_argv(jar, target, dest_dir=driver_dir),
+                        cwd=driver_dir, timeout_seconds=60)
+        url = jdbc_client.build_url("127.0.0.1", port, group,
+                                    {"preferQueryMode": "simple"})
+        if self.route_mode == "port":
+            read_url = jdbc_client.build_url("127.0.0.1", read_port, group,
+                                             {"preferQueryMode": "simple"})
+            args = jdbc_client.java_argv(
+                jdbc_client.classpath(driver_dir, jar),
+                "RwToggleJdbc", read_url, "postgres", "", "port", url)
+        else:
+            args = jdbc_client.java_argv(
+                jdbc_client.classpath(driver_dir, jar),
+                "RwToggleJdbc", url, "postgres", "", self.route_mode)
+        result = context.command(args, cwd=driver_dir, timeout_seconds=120)
+        output = (result.stdout or "").strip()
+        context.step("jdbc-run", "执行 rw_toggle JDBC 读写时序",
+                     status="PASS" if result.returncode == 0 else "FAIL",
+                     details={"expected": "JDBC 程序返回读写后端端口并退出成功",
+                              "actual": output or "<empty>"})
+        if result.returncode != 0:
+            raise AssertionError("JDBC driver failed rc=%s" % result.returncode)
+        backend = self._backend_ports(context)
+        read_ok = any("READ_PORT=%s" % p in output for p in backend["read"])
+        write_ok = "WRITE_PORT=%s" % backend["write"] in output
+        reuse_ok = "READ_AGAIN=" in output and "WRITE_AGAIN=" in output
+        heartbeat_ok = "HEARTBEAT=10086" in output
+        self._check(context, "jdbc-verdict", "验证 JDBC 读写后端路由和连接复用",
+                    "READ/WRITE 命中目标，读写事务各自再次执行成功，并完成 heartbeat",
+                    output, read_ok and write_ok and reuse_ok and heartbeat_ok)
+
+    def _check_product_log(self, context, config):
+        log = config.with_suffix(".log")
+        text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+        group = self.group
+        allowed = ("pg_1", "pg_2", "pg_3", "pg_4") \
+            if self.topology == "mmr" else ("pg_1", "pg_3")
+        route_lines = [line.strip() for line in text.splitlines()
+                       if "route(" in line and (".%s.postgres)" % group) in line]
+        route_ok = any("route(%s.%s.postgres)" % (node, group) in line
+                       for node in allowed for line in route_lines)
+        level_lines = [line.strip() for line in text.splitlines()
+                       if re.search(r"\b(error|fatal|panic|crash)\b", line, re.IGNORECASE)]
+        if log.is_file():
+            context.attach_file("fbasecman.log", log)
+        self._check(context, "product-log", "检查 fbasecman.log 的实际路由和负向日志",
+                    "存在目标 group 的实际 route(...) 日志，且无 error/fatal/panic/crash",
+                    "路由日志行:\n%s\n负向日志行:\n%s" % (
+                        "\n".join(route_lines[-8:]) if route_lines else "<none>",
+                        "\n".join(level_lines[-8:]) if level_lines else "<none>"),
+                    bool(route_lines) and route_ok and not level_lines)

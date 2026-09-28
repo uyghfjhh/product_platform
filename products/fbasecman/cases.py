@@ -15,7 +15,7 @@ from platform_regress import Blocked
 from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        ReloadDisableMonitorRouteLossCase,
-                                       OutstandingConsistencyCase,
+                                       OutstandingConsistencyCase, RwToggleCase,
                                        SqlParseExtendedProtocolCase,
                                        JdbcConsoleHaCommandsCase)
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
@@ -154,6 +154,25 @@ NATIVE_CASES = {
             ("parse_failure_single_consistency", "parse_failure_single"),
             ("parse_failure_shared_sync_consistency", "parse_failure_shared_sync"),
             ("execute_failure_shared_sync_consistency", "execute_failure_shared_sync"),
+        )
+    },
+    **{
+        "rw_toggle." + name: RwToggleCase(topology, route_mode, driver, scenario)
+        for name, topology, route_mode, driver, scenario in (
+            ("mmr_hint_switch", "mmr", "hint", "psql", "switch"),
+            ("mmr_hint_write", "mmr", "hint", "psql", "write"),
+            ("mmr_hint_read", "mmr", "hint", "psql", "read"),
+            ("mmr_hint_jdbc", "mmr", "hint", "jdbc", "jdbc"),
+            ("rep_hint_switch", "replication", "hint", "psql", "switch"),
+            ("rep_hint_read", "replication", "hint", "psql", "read"),
+            ("rep_hint_write", "replication", "hint", "psql", "write"),
+            ("rep_hint_jdbc", "replication", "hint", "jdbc", "jdbc"),
+            ("rep_read_port", "replication", "port", "psql", "read"),
+            ("rep_write_port", "replication", "port", "psql", "write"),
+            ("rep_port_jdbc", "replication", "port", "jdbc", "jdbc"),
+            ("mmr_read_port", "mmr", "port", "psql", "read"),
+            ("mmr_write_port", "mmr", "port", "psql", "write"),
+            ("mmr_port_jdbc", "mmr", "port", "jdbc", "jdbc"),
         )
     },
 }
