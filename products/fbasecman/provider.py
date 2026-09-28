@@ -39,7 +39,7 @@ def native_case_context(settings, environment):
                  if node.get("role") == "primary"}
     if "mmr1" not in primaries or "mmr2" not in primaries:
         raise RuntimeError("fbasecman 原生用例需要 mmr1/mmr2 两个主节点")
-    runtime_file = settings.fbasecman_regress_root / "regress.yaml"
+    runtime_file = settings.product_regress_root("fbasecman") / "regress.yaml"
     runtime = yaml.safe_load(runtime_file.read_text(encoding="utf-8"))
     fbasecman = runtime.get("fbasecman", {})
     listener = socket.socket()
@@ -75,11 +75,11 @@ def native_case_context(settings, environment):
     # JDBC assets are keyed per case; inject both unconditionally so suite and
     # failed runs carry them for any native member that needs one.
     context.update({
-        "sql_parse_java_asset": str(settings.fbasecman_regress_root /
+        "sql_parse_java_asset": str(settings.product_regress_root("fbasecman") /
             "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
-        "ha_console_java_asset": str(settings.fbasecman_regress_root /
+        "ha_console_java_asset": str(settings.product_regress_root("fbasecman") /
             "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
-        "jdbc_jar": str(settings.fbasecman_regress_root /
+        "jdbc_jar": str(settings.product_regress_root("fbasecman") /
             "lib_jdbc/postgresql-42.7.7.jar"),
     })
     return context
@@ -207,25 +207,15 @@ class FbasecmanProvider:
             profile, override = profile_paths(settings, environment["id"])
             if not profile.is_file() or not override.is_file():
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
-            native_target = target in {
-                "sql_parse.savepoint_recovery_after_local_25p02",
-                "sql_parse.heartbeat_bind_normal",
-                "sql_parse.heartbeat_bind_invalid",
-                "sql_parse.heartbeat_bind_unsupported",
-                "ha_commands.sql_parse_extended_protocol",
-                "ha_commands.jdbc_console_ha_commands",
-                "ha_commands.set_node_write_idempotent",
-                "ha_commands.set_node_promoted_idempotent",
-                "ha_commands.set_cluster_active_idempotent",
-                "ha_commands.set_node_weight_idempotent",
-            }
+            from products.fbasecman.cases import NATIVE_CASES
+            native_target = target in NATIVE_CASES
             legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not legacy_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
                 output = settings.environment_dir / "regression" / environment["id"] / target
                 case_context = {
-                    "legacy_source": str(settings.fbasecman_regress_root),
+                    "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
@@ -241,7 +231,7 @@ class FbasecmanProvider:
             if target not in {"all", "failed"} and "." not in target:
                 output = settings.environment_dir / "regression" / environment["id"] / target
                 case_context = {
-                    "legacy_source": str(settings.fbasecman_regress_root),
+                    "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
@@ -255,7 +245,7 @@ class FbasecmanProvider:
             if target == "failed":
                 output = settings.environment_dir / "regression" / environment["id"]
                 case_context = {
-                    "legacy_source": str(settings.fbasecman_regress_root),
+                    "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
@@ -271,7 +261,7 @@ class FbasecmanProvider:
             # what lets suite-level coverage reach all 212 catalog targets.
             output = settings.environment_dir / "regression" / environment["id"]
             case_context = {
-                "legacy_source": str(settings.fbasecman_regress_root),
+                "legacy_source": str(settings.product_regress_root("fbasecman")),
                 "legacy_override": str(override),
                 "legacy_report_root": str(legacy_root(settings, environment["id"])),
             }
@@ -295,7 +285,7 @@ class FbasecmanProvider:
             command = [str(script), "run"]
             if target != "all":
                 command.append(target)
-            return CommandSpec(command, settings.fbasecman_regress_root)
+            return CommandSpec(command, settings.product_regress_root("fbasecman"))
         raise ValueError("fbasecman 未注册操作: %s" % action)
 
 

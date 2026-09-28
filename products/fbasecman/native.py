@@ -110,6 +110,59 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
     return port
 
 
+def _console_query(context: CaseContext, psql: str, port: int, sql: str):
+    """console 管理面 psql：admin/console，合并 stderr（对齐 run_logged_command）。"""
+    return context.command(
+        [psql, "-h", "127.0.0.1", "-p", str(port), "-U", "admin",
+         "-d", "console", "-c", sql],
+        cwd=context.output_dir, timeout_seconds=15, merge_stderr=True)
+
+
+def _business_query(context: CaseContext, psql: str, port: int, sql: str,
+                    group: str = "mmr_group"):
+    """业务面 psql：postgres/<group>，走代理业务路由。"""
+    return context.command(
+        [psql, "-h", "127.0.0.1", "-p", str(port), "-U", "postgres",
+         "-d", group, "-c", sql],
+        cwd=context.output_dir, timeout_seconds=15, merge_stderr=True)
+
+
+def _expect(context: CaseContext, key: str, title: str, expected: str,
+            predicate, query, retry_seconds: float = 0.0) -> str:
+    """运行一条查询并按谓词断言，可选收敛重试窗口（对齐旧 runtime 语义）。"""
+    deadline = time.monotonic() + retry_seconds
+    started = time.monotonic()
+    attempt = 0
+    output = ""
+    passed = False
+    rc = -1
+    while True:
+        attempt += 1
+        result = query()
+        output = (result.stdout or "").rstrip() or "<empty>"
+        rc = result.returncode
+        passed = rc == 0 and predicate(output)
+        if passed or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    actual = "returncode=%s attempts=%s elapsed=%.2fs" % (
+        rc, attempt, time.monotonic() - started)
+    context.step(key, title, status="PASS" if passed else "FAIL",
+                 details={"expected": expected, "actual": actual,
+                          "output": output})
+    if not passed:
+        raise AssertionError("%s: %s" % (title, actual))
+    return output
+
+
+def _console_expect(context: CaseContext, psql: str, port: int, sql: str,
+                    key: str, title: str, expected: str, predicate) -> str:
+    # 旧 rt.psql 对 SHOW 命令给 30s 收敛窗口
+    retry = 30.0 if sql.lstrip().upper().startswith("SHOW ") else 0.0
+    return _expect(context, key, title, expected, predicate,
+                   lambda: _console_query(context, psql, port, sql), retry)
+
+
 def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
                       timeout_seconds: float = 30.0) -> str:
     """等 group_checker 收敛：SHOW GROUP_ROUTING mmr_group 不再出现 UNKNOWN。
@@ -560,4 +613,74 @@ class SavepointRecoveryCase:
                                   "expected": "不得出现 after internal rollback"})
             if internal_rollback:
                 raise AssertionError("代理在保存点恢复期间执行了内部完整 ROLLBACK")
+        return True
+
+
+class ReloadDisableMonitorRouteLossCase:
+    """tmp.reload_disable_monitor_route_loss 的原生宿主。
+
+    缺陷复现用例：reload 关闭监控（monitor_enabled no + check "none"）后
+    业务路由应继承 reload 前的有效投影。当前产品行为存在缺陷，
+    步骤 5 的业务查询预期失败——该 FAIL 判定与历史逐字同因。
+    """
+
+    def run(self, context: CaseContext) -> bool:
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port,
+                              timeout_seconds=30)
+        _wait_mmr_routing(context, port, psql)
+
+        _console_expect(
+            context, psql, port, "SHOW CLUSTERS;",
+            "step-1-1", "步骤 1.1：检查控制台状态确认拓扑正常",
+            "两个 cluster 的 topology_state 均为 VALID，monitor_enabled 为 true",
+            lambda output: "VALID" in output and (
+                "true" in output.lower() or "| t" in output.lower()
+                or "t |" in output.lower()))
+
+        _expect(
+            context, "step-1-2", "步骤 1.2：验证业务连接正常",
+            "正常返回 1，路由通畅", lambda output: "1" in output,
+            lambda: _business_query(context, psql, port, "SELECT 1;"))
+
+        conf_text = config.read_text(encoding="utf-8")
+        conf_text = re.sub(r'monitor_enabled\s+yes', 'monitor_enabled no', conf_text)
+        conf_text = re.sub(r'check\s+"auto"', 'check "none"', conf_text)
+        config.write_text(conf_text, encoding="utf-8")
+        context.step(
+            "step-2", "步骤 2：修改配置文件 fbasecman.conf",
+            details={"expected": '修改 monitor_enabled no 与 check "none"',
+                     "actual": "配置文件已更新为关闭监控并设置 check none"})
+
+        _console_expect(
+            context, psql, port, "RELOAD;",
+            "step-3", "步骤 3：向控制台发送 reload 命令热加载配置",
+            "返回 RELOAD",
+            lambda output: "RELOAD" in output and "ERROR" not in output)
+
+        _console_expect(
+            context, psql, port, "SHOW CLUSTERS;",
+            "step-4-1", "步骤 4.1：查看集群信息确认 monitor_enabled 变更",
+            "monitor_enabled 变为 false，topology_state 依然保持 VALID",
+            lambda output: (
+                "false" in output.lower() or "| f" in output.lower()
+                or "f |" in output.lower()) and "VALID" in output)
+
+        _console_expect(
+            context, psql, port, "SHOW ENDPOINT_MONITOR;",
+            "step-4-2", "步骤 4.2：查看端点状态",
+            "端点的 probe_state 变为 PENDING，topology_state 变为 UNINITIALIZED",
+            lambda output: "PENDING" in output or "UNINITIALIZED" in output)
+
+        # 缺陷复现点：热重载关闭监控后业务路由丢失
+        # （route for '...' is not found），历史判定为 FAIL。
+        _expect(
+            context, "step-5",
+            "步骤 5：发起业务查询（预期继承 reload 前有效业务路由，正常返回 1）",
+            "正常返回 1，业务路由维持通畅",
+            lambda output: "1" in output and "ERROR" not in output,
+            lambda: _business_query(context, psql, port, "SELECT 1;"))
         return True

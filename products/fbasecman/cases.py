@@ -14,8 +14,9 @@ from pathlib import Path
 from platform_regress import Blocked
 from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
-                                        SqlParseExtendedProtocolCase,
-                                        JdbcConsoleHaCommandsCase)
+                                       ReloadDisableMonitorRouteLossCase,
+                                       SqlParseExtendedProtocolCase,
+                                       JdbcConsoleHaCommandsCase)
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
                                         SetNodeWeightIdempotentCase)
 
@@ -137,6 +138,7 @@ NATIVE_CASES = {
         ("mmr_group", "pg_cluster_1", "pg_1"), "核对 SET CLUSTER ACTIVE 幂等命令",
         initial_query="SHOW CLUSTERS;"),
     "ha_commands.set_node_weight_idempotent": SetNodeWeightIdempotentCase(),
+    "tmp.reload_disable_monitor_route_loss": ReloadDisableMonitorRouteLossCase(),
 }
 
 # Suite manifests are static: they import cleanly before any environment
