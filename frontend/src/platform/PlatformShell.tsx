@@ -1,28 +1,41 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  App as AntApp, Button, Drawer, Layout, Menu, Select, Space, Tag, Typography,
+  App as AntApp, Button, Drawer, Layout, Menu, Space, Tag, Typography,
   type MenuProps,
 } from 'antd';
 import {
-  FileProtectOutlined, MenuOutlined, PlayCircleOutlined, SettingOutlined,
-  ToolOutlined,
+  FileProtectOutlined, KeyOutlined, MenuOutlined, PlayCircleOutlined,
+  SettingOutlined, ToolOutlined,
 } from '@ant-design/icons';
 
 import { api, type Environment, type Product, type RegressionBinding, type Task, statusColor } from './api';
 import TaskDrawer from '../components/TaskDrawer';
+import SettingsModal from '../components/SettingsModal';
+import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
 import { testMode } from '../products/testRegistry';
 
 const DeploymentPage = lazy(() => import('../views/DeploymentPage'));
 const TestsPage = lazy(() => import('../views/TestsPage'));
-const LicensePage = lazy(() => import('../views/LicensePage'));
+const StabilityPage = lazy(() => import('../views/StabilityPage'));
+const LicenseKeysView = lazy(() => import('../views/license/LicenseKeysView'));
+const LicenseGenerateView = lazy(() => import('../views/license/LicenseGenerateView'));
 
 const { Header, Sider, Content } = Layout;
 
-type Page = 'deployment' | 'license' | `tests:${string}`;
+type Page = 'deployment'
+  | 'license:keys' | 'license:generate'
+  | `tests:${string}` | `stability:${string}`;
 export type ThemeName = 'cman' | 'dark' | 'soft' | 'warm';
+
+const ACTIVE_STATUSES = ['QUEUED', 'RUNNING', 'CANCELLING'];
 
 function selectedFromStorage(key: string, defaultValue: string) {
   try { return localStorage.getItem(key) || defaultValue; } catch { return defaultValue; }
+}
+
+function isPage(value: string): value is Page {
+  return value === 'deployment' || value.startsWith('license:')
+    || value.startsWith('tests:') || value.startsWith('stability:');
 }
 
 function profileEnvironment(environment: Environment, productId: string,
@@ -45,14 +58,12 @@ export default function PlatformShell({ themeName, onThemeChange }: {
   const [bindings, setBindings] = useState<RegressionBinding[]>([]);
   const [page, setPage] = useState<Page>(() => {
     const saved = selectedFromStorage('platform-page', 'deployment');
-    if (saved === 'deployment' || saved === 'license' || saved.startsWith('tests:')) {
-      return saved as Page;
-    }
-    return 'deployment';
+    return isPage(saved) ? saved as Page : 'deployment';
   });
   const [environmentId, setEnvironmentId] = useState(selectedFromStorage('platform-environment', ''));
   const [taskId, setTaskId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get('task');
@@ -71,25 +82,27 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       setEnvironments(environmentList);
       setTasks(taskList);
       setBindings(bindingList);
-      if (environmentList.length > 0 && !environmentList.some((item) => item.id === environmentId)) {
-        setEnvironmentId(environmentList[0].id);
-      }
     } catch (error) {
       message.error((error as Error).message);
     }
-  }, [environmentId, message]);
+  }, [message]);
 
   useEffect(() => { void reload(); }, [reload]);
 
+  const hasActiveTask = tasks.some((item) => ACTIVE_STATUSES.includes(item.status));
+
+  // 按需轮询：仅存在执行中任务时刷新任务/环境状态；静态查阅不做固定轮询。
   useEffect(() => {
+    if (!hasActiveTask) return;
     const interval = window.setInterval(() => {
       void Promise.all([
         api<Environment[]>('/environments').then(setEnvironments).catch(() => undefined),
         api<Task[]>('/operations?limit=20').then(setTasks).catch(() => undefined),
+        api<RegressionBinding[]>('/regression-bindings').then(setBindings).catch(() => undefined),
       ]);
     }, 3500);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [hasActiveTask]);
 
   useEffect(() => {
     if (environments.length > 0 && !environments.some((item) => item.id === environmentId)) {
@@ -102,7 +115,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
 
   const environment = environments.find((item) => item.id === environmentId) || environments[0];
   const product = products.find((item) => item.id === environment?.product_id) || products[0];
-  const active = tasks.find((item) => ['QUEUED', 'RUNNING', 'CANCELLING'].includes(item.status));
+  const active = tasks.find((item) => ACTIVE_STATUSES.includes(item.status));
 
   const [, testProductId = '', testProfileId = ''] = page.startsWith('tests:') ? page.split(':') : [];
   const testProduct = products.find((item) => item.id === testProductId);
@@ -113,42 +126,62 @@ export default function PlatformShell({ themeName, onThemeChange }: {
   const selectedTestEnvironment = testProfile
     ? testEnvironments.find((item) => item.id === activeBinding?.environment_id)
     : testEnvironments.find((item) => item.id === environmentId) || testEnvironments[0];
-  const title = page === 'license'
-    ? 'License 管理'
-    : page === 'deployment'
-      ? '数据库部署管理'
-      : `测试 · ${testProfile?.title || testProduct?.title || testProductId}`;
 
+  const stabilityProductId = page.startsWith('stability:') ? page.split(':')[1] : '';
+  const stabilityProduct = products.find((item) => item.id === stabilityProductId);
+  const stabilityEnvironment = stabilityProduct
+    ? environments.find((item) => item.product_id === stabilityProduct.id
+        && item.id === (bindings.find((b) => b.product_id === stabilityProduct.id)?.environment_id
+          || environmentId))
+    : undefined;
+
+  const title = page === 'license:keys'
+    ? '密钥管理'
+    : page === 'license:generate'
+      ? 'License 生成'
+      : page === 'deployment'
+        ? '数据库部署管理'
+        : page.startsWith('stability:')
+          ? `稳定性测试 · ${stabilityProduct?.title || stabilityProductId}`
+          : `测试 · ${testProfile?.title || testProduct?.title || testProductId}`;
+
+  // 固定导航树：不随环境增删跳变（§5.1）
   const menuItems = useMemo<MenuProps['items']>(() => [
     {
       key: 'deployment',
       icon: <ToolOutlined />,
       label: '数据库部署管理',
-      children: environments.length > 0
-        ? environments.map((env) => ({
-            key: `deploy:${env.id}`,
-            label: `${env.title} (:${env.port})`,
-          }))
-        : [{ key: 'deploy:none', label: '默认部署管理' }],
     },
     {
       key: 'tests',
       icon: <PlayCircleOutlined />,
-      label: '测试',
+      label: '产品测试中心',
       children: products
-        .filter((item) => item.capabilities.includes('tests'))
-        .flatMap((item) => item.test_profiles?.length
-          ? item.test_profiles.map((profile) => ({
-              key: `tests:${item.id}:${profile.id}`, label: profile.title,
-            }))
-          : [{ key: `tests:${item.id}`, label: item.title }]),
+        .filter((item) => item.capabilities.includes('tests') || item.capabilities.includes('stability'))
+        .map((item) => ({
+          key: `product:${item.id}`,
+          label: item.title,
+          children: [
+            ...(item.test_profiles || []).map((profile) => ({
+              key: `tests:${item.id}:${profile.id}`,
+              label: profile.title,
+            })),
+            ...(item.capabilities.includes('stability')
+              ? [{ key: `stability:${item.id}`, label: '稳定性测试' }]
+              : []),
+          ],
+        })),
     },
     {
       key: 'license',
       icon: <FileProtectOutlined />,
-      label: 'License 管理',
+      label: 'License 授权管理',
+      children: [
+        { key: 'license:keys', icon: <KeyOutlined />, label: '密钥管理' },
+        { key: 'license:generate', icon: <FileProtectOutlined />, label: 'License 生成' },
+      ],
     },
-  ], [environments]);
+  ], [products]);
 
   const content = useMemo(() => {
     const common = {
@@ -159,54 +192,49 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       reload,
       openTask: setTaskId,
     };
-    switch (page) {
-      case 'deployment':
-        return <DeploymentPage {...common} productBindings={bindings} navigate={(p) => setPage(p as Page)} />;
-      case 'license':
-        return <LicensePage />;
-      default:
-        if (page.startsWith('tests:')) {
-          const selected = testProduct;
-          const selectedEnvironment = selectedTestEnvironment;
-          const subProduct = testProfile?.id || testMode(selected, selectedEnvironment);
-          return <TestsPage key={page} {...common} product={selected || product}
-            environment={selectedEnvironment} subProduct={subProduct} />;
-        }
-        return <DeploymentPage {...common} productBindings={bindings} navigate={(p) => setPage(p as Page)} />;
+    if (page === 'license:keys') return <LicenseKeysView />;
+    if (page === 'license:generate') return <LicenseGenerateView />;
+    if (page.startsWith('stability:')) {
+      return <StabilityPage key={page} {...common}
+        product={stabilityProduct || product}
+        environment={stabilityEnvironment || environment}
+        environments={environments} bindings={bindings} />;
     }
-  }, [page, product, environment, environments, reload, products, environmentId, bindings]);
+    if (page.startsWith('tests:')) {
+      const subProduct = testProfile?.id || testMode(testProduct, selectedTestEnvironment);
+      return <TestsPage key={page} {...common}
+        product={testProduct || product}
+        environment={selectedTestEnvironment}
+        subProduct={subProduct}
+        profileId={testProfile?.id}
+        bindings={bindings}
+        tasks={tasks} />;
+    }
+    return <DeploymentPage {...common} productBindings={bindings}
+      products={products} />;
+  }, [page, product, environment, environments, reload, products, environmentId,
+      bindings, testProduct, testProfile, selectedTestEnvironment, stabilityProduct,
+      stabilityEnvironment, tasks]);
 
-  const selectedMenuKey = useMemo(() => {
-    if (page === 'deployment') {
-      return environment?.id ? `deploy:${environment.id}` : 'deployment';
-    }
-    return page;
-  }, [page, environment?.id]);
+  const selectedMenuKey = page === 'deployment' ? 'deployment' : page;
 
   const menu = (
     <Menu
       mode="inline"
       selectedKeys={[selectedMenuKey]}
-      defaultOpenKeys={['deployment', 'tests']}
+      defaultOpenKeys={['tests', 'license', ...products.map((item) => `product:${item.id}`)]}
       items={menuItems}
       onClick={({ key }) => {
-        if (key.startsWith('deploy:')) {
-          const envId = key.slice(7);
-          setPage('deployment');
-          if (envId !== 'none') setEnvironmentId(envId);
-        } else if (key === 'deployment') {
-          setPage('deployment');
-        } else if (key.startsWith('tests:')) {
+        if (key === 'deployment' || key.startsWith('license:')
+            || key.startsWith('tests:') || key.startsWith('stability:')) {
           setPage(key as Page);
-          const [, productId, profileId] = key.split(':');
-          const selectedProduct = products.find((item) => item.id === productId);
-          const profile = selectedProduct?.test_profiles?.find((item) => item.id === profileId);
-          const candidates = environments.filter((item) => profileEnvironment(item, productId, profile));
-          const bound = bindings.find((item) => item.product_id === productId && item.profile_id === profileId);
-          const target = candidates.find((item) => item.id === bound?.environment_id);
-          if (target) setEnvironmentId(target.id);
-        } else {
-          setPage(key as Page);
+          // 测试页跳转到已绑定环境，保证页面上下文与执行上下文一致
+          if (key.startsWith('tests:')) {
+            const [, productId, profileId] = key.split(':');
+            const bound = bindings.find((item) => item.product_id === productId
+              && item.profile_id === profileId);
+            if (bound) setEnvironmentId(bound.environment_id);
+          }
         }
         setMobileMenuOpen(false);
       }}
@@ -221,71 +249,49 @@ export default function PlatformShell({ themeName, onThemeChange }: {
           <span><strong>产品工作台</strong><small>内部管理平台</small></span>
         </div>
         {menu}
-        <div className="sidebar-foot"><SettingOutlined /> 本地单机版</div>
+        <button
+          type="button"
+          className="sidebar-foot sidebar-settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <SettingOutlined /> 系统设置（本地单机版）
+        </button>
       </Sider>
       <Layout>
         <Header className="platform-header">
           <Space className="header-left">
-            <Button className="mobile-menu-button" icon={<MenuOutlined />} onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
+            <Button className="mobile-menu-button" icon={<MenuOutlined />}
+              onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
             <Typography.Text strong className="header-title">{title}</Typography.Text>
           </Space>
           <Space className="header-controls" wrap size="middle">
-            <Select
-              className="theme-select"
-              value={themeName}
-              onChange={onThemeChange}
-              options={[
-                { label: '极客夜蓝', value: 'cman' },
-                { label: '深色石墨', value: 'dark' },
-                { label: '柔和灰绿', value: 'soft' },
-                { label: '暖灰护眼', value: 'warm' },
-              ]}
-              aria-label="界面风格"
-            />
-            <Space size={6}>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>当前环境:</Typography.Text>
-              <Select
-                className="context-select"
-                style={{ minWidth: 230 }}
-                value={page.startsWith('tests:') ? selectedTestEnvironment?.id : environmentId || undefined}
-                options={(page.startsWith('tests:') ? testEnvironments : environments).map((item) => ({
-                  label: `${item.title} (${item.host}:${item.port})`,
-                  value: item.id,
-                }))}
-                onChange={(id) => {
-                  setEnvironmentId(id);
-                  if (page.startsWith('tests:') && testProfile) {
-                    void api<RegressionBinding>(`/regression-bindings/${encodeURIComponent(testProductId)}/${encodeURIComponent(testProfile.id)}`, {
-                      method: 'PUT', body: JSON.stringify({ environment_id: id }),
-                    }).then((binding) => {
-                      setBindings((current) => [...current.filter((item) => item.product_id !== binding.product_id
-                        || item.profile_id !== binding.profile_id), binding]);
-                    }).catch((cause) => message.error((cause as Error).message));
-                  }
-                }}
-                placeholder="选择测试环境"
-                aria-label="当前环境"
-              />
-            </Space>
             {active && (
               <Button type="text" onClick={() => setTaskId(active.id)}>
                 <Tag color={statusColor(active.status)}>{active.status}</Tag>
               </Button>
             )}
+            <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)}>
+              设置
+            </Button>
           </Space>
         </Header>
         <Content className="platform-content">
           <div className="content-width">
-            <Suspense fallback={<div className="page-loading">加载中…</div>}>
-              {content}
-            </Suspense>
+            <PlatformErrorBoundary>
+              <Suspense fallback={<div className="page-loading">加载中…</div>}>
+                {content}
+              </Suspense>
+            </PlatformErrorBoundary>
           </div>
         </Content>
       </Layout>
-      <Drawer open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} placement="left" width={230} title="产品工作台">
+      <Drawer open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)}
+        placement="left" width={230} title="产品工作台">
         {menu}
       </Drawer>
       <TaskDrawer taskId={taskId} onClose={() => { setTaskId(null); void reload(); }} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)}
+        themeName={themeName} onThemeChange={onThemeChange} products={products} />
     </Layout>
   );
 }

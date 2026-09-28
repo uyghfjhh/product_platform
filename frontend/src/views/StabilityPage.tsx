@@ -2,16 +2,20 @@ import { useState } from 'react';
 import { Alert, App, Button, Empty, Input, Space, Typography } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
 
-import { operationRequest, type Environment, type Product } from '../api';
+import { operationRequest, type Environment, type Product, type RegressionBinding } from '../api';
+import TestBindingBar from '../components/TestBindingBar';
 
 type Props = {
   product: Product | undefined;
   environment: Environment | undefined;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
+  environments?: Environment[];
+  bindings?: RegressionBinding[];
 };
 
-export default function StabilityPage({ product, environment, openTask }: Props) {
+export default function StabilityPage({ product, environment, openTask, reload,
+                                        environments = [], bindings = [] }: Props) {
   const { message, modal } = App.useApp();
   const [target, setTarget] = useState('all');
   const [loading, setLoading] = useState(false);
@@ -36,6 +40,13 @@ export default function StabilityPage({ product, environment, openTask }: Props)
   return (
     <>
       <div className="page-heading"><div><Typography.Title level={3}>压测与常稳</Typography.Title><Typography.Text type="secondary">长时间工作负载与实时输出</Typography.Text></div></div>
+      <TestBindingBar
+        product={product}
+        profileId={product?.test_profiles?.[0]?.id}
+        environments={environments}
+        bindings={bindings}
+        onChanged={reload}
+      />
       {!environment ? <Empty description="先选择环境" /> : <section className="work-section">
         <Typography.Title level={5}>{product?.title || environment.product_id} 常稳任务</Typography.Title>
         <Alert type="info" showIcon message="正式时长由现有 stable 配置决定" description="目标 all 执行完整方案，也可以指定一条工作负载名称。" />

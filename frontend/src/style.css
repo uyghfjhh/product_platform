@@ -1708,3 +1708,76 @@ button, input, textarea { font-family: inherit; }
   .failed-card-bottom,
   .failed-card-info { flex-wrap: wrap; gap: 0.55rem; }
 }
+
+/* ===== 系统设置模态框（主题卡片） ===== */
+.settings-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.settings-theme-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle, #d9d9d9);
+  border-radius: 8px;
+  background: var(--bg-surface, transparent);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.settings-theme-card:hover { border-color: var(--accent, #38bdf8); }
+.settings-theme-card.is-active {
+  border-color: var(--accent, #38bdf8);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #38bdf8) 25%, transparent);
+}
+.settings-theme-swatch { display: inline-flex; border-radius: 5px; overflow: hidden; }
+.settings-theme-swatch i { width: 18px; height: 18px; display: block; }
+.settings-theme-meta { display: flex; flex-direction: column; line-height: 1.3; }
+.settings-theme-meta small { color: var(--text-secondary, #94a3b8); }
+.settings-theme-check { position: absolute; right: 10px; top: 10px; color: var(--accent, #38bdf8); }
+
+/* ===== 侧栏底部设置入口 ===== */
+.sidebar-settings {
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.sidebar-settings:hover { color: var(--accent, #38bdf8); }
+
+/* ===== 测试页就地绑定栏 ===== */
+.test-binding-bar { margin-bottom: 14px; }
+.test-binding-bar-bound {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border: 1px solid var(--border-subtle, #d9d9d9);
+  border-radius: 8px;
+  background: var(--bg-surface, transparent);
+}
+.test-binding-icon { color: var(--accent, #38bdf8); }
+
+/* ===== 部署页 PSQL 片段（语义变量，不随主题撕裂） ===== */
+.psql-snippet-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-elevated, #0f172a);
+  color: var(--text-primary, #e2e8f0);
+}
+.psql-snippet-label { font-size: 12px; color: var(--text-secondary, #94a3b8); }
+.psql-snippet-copy { color: var(--accent, #38bdf8); }
+.psql-snippet {
+  font-size: 13px;
+  color: var(--accent, #38bdf8);
+  font-family: monospace;
+  display: block;
+  word-break: break-all;
+}
+.sql-workbench-input { font-family: monospace; }

@@ -7,17 +7,19 @@ import {
 import { api, operationRequest, type Action, type Environment, type Product, type RegressionBinding } from '../api';
 import CodeEditor from '../components/LazyCodeEditor';
 import ThreeTopologyView, { type TopologyData, type TopologyNode } from '../components/ThreeTopologyView';
+import EnvironmentModal from '../components/EnvironmentModal';
+import SqlWorkbenchDrawer from '../components/SqlWorkbenchDrawer';
 import { deploymentAdapter, deploymentFrontend } from '../products/deploymentRegistry';
 
 type Props = {
   product: Product | undefined;
   environment: Environment | undefined;
   environments?: Environment[];
+  products?: Product[];
   onSelectEnvironment?: (id: string) => void;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
   productBindings?: RegressionBinding[];
-  navigate?: (page: string) => void;
 };
 
 type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean };
@@ -26,11 +28,11 @@ export default function DeploymentPage({
   product,
   environment,
   environments = [],
+  products = [],
   onSelectEnvironment,
   openTask,
   reload,
   productBindings = [],
-  navigate,
 }: Props) {
   const { message, modal } = App.useApp();
   const [actions, setActions] = useState<Action[]>([]);
@@ -40,6 +42,9 @@ export default function DeploymentPage({
   const [observed, setObserved] = useState<Record<string, { running: boolean | null; message: string }> | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
+  const [sqlNode, setSqlNode] = useState<TopologyNode | null>(null);
+  const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [envEditing, setEnvEditing] = useState<Environment | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileForm] = Form.useForm();
@@ -119,9 +124,12 @@ export default function DeploymentPage({
   function openProfileWizard() {
     if (!environment) return;
     profileForm.setFieldsValue({
-      mmr1_port: 15011,
+      // 默认值从当前环境派生：端口取环境登记端口，License 取部署配置同目录或留空必填。
+      mmr1_port: environment.port,
       data_root: productAdapter.defaultDataRoot?.(environment.id),
-      license_file: '/home/postgres/license/license.dat',
+      license_file: environment.deployment_config
+        ? `${environment.deployment_config.replace(/\/[^/]*$/, '')}/license.dat`
+        : '',
     });
     setProfileOpen(true);
   }
@@ -153,13 +161,7 @@ export default function DeploymentPage({
   }
 
   function handleOpenSqlWorkbench(node: TopologyNode) {
-    sessionStorage.setItem('sql_target_port', String(node.port));
-    sessionStorage.setItem('sql_target_node', node.id);
-    if (navigate) {
-      navigate('database');
-    } else {
-      message.info(`已选中节点 ${node.id} (端口 ${node.port})，可在左侧切换到数据库管理直接查询`);
-    }
+    setSqlNode(node);
   }
 
   function copyText(text: string) {
@@ -195,6 +197,16 @@ export default function DeploymentPage({
               </Typography.Text>
             </div>
           </div>
+          <Space size={8}>
+            <Button size="small" onClick={() => { setEnvEditing(null); setEnvModalOpen(true); }}>
+              新增环境
+            </Button>
+            {environment && (
+              <Button size="small" onClick={() => { setEnvEditing(environment); setEnvModalOpen(true); }}>
+                编辑当前环境
+              </Button>
+            )}
+          </Space>
           <Segmented
             size="middle"
             value={environment?.id}
@@ -353,29 +365,29 @@ export default function DeploymentPage({
         {selectedNode && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {/* Quick PSQL Connection Snippet */}
-            <div style={{ padding: '12px 14px', background: '#0f172a', borderRadius: 8, color: '#e2e8f0' }}>
+            <div className="psql-snippet-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: '#94a3b8' }}>PSQL 直连命令行</span>
+                <span className="psql-snippet-label">PSQL 直连命令行</span>
                 <Button
                   size="small"
                   type="text"
-                  style={{ color: '#38bdf8' }}
+                  className="psql-snippet-copy"
                   icon={<CopyOutlined />}
-                  onClick={() => copyText(`psql -h ${selectedNode.host} -p ${selectedNode.port} -U postgres`)}
+                  onClick={() => copyText(`psql -h ${selectedNode.host} -p ${selectedNode.port} -U ${environment?.database_user || 'postgres'}`)}
                 >
                   复制
                 </Button>
               </div>
-              <code style={{ fontSize: 13, color: '#38bdf8', fontFamily: 'monospace', display: 'block', wordBreak: 'break-all' }}>
-                psql -h {selectedNode.host} -p {selectedNode.port} -U postgres
+              <code className="psql-snippet">
+                psql -h {selectedNode.host} -p {selectedNode.port} -U {environment?.database_user || 'postgres'}
               </code>
               <Button
                 type="primary"
-                style={{ width: '100%', marginTop: 10, background: '#166e60', borderColor: '#166e60' }}
+                style={{ width: '100%', marginTop: 10 }}
                 icon={<CodeOutlined />}
                 onClick={() => handleOpenSqlWorkbench(selectedNode)}
               >
-                进入 Web-PSQL 交互控制台
+                打开 SQL 探测抽屉
               </Button>
             </div>
 
@@ -423,6 +435,19 @@ export default function DeploymentPage({
           </div>
         )}
       </Drawer>
+
+      <SqlWorkbenchDrawer
+        environment={environment}
+        node={sqlNode}
+        onClose={() => setSqlNode(null)}
+      />
+      <EnvironmentModal
+        open={envModalOpen}
+        editing={envEditing}
+        products={products}
+        onClose={() => setEnvModalOpen(false)}
+        onSaved={(id) => { void reload(); onSelectEnvironment?.(id); }}
+      />
     </div>
   );
 }

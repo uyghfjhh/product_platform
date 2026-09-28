@@ -4,11 +4,13 @@ import {
 } from 'antd';
 
 import {
-  api, operationRequest, type Case, type Environment, type Product, type Result,
+  api, operationRequest, type Case, type Environment, type Product,
+  type RegressionBinding, type Result, type Task,
 } from '../api';
 import { testAdapter, testFrontend, type TestMode } from '../products/testRegistry';
 import DiagnosisDrawer from '../components/DiagnosisDrawer';
 import EvidenceDrawer from '../platform/EvidenceDrawer';
+import TestBindingBar from '../components/TestBindingBar';
 import { FileSearchOutlined } from '@ant-design/icons';
 
 export type SubProduct = TestMode;
@@ -19,17 +21,27 @@ type Props = {
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
   subProduct?: SubProduct;
+  environments?: Environment[];
+  bindings?: RegressionBinding[];
+  tasks?: Task[];
+  profileId?: string;
 };
 
 type FilterStatus = 'all' | 'PASS' | 'FAIL' | 'UNTESTED';
 
+const ACTIVE_STATUSES = ['QUEUED', 'RUNNING', 'CANCELLING'];
 
 
 export default function TestsPage({
   product,
   environment,
   openTask,
+  reload,
   subProduct = 'cman',
+  environments = [],
+  bindings = [],
+  tasks = [],
+  profileId,
 }: Props) {
   const { message, modal } = App.useApp();
 
@@ -103,12 +115,16 @@ export default function TestsPage({
     void refreshResults();
   }, [environment?.id, adapter.sourceStatusPath]);
 
+  // 按需轮询（§8.1）：仅本环境存在执行中任务时刷新结果，静态查阅不轮询。
+  const hasActiveEnvTask = tasks.some((item) =>
+    item.environment_id === environment?.id && ACTIVE_STATUSES.includes(item.status));
   useEffect(() => {
+    if (!hasActiveEnvTask) return;
     const timer = window.setInterval(() => {
       void refreshResults();
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [environment?.id, effectiveProductId]);
+  }, [environment?.id, effectiveProductId, hasActiveEnvTask]);
 
   const resultByTarget = useMemo(() => new Map(results.map((item) => [item.target, item])), [results]);
 
@@ -319,6 +335,13 @@ export default function TestsPage({
 
   return (
     <>
+      <TestBindingBar
+        product={product}
+        profileId={profileId}
+        environments={environments}
+        bindings={bindings}
+        onChanged={reload}
+      />
       {!environment && (
         <Alert
           type="info"
