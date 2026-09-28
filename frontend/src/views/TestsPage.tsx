@@ -23,23 +23,7 @@ type Props = {
 
 type FilterStatus = 'all' | 'PASS' | 'FAIL' | 'UNTESTED';
 
-function getSuiteName(suiteId: string): string {
-  const SUITE_NAMES: Record<string, string> = {
-    mmr: 'MMR 多活复制套件',
-    mac: 'MAC 安全等保套件',
-    rw_toggle: '读写分离与切换 (rw_toggle)',
-    global_cache: '全局缓存 (global_cache)',
-    guc: 'GUC 参数与配置 (guc)',
-    ha_commands: '高可用集群管理命令 (ha_commands)',
-    high_availability: '高可用与故障转移 (high_availability)',
-    handover: '节点备机接管 (handover)',
-    outstanding: '待决事务与异常恢复 (outstanding)',
-    sql_parse: 'SQL 解析与路由 (sql_parse)',
-    common: '通用工具与夹具 (common)',
-    tmp: '临时与演练套件 (tmp)',
-  };
-  return SUITE_NAMES[suiteId] || suiteId;
-}
+
 
 export default function TestsPage({
   product,
@@ -199,7 +183,7 @@ export default function TestsPage({
       const firstCase = suiteCases[0];
       return {
         suiteId,
-        title: firstCase?.suite_title || getSuiteName(suiteId),
+        title: firstCase?.suite_title || suiteId,
         description: firstCase?.suite_description || '',
         cases: suiteCases,
         total: suiteCases.length,
@@ -224,7 +208,7 @@ export default function TestsPage({
       if (getCaseStatus(c.target) === 'FAIL') {
         list.push({
           ...c,
-          suiteTitle: c.suite_title || getSuiteName(c.suite),
+          suiteTitle: c.suite_title || c.suite,
           duration: getCaseDuration(c.target),
         });
       }
@@ -317,11 +301,10 @@ export default function TestsPage({
       message.warning('请先在顶部选择绑定测试环境');
       return;
     }
-    const suiteName = getSuiteName(suiteId);
     const confirmed = await new Promise<boolean>((resolve) =>
       modal.confirm({
         title: '执行整套用例',
-        content: `确认在环境【${environment.title}】执行套件【${suiteName}】的全部用例？`,
+        content: `确认在环境【${environment.title}】执行套件【${suiteId}】的全部用例？`,
         okText: '确认执行',
         cancelText: '取消',
         onOk: () => resolve(true),
@@ -351,7 +334,7 @@ export default function TestsPage({
       )}
 
       {/* =====================================================================
-          8081 fbasecman regress 沉浸式暗黑开发者控制台主看板
+          沉浸式暗黑开发者控制台主看板
           ===================================================================== */}
       <div className="regress-console-wrapper">
         {/* 1. 顶部 5 项指标卡片 (Metrics Grid) */}

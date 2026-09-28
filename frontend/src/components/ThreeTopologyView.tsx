@@ -219,7 +219,7 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
     scene.add(proxyRing);
     rotatingMeshes.push({ mesh: proxyRing, rotZ: 0.025 });
 
-    const proxySprite = makeBillboardSprite('fbasecman 网关', '高可用代理中心', '#10b981', 6.8, 3.4);
+    const proxySprite = makeBillboardSprite('接入网关', '高可用代理中心', '#10b981', 6.8, 3.4);
     proxySprite.position.set(proxyPos.x, proxyPos.y + 2.8, proxyPos.z);
     scene.add(proxySprite);
 

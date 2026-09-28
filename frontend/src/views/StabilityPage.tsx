@@ -11,7 +11,7 @@ type Props = {
   reload: () => Promise<void>;
 };
 
-export default function StabilityPage({ environment, openTask }: Props) {
+export default function StabilityPage({ product, environment, openTask }: Props) {
   const { message, modal } = App.useApp();
   const [target, setTarget] = useState('all');
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,7 @@ export default function StabilityPage({ environment, openTask }: Props) {
     if (!proceed) return;
     setLoading(true);
     try {
-      const task = await operationRequest(environment.id, 'stability.fbasecman', target || 'all', {}, true);
+      const task = await operationRequest(environment.id, `stability.${environment.product_id}`, target || 'all', {}, true);
       openTask(task.id);
     } catch (cause) {
       message.error((cause as Error).message);
@@ -37,7 +37,7 @@ export default function StabilityPage({ environment, openTask }: Props) {
     <>
       <div className="page-heading"><div><Typography.Title level={3}>压测与常稳</Typography.Title><Typography.Text type="secondary">长时间工作负载与实时输出</Typography.Text></div></div>
       {!environment ? <Empty description="先选择环境" /> : <section className="work-section">
-        <Typography.Title level={5}>fbasecman 常稳任务</Typography.Title>
+        <Typography.Title level={5}>{product?.title || environment.product_id} 常稳任务</Typography.Title>
         <Alert type="info" showIcon message="正式时长由现有 stable 配置决定" description="目标 all 执行完整方案，也可以指定一条工作负载名称。" />
         <Space wrap className="action-row"><Input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="all 或工作负载名" style={{ width: 300 }} /><Button type="primary" icon={<PlayCircleOutlined />} loading={loading} onClick={() => void run()}>启动任务</Button></Space>
       </section>}
