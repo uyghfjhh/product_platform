@@ -9,7 +9,7 @@
 | 产品 | 用例数 | 执行路径 | 实测基线 | 未完成原因 |
 | --- | --- | --- | --- | --- |
 | fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 161 PASS + 2 FAIL + 2 BLOCKED | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
-| fbasecman | 212（158 legacy + 54 native） | 平台引擎 + 进程内 `LegacySuiteCase` 适配，套件 `run_case` 全权持有业务语义 | 见 §4.3 分套件 | native 已覆盖 sql_parse 4、ha_commands 6、tmp 1、outstanding 11、rw_toggle 14、guc 18（全套真实环境 PASS）；剩余 158 条按 suite 分批迁移中 |
+| fbasecman | 212（148 legacy + 64 native） | 平台引擎 + 进程内 `LegacySuiteCase` 适配，套件 `run_case` 全权持有业务语义 | 见 §4.3 分套件 | native 已覆盖 sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18（全套真实环境 PASS）；剩余 148 条按 suite 分批迁移中 |
 
 **唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。`run.py`/`run.sh`/`tools/cli.py` 保留为独立入口，内部委托同一批 `run_case`，不是第二执行引擎。
 
@@ -60,7 +60,7 @@
 
 | 套件 | 结果 | 定性 |
 | --- | --- | --- |
-| ha_commands 75 | 全 PASS | — |
+| ha_commands 76 | 全 PASS | 16 条 native（含 cluster 域 10 条 `HaCommandsCase`/`HaRuntime`：conf transform、语义 diff 白名单、备份断言、monitor 轮询、ssh 远程节点停起逐语义对齐 legacy）+ 60 legacy |
 | high_availability 10 | 全 PASS | core_16 failover→rebuild→自愈端到端 |
 | outstanding 11 | 全 PASS | — |
 | rw_toggle 14 | 全 PASS | — |

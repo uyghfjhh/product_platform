@@ -20,6 +20,7 @@ from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        JdbcConsoleHaCommandsCase, guc_case)
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
                                         SetNodeWeightIdempotentCase)
+from products.fbasecman.ha_native import HaCommandsCase
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -139,6 +140,16 @@ NATIVE_CASES = {
         ("mmr_group", "pg_cluster_1", "pg_1"), "核对 SET CLUSTER ACTIVE 幂等命令",
         initial_query="SHOW CLUSTERS;"),
     "ha_commands.set_node_weight_idempotent": SetNodeWeightIdempotentCase(),
+    "ha_commands.refresh_cluster": HaCommandsCase("refresh_cluster"),
+    "ha_commands.refresh_cluster_probe_edges": HaCommandsCase("refresh_cluster_probe_edges"),
+    "ha_commands.refresh_cluster_syntax_errors": HaCommandsCase("refresh_cluster_syntax_errors"),
+    "ha_commands.set_cluster_30_datasource_roundtrip": HaCommandsCase("set_cluster_30_datasource_roundtrip"),
+    "ha_commands.set_cluster_invalid_commands": HaCommandsCase("set_cluster_invalid_commands"),
+    "ha_commands.console_set_validation_toggle": HaCommandsCase("console_set_validation_toggle"),
+    "ha_commands.set_cluster_parted_active_roundtrip": HaCommandsCase("set_cluster_parted_active_roundtrip"),
+    "ha_commands.set_cluster_write_promoted_roundtrip": HaCommandsCase("set_cluster_write_promoted_roundtrip"),
+    "ha_commands.set_node_promoted_write_cluster_conflict": HaCommandsCase("set_node_promoted_write_cluster_conflict"),
+    "ha_commands.write_cluster_format_preservation": HaCommandsCase("write_cluster_format_preservation"),
     "tmp.reload_disable_monitor_route_loss": ReloadDisableMonitorRouteLossCase(),
     **{
         "guc." + name: guc_case(name)

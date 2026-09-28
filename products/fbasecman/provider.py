@@ -82,6 +82,31 @@ def native_case_context(settings, environment):
         "jdbc_jar": str(settings.product_regress_root("fbasecman") /
             "lib_jdbc/postgresql-42.7.7.jar"),
     })
+    # 节点远程停/起与本地 psql 路径（对齐 legacy env.config database/local 段）：
+    # 环境 override 优先，产品 regress.yaml 兜底。
+    try:
+        _, override = profile_paths(settings, environment["id"])
+        override_db = {}
+        if override.is_file():
+            override_db = (yaml.safe_load(override.read_text(encoding="utf-8"))
+                           or {}).get("database") or {}
+    except (OSError, ValueError, RuntimeError):
+        override_db = {}
+    merged_db = dict(runtime.get("database") or {})
+    merged_db.update(override_db)
+    local_pg_dir = (runtime.get("local") or {}).get("postgres_dir")
+    optional = {
+        "psql_bin": str(Path(local_pg_dir) / "bin" / "psql")
+        if local_pg_dir else None,
+        "mmr_host": merged_db.get("mmr_host"),
+        "mmr_pg_user": merged_db.get("mmr_pg_user"),
+        "mmr_data_root": merged_db.get("mmr_data_root")
+        or merged_db.get("mmr_postgres_dir"),
+        "mmr_bin_dir": str(Path(merged_db["mmr_postgres_dir"]) / "bin")
+        if merged_db.get("mmr_postgres_dir") else None,
+    }
+    context.update({key: value for key, value in optional.items()
+                    if value is not None})
     return context
 
 

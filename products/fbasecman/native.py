@@ -18,7 +18,8 @@ from platform_regress import Blocked, CaseContext
 from platform_regress.clients import jdbc as jdbc_client
 
 
-def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") -> int:
+def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse",
+                  transform=None) -> int:
     env = context.environment
     binary = env.get("fbasecman_bin")
     license_dir = env.get("license_dir")
@@ -106,7 +107,10 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
              'user "admin" {', '    authentication "none"', '    pool "session"',
              '    role "admin"', '}']
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(data) + "\n", encoding="utf-8")
+    content = "\n".join(data) + "\n"
+    if transform is not None:
+        content = transform(content)
+    path.write_text(content, encoding="utf-8")
     return port
 
 
