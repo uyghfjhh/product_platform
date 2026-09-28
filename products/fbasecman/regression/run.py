@@ -1,15 +1,22 @@
-"""Run fbasecman regression targets with a platform-generated override."""
+"""Validate a platform-generated regression override against the legacy catalog.
+
+This module is kept solely for ``--check-profile`` verification: it loads the
+product's vendored ``framework`` package in an isolated ``sys.path`` and checks
+that a generated override resolves to a valid configuration and known target.
+Case execution was migrated to ``platform_regress.cli``; this entry point no
+longer runs any test targets.
+"""
 import argparse
-import json
 import sys
 from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run fbasecman regression targets")
+    parser = argparse.ArgumentParser(
+        description="Validate fbasecman regression profile and target")
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--override", type=Path, required=True)
-    parser.add_argument("--check-profile", action="store_true")
+    parser.add_argument("--check-profile", action="store_true", required=True)
     parser.add_argument("target")
     args = parser.parse_args()
     source = args.source.resolve()
@@ -42,32 +49,11 @@ def main() -> int:
 
     validate_profile_isolation(load_with_profile(source))
     registry = get_default_registry()
-    if args.check_profile:
-        if args.target not in registry.suite_ids() and not registry.selected_targets(args.target):
-            print("未知测试目标: %s" % args.target, file=sys.stderr)
-            return 2
-        print("测试配置有效: %s" % args.target)
-        return 0
-
-    targets = [args.target]
-    if args.target == "failed":
-        output = load_with_profile(source).output_dir / "runs"
-        targets = []
-        for summary in output.glob("*/*/summary.json"):
-            try:
-                if json.loads(summary.read_text(encoding="utf-8")).get("status") == "FAIL":
-                    targets.append(summary.parent.parent.name + "." + summary.parent.name)
-            except (OSError, ValueError):
-                continue
-        print("待重跑失败用例: %d" % len(targets), flush=True)
-
-    failures = 0
-    for target in targets:
-        if target not in registry.suite_ids() and not registry.selected_targets(target):
-            print("未知测试目标: %s" % target, file=sys.stderr)
-            return 2
-        failures += registry.run_target(source, target, sanitize=False) != 0
-    return 1 if failures else 0
+    if args.target not in registry.suite_ids() and not registry.selected_targets(args.target):
+        print("未知测试目标: %s" % args.target, file=sys.stderr)
+        return 2
+    print("测试配置有效: %s" % args.target)
+    return 0
 
 
 if __name__ == "__main__":

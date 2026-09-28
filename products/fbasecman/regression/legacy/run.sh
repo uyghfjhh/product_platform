@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# DEPRECATED manual entry: case execution migrated to the platform
+# (web task API / platform_regress.cli). This script is kept only for
+# diagnostics commands (env/doctor/show/test); 'run' prints a warning.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

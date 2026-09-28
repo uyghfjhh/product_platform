@@ -11,6 +11,7 @@ import re
 import socket
 import struct
 import sys
+import time
 from pathlib import Path
 
 from platform_regress import Blocked, CaseContext
@@ -72,6 +73,16 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
         '    write_cluster "pg_cluster_2"', '    promoted_cluster "pg_cluster_1"',
         '    real_group_name "g1"', f'    group_uuid "{group_uuid}"',
         '    check "auto"', '}',
+        'group "rep_group" {', '    group_mode "replication"',
+        '    storage_db "postgres"', '    backend_clusters "pg_cluster_1"',
+        '    check "auto"', '}',
+        'group "balance_group" {', '    group_mode "balance"',
+        '    storage_db "postgres"', '    access_mode "read_write"',
+        '    backend_clusters "pg_cluster_1,pg_cluster_2"',
+        '    check "auto"', '}',
+        'group "single_group" {', '    group_mode "single"',
+        '    storage_db "postgres"', '    access_mode "read_write"',
+        '    backend_clusters "pg_cluster_1"', '    check "auto"', '}',
     ]
     for name, node in selected_nodes.items():
         cluster = "pg_cluster_1" if name in {"pg_1", "pg_3"} else "pg_cluster_2"
@@ -81,7 +92,8 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
                  '    weight 10', '    status "active"',
                  *([f'    application_name "{app_name}"'] if app_name else []),
                  f'    system_identifier "{identifiers[name]}"', '    tls "disable"', '}',]
-    data += ['user "postgres" {', '    group_names "mmr_group"',
+    data += ['user "postgres" {',
+             '    group_names "mmr_group,rep_group,balance_group,single_group"',
              '    authentication "none"', '    storage_user "postgres"',
              '    pool "transaction"', '    pool_size 20', '    pool_discard no',
              '    pool_reserve_prepared_statement yes',
@@ -91,6 +103,28 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(data) + "\n", encoding="utf-8")
     return port
+
+
+def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
+                      timeout_seconds: float = 30.0) -> str:
+    """等 group_checker 收敛：SHOW GROUP_ROUTING mmr_group 不再出现 UNKNOWN。
+
+    ``context.start_process`` 的 ready 探针只等监听端口可连；fbasecman 的
+    monitor/group_checker 异步探测 mmr_role 需要若干秒，立即查询会读到
+    UNKNOWN 列。历史用例经 console-ready 探针隐式覆盖了这段收敛窗口，
+    native 入口必须显式等待同一收敛状态再断言。
+    """
+    deadline = time.monotonic() + timeout_seconds
+    query = [psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+             "-U", "admin", "-d", "console", "-c", "SHOW GROUP_ROUTING mmr_group;"]
+    last = ""
+    while time.monotonic() < deadline:
+        result = context.command(query, timeout_seconds=10)
+        last = result.stdout or ""
+        if result.returncode == 0 and "pg_" in last and "UNKNOWN" not in last:
+            return last
+        time.sleep(0.5)
+    raise Blocked("MMR 路由探测未在 %ss 内收敛" % timeout_seconds)
 
 
 def _read_exact(sock, size):
@@ -313,6 +347,8 @@ class JdbcConsoleHaCommandsCase:
             raise Blocked("缺少 JDBC HA 控制台资产或驱动")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        _wait_mmr_routing(context, port, psql)
         context.command(jdbc_client.javac_argv(jar, asset, dest_dir=context.output_dir),
                         cwd=context.output_dir, timeout_seconds=60)
         nodes = context.environment.get("nodes") or {}
@@ -353,6 +389,7 @@ class SetNodeWriteIdempotentCase:
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        _wait_mmr_routing(context, port, psql)
         def query(sql):
             return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
                                     "-p", str(port), "-U", "admin", "-d", "console",
@@ -393,6 +430,7 @@ class IdempotentHaCommandCase:
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        _wait_mmr_routing(context, port, psql)
         def q(sql):
             return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
@@ -425,6 +463,7 @@ class SetNodeWeightIdempotentCase:
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        _wait_mmr_routing(context, port, psql)
         def q(sql):
             return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)

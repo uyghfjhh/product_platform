@@ -99,23 +99,31 @@
 
 ### B. 保真验收缺口（每条判定=老代码）
 
-1. **全套件逐条 verdict diff**——在同一环境用平台 cli 全量跑 fbasecman 各套件，与既有 `runs/` 历史判定逐条比对；已知基线见 §4.3，新增 FAIL 必须对照 legacy 源码+环境定性。
-2. **mmr 2 条 BLOCKED 复跑**——批间暂态，`node_state`/`time_difference` 单独复跑定性。
-3. **`mmr.node_management` 5 条 disabled 用例**单独跑通。
-4. **handover 6 条未实现用例**——upstream 补齐或显式标记；平台侧判定保持 FAIL（当前行为）不改。
-5. **`failed`/`all` 全链路经 Web 任务入口验收**——provider `failed` 已切平台 cli，未做任务级端到端。
+1. ~~**全套件逐条 verdict diff**~~（2026-09-28 完成）——`tests.fbasecman target=all` 经 Web 任务入口跑完全量：206/212 条执行（6 条 `handover.console_*_statistics` 为 `long_time` 默认排除，符合 suite 批跑语义）。首轮 182 PASS / 7 FAIL / 17 ERROR，逐条定性：
+   - **16 条 global_cache ERROR**＝`run_root` 硬编码 `root/"output"` 不吃 `env.output_dir` 重定向，`summary.json` 落到 vendored 树——已修 `global_cache/runtime.py` 改走 `env.output_dir`，复跑 `reuse_single_and_cross_client` PASS。
+   - **2 条 native ha_commands FAIL**＝`native.render_config` 只渲 `mmr_group`，而 `HaConsoleCommands.java` 访问 `single_group`/`rep_group` → `route not found`；且 native `start_process` 的 TCP-ready 探针不覆盖 group_checker 的 mmr_role 收敛窗口 → `SHOW GROUP_ROUTING` 读出 `UNKNOWN`（历史输出为 `write-leader`）。已修：conf 补齐 rep/balance/single group + `group_names` 全量，新增 `_wait_mmr_routing` 收敛等待接入 4 处 console 断言用例；`jdbc_console_ha_commands`/`set_node_write_idempotent` 复跑 PASS。
+   - **3 条同因复现**：`guc.discard_all_hint`/`discard_all_sql_parse`（DISCARD ALL rc=2 与历史逐字一致）、`tmp.reload_disable_monitor_route_loss`（步骤 5 rc=2 与历史一致）。
+   - **`global_cache.discard_all_clears_backend_cache`** 对应历史已知缺陷 F-001。
+   - **`sql_parse.savepoint_recovery_after_local_25p02`** 为新增用例无历史基线，FAIL 是 25P02 事务恢复的真实产品行为差异。
+2. ~~**mmr 3 条 BLOCKED 复跑**~~（已完成）——`mmr.replication_set.synchronous_removal`/`mmr.default_publication.schema_filtering`/`mmr.cluster_verification.check_node_conf_table_exclusion` 平台 PASS vs 历史 BLOCKED（two_phase 前提不满足）；差异根因是用例演进为隔离 fixture 自建 two_phase=false 双节点（initdb/create_node/create_group 证据齐全），非平台失真。
+3. ~~**`mmr.node_management` 5 条 disabled 用例**~~（已完成）——`join_group`/`multi_database_active_join`/`online_join_all_retry` PASS；`multi_database_three_node_join`（步骤 35 超时 rc=124）与 `online_join_data_retry`（订阅映射冲突，历史已知缺陷 D-017）同因复现历史失败。
+4. **handover 6 条未实现用例**——维持现状：`default_enabled=False`（long_time 统计），不进入批跑；平台判定语义正确。
+5. ~~**`failed`/`all` 全链路经 Web 任务入口验收**~~（已完成）——`failed` 精确重跑 last_failed 并入库（含平台树 `result.json` 收录修复）；`all` 经 provider `validate_target` 放行后由 `platform_regress.cli` 驱动，native+legacy 混合执行全程留证。
 
 ### C. 环境事项
 
 - cman-lab MMR 环境已归位（复制家族全绿）；`qa_case.orders` 等套件自建表在套件生命周期内管理，不算环境基线。
 - `regress.local.yaml` 符号链接到 cman-lab override——独立 `run.sh` 用；平台路径由 `_EXTRA_CONFIGS` 注入，不依赖该链接。
-- fbasecman 二进制版本固定问题：`SHOW SERVER_PREP_STMTS` 列数随 build 变化——回归环境应记录二进制版本快照（待办：环境清单加 binary fingerprint）。
+- ~~fbasecman 二进制版本固定问题~~（2026-09-28 完成）——`deployment/fixture.py` 生成 `test_context.yaml` 时写入 `binaries` 段：fbasecman 本地二进制与远端 PostgreSQL 二进制各记录 `path`/`sha256`/`size`/`mtime`（远端经 SSH `stat`+`sha256sum` 采集），与 `group_uuid`/`role_passwords`/`system_identifiers`/`ciphertexts` 并存。验证见 `tests/test_fixture_fingerprint.py`（4 项）。
 
 ### D. 收尾（design.md §12 P2 未完成项）
 
-- cman 用例逐步从 `run_case` 壳迁到声明式/半声明式（`sql_parse`/`ha_commands` 的协议步骤可表达为 pgwire 断言序列）。
-- `run.py`、`tools/cli.py`、`run.sh` 在 Web/CI 全走平台入口后退役（当前保留，同一 `run_case` 底层）。
-- `framework/*` shim 层最终删除——前提是旧单测的 patch 点迁移完毕。
+- cman 用例逐步从 `run_case` 壳迁到声明式/半声明式（`sql_parse`/`ha_commands` 的协议步骤可表达为 pgwire 断言序列）——未启动；202 条 Python executor 的逐条迁移是大规模工程，建议在真实环境回归稳定后按 suite 分批进行。
+- `run.py`/`tools/cli.py`/`run.sh` 退役进展（2026-09-28）：
+  - `products/fbasecman/regression/run.py` 收缩为纯 `--check-profile` 校验工具，case 执行循环已删（平台 `platform_regress.cli` 是唯一执行入口）。
+  - `products/fbasecman/regression/legacy/tools/cli.py` `do_run` 增加 deprecation 警告；`legacy/run.sh` 头注标明仅保留 env/doctor/show/test 人工诊断入口。
+  - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`；**`fbase-database/regression/legacy/run.sh` 仍是 `LegacyFbaseCase.run` 的运行时依赖**（每条 legacy 用例 spawn `run.sh run <cluster> <target> --enable-run-id`），在用例迁完前不能删。
+  - `framework/*` shim 保留：vendored `unit_tests`（258 项）大量 patch 点落在 shim 模块名上，物理删除须先迁移单测。
 
 ## 7. 验收标准与红线
 

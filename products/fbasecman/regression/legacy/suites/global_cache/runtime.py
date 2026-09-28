@@ -292,7 +292,7 @@ class CaseRuntime(GlobalCacheReportMixin):
         self.env = env
         self.context = context
         self.case = case
-        self.run_root = root / "output" / "runs" / "global_cache" / case.name
+        self.run_root = env.output_dir / "runs" / "global_cache" / case.name
         self.workdir = self.run_root / "workdir"
         self.logs_dir = self.run_root / "logs"
         self.build_dir = self.workdir / "build"

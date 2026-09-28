@@ -342,9 +342,13 @@ class FbaseProvider:
                 "--output-dir", str(output),
                 "--context-json", json.dumps(context, ensure_ascii=False), *target_args,
             ], settings.data_dir)
-        if "." not in target and target != "all":
-            # Suite runs mix native and legacy cases; inject the extended node
-            # map so every native target gets its selectors for free.
+        if target == "all" or any(item.startswith(target + ".")
+                                  for item in ALL_CASE_TARGETS):
+            # Suite/prefix and aggregate runs mix native and legacy cases;
+            # inject the extended node map so every native target gets its
+            # selectors for free. "all" maps to the cluster prefix since
+            # catalog suites are keyed by it.
+            suite = cluster if target == "all" else target
             context = self._test_context(settings, environment, cluster,
                                          with_topology=True, extended=True)
             output = settings.environment_dir / "regression" / environment["id"] / target
@@ -352,15 +356,9 @@ class FbaseProvider:
                 sys.executable, "-m", "platform_regress.cli",
                 "--product-dir", str(Path(__file__).resolve().parent),
                 "--output-dir", str(output), "--context-json",
-                json.dumps(context, ensure_ascii=False), "--suite", target,
+                json.dumps(context, ensure_ascii=False), "--suite", suite,
             ], settings.data_dir)
-        script = settings.fbase_regress_root / "run.sh"
-        if not script.is_file():
-            raise FileNotFoundError("FBase 测试入口不存在: %s" % script)
-        command = [str(script), "run", cluster]
-        if target != "all":
-            command.append(target)
-        return CommandSpec(command, settings.fbase_regress_root)
+        raise ValueError("未知 FBase 测试目标: %s" % target)
 
 
 PROVIDER = FbaseProvider()

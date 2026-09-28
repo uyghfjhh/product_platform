@@ -217,6 +217,9 @@ def do_run(args: argparse.Namespace) -> int:
         sample_ids = ", ".join(f"'./run.sh show {s.id}'" for s in registry.all_suites()[:3])
         print(f"Use {sample_ids} to list cases.")
         return 0
+    print("DEPRECATED: 'run.sh run' bypasses the platform engine; results are not "
+          "recorded in the platform result store. Use the platform web task "
+          "entry or platform_regress.cli instead.", file=sys.stderr)
     validate_profile_isolation(load_regression_config(ROOT_DIR))
     if args.target in ("failed", "faild"):
         targets = _read_last_failed()
