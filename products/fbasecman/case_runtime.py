@@ -27,6 +27,10 @@ from platform_regress.evidence.backup import (
     BackupCheckpoint, backup_content_matches, backup_dir_path, backup_files,
     created_backups, snapshot_backup,
 )
+from platform_regress.evidence.config_diff import (
+    strip_inline_comment, parse_semantic_objects,
+    command_mutation_scope, semantic_config_diff,
+)
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.ports import free_port_pair, port_is_free
 from platform_regress.reporting.model import ReportStep
@@ -317,138 +321,13 @@ class FbasecmanCaseRuntime(CaseRuntime):
     # fbasecman.conf 语义级 diff（忽略格式差异，只比对 group/datasources 字段）
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _strip_inline_comment(value):
-        quoted = False
-        escaped = False
-        for index, char in enumerate(value):
-            if escaped:
-                escaped = False
-                continue
-            if char == "\\" and quoted:
-                escaped = True
-                continue
-            if char == '"':
-                quoted = not quoted
-            elif char == "#" and not quoted:
-                return value[:index].rstrip()
-        return value.strip()
-
-    @staticmethod
-    def _semantic_objects(text):
-        objects = {}
-        order = []
-        pattern = re.compile(
-            r'(?ms)^\s*(group|datasources)\s+"([^"]+)"\s*\{(.*?)\}')
-        for match in pattern.finditer(text):
-            kind, name, body = match.groups()
-            identity = (kind, name)
-            if identity in objects:
-                raise ValueError("duplicate object %s %s" % identity)
-            fields = {}
-            token_text = " ".join(
-                FbasecmanCaseRuntime._strip_inline_comment(raw).strip()
-                for raw in body.splitlines()
-                if FbasecmanCaseRuntime._strip_inline_comment(raw).strip()
-            )
-            field_pattern = re.compile(
-                r'([A-Za-z_][A-Za-z0-9_]*)\s+("(?:\\.|[^"\\])*"|[^\s]+)')
-            for field_match in field_pattern.finditer(token_text):
-                key, value = field_match.groups()
-                if key in fields:
-                    raise ValueError("duplicate field %s.%s" % (name, key))
-                fields[key] = value
-            objects[identity] = fields
-            order.append(identity)
-        return objects, order
-
-    @staticmethod
-    def _command_scope(sql, before_objects):
-        """推导一条 SET 命令"允许变更"的字段集合，用于 diff 白名单校验。"""
-        upper = sql.upper()
-        allowed = {}
-        if " WRITE " in upper or " PROMOTED " in upper:
-            names = []
-            groups = re.search(r'(?i)\bIN\s+GROUPS\s*\(([^)]*)\)', sql)
-            group = re.search(r'(?i)\bIN\s+GROUP\s+([^\s;]+)', sql)
-            if groups:
-                names = [item.strip() for item in groups.group(1).split(",")]
-            elif group:
-                names = [group.group(1)]
-            else:
-                names = [name for kind, name in before_objects if kind == "group"]
-            fields = {"promoted_cluster"}
-            if " WRITE " in upper:
-                fields.add("write_cluster")
-            target = re.search(
-                r'(?i)^SET\s+(?:NODE|CLUSTER)\s+(?:WRITE|PROMOTED)\s+([^\s]+)',
-                sql)
-            datasource = target.group(1).strip(";,()") if target else ""
-            cluster = datasource
-            if re.match(r'(?i)^SET\s+NODE\s+', sql):
-                # SET NODE 的目标是 datasource，需先反查它所属的 cluster
-                cluster = next(
-                    (v.get("cluster_name", "").strip('"')
-                     for (k, n), v in before_objects.items()
-                     if k == "datasources" and n == datasource),
-                    datasource)
-            for name in names:
-                for field in fields:
-                    if field == "promoted_cluster" and " WRITE " in upper:
-                        # WRITE 命令同时会重置 promoted_cluster 为原 write_cluster 值
-                        prior = before_objects.get(("group", name), {}).get("write_cluster")
-                        allowed[("group", name, field)] = prior
-                    else:
-                        allowed[("group", name, field)] = '"%s"' % cluster
-        elif upper.startswith("SET CLUSTER "):
-            match = re.search(r'(?i)^SET\s+CLUSTER\s+(?:ACTIVE|PARTED)\s+([^\s;]+)', sql)
-            cluster = match.group(1) if match else ""
-            value = '"active"' if " ACTIVE " in upper else '"parted"'
-            allowed = {
-                (kind, name, "status"): value for (kind, name), fields in before_objects.items()
-                if kind == "datasources" and fields.get("cluster_name", "").strip('"') == cluster
-            }
-        else:
-            field = "weight" if " WEIGHT " in upper else "status"
-            targets = set(re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', sql))
-            assignments = dict(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)', sql))
-            allowed = {
-                (kind, name, field): assignments.get(name) for kind, name in before_objects
-                if kind == "datasources" and name in targets
-            }
-            # Resolve host:port targets against the configuration snapshot.
-            for (kind, name), fields in before_objects.items():
-                endpoint = "%s:%s" % (fields.get("host", "").strip('"'), fields.get("port", ""))
-                if kind == "datasources" and endpoint in sql:
-                    value = assignments.get(name)
-                    allowed[(kind, name, field)] = value
-        return allowed
+    _strip_inline_comment = staticmethod(strip_inline_comment)
+    _semantic_objects = staticmethod(parse_semantic_objects)
+    _command_scope = staticmethod(command_mutation_scope)
 
     def _semantic_config_diff(self, before, after, sql):
         """对比命令前后配置：只有 _command_scope 白名单内的变化才算预期。"""
-        try:
-            old, old_order = self._semantic_objects(before)
-            new, new_order = self._semantic_objects(after)
-        except ValueError as exc:
-            return False, "配置结构错误: %s" % exc
-        lines = []
-        valid = old_order == new_order and set(old) == set(new)
-        if old_order != new_order:
-            lines.append("对象顺序发生变化")
-        allowed = self._command_scope(sql, old)
-        for identity in sorted(set(old) | set(new)):
-            old_fields, new_fields = old.get(identity, {}), new.get(identity, {})
-            for field in sorted(set(old_fields) | set(new_fields)):
-                old_value, new_value = old_fields.get(field), new_fields.get(field)
-                if old_value == new_value:
-                    continue
-                change = (identity[0], identity[1], field)
-                expected = change in allowed and (allowed[change] is None or allowed[change] == new_value)
-                lines.append("%s %s.%s: %s -> %s%s" % (
-                    identity[0], identity[1], field,
-                    old_value, new_value, "" if expected else " [非预期]"))
-                valid = valid and expected
-        return valid, "\n".join(lines) or "<no semantic changes>"
+        return semantic_config_diff(before, after, sql)
 
     # ------------------------------------------------------------------
     # psql 执行助手（console 管理面 / business 业务面 两个入口）
