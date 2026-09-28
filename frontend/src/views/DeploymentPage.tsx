@@ -252,6 +252,7 @@ export default function DeploymentPage({
             {([
               ['create', '⚡ 一键部署'], ['start', '▶ 启动'], ['stop', '⏹ 停止'],
               ['restart', '🔄 重启'], ['clean', '🧹 清理'], ['heal', '🩺 自愈'],
+              ['reset', '♻️ 重置'],
               ['doctor', '🔍 体检'],
             ] as const).map(([name, label]) => {
               const action = actions.find((item) => item.id === `deployment.${name}`);

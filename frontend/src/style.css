@@ -1781,3 +1781,60 @@ button, input, textarea { font-family: inherit; }
   word-break: break-all;
 }
 .sql-workbench-input { font-family: monospace; }
+
+/* §10 研发特性：flaky 徽标 + 失败步骤 diff */
+.flaky-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  white-space: nowrap;
+}
+.failed-step-diff-list {
+  margin: 8px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.failed-step-diff {
+  border: 1px solid var(--border-color, #334155);
+  border-left: 3px solid var(--color-fail, #ef4444);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.failed-step-diff-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-secondary, #94a3b8);
+}
+.failed-step-diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.diff-col-label {
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  margin-bottom: 2px;
+}
+.diff-col pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-secondary, #1e293b);
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow: auto;
+}
+.diff-col.actual pre {
+  border: 1px solid var(--color-fail, #ef4444);
+}

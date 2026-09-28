@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   App as AntApp, Button, Drawer, Layout, Menu, Space, Tag, Typography,
   type MenuProps,
@@ -103,6 +103,32 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     }, 3500);
     return () => window.clearInterval(interval);
   }, [hasActiveTask]);
+
+  // 桌面通知：任务从执行中进入终态时提醒（需要浏览器授权，首次出现活动任务时申请）
+  const notifiedRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!('Notification' in window)) return;
+    const hasActive = tasks.some((item) => ACTIVE_STATUSES.includes(item.status));
+    if (hasActive && Notification.permission === 'default') {
+      void Notification.requestPermission().catch(() => undefined);
+    }
+    tasks.forEach((task) => {
+      const previous = notifiedRef.current[task.id];
+      notifiedRef.current[task.id] = task.status;
+      const wasActive = !previous || ACTIVE_STATUSES.includes(previous);
+      const nowTerminal = !ACTIVE_STATUSES.includes(task.status);
+      if (!wasActive || !nowTerminal || Notification.permission !== 'granted') return;
+      const title = task.status === 'SUCCEEDED' ? '任务完成' : `任务${task.status}`;
+      try {
+        const envLabel = environments.find((item) => item.id === task.environment_id)?.title
+          || task.environment_id || '';
+        new Notification(`[${task.action}] ${title}`, {
+          body: `${task.target || ''} · ${envLabel}`,
+          tag: task.id,
+        });
+      } catch { /* Safari 等非标准实现忽略 */ }
+    });
+  }, [tasks, environments]);
 
   useEffect(() => {
     if (environments.length > 0 && !environments.some((item) => item.id === environmentId)) {

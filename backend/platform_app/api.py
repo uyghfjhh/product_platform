@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import bundle
 from .actions import TERMINAL, action_for_environment, actions_for_environment
 from .product_catalog import ProductManifestError, discover_products, validate_parameters
 from .catalog import get_product, list_products
@@ -548,6 +549,34 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         return FileResponse(candidate, media_type="application/octet-stream",
                             filename=candidate.name,
                             headers={"X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/bundle")
+    def result_bundle(environment_id: str, target: str):
+        if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", target):
+            raise HTTPException(status_code=404, detail="结果不存在")
+        try:
+            payload = bundle.build_bug_bundle(settings, store, environment_id, target)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="环境不存在") from None
+        filename = "bundle-%s-%s.zip" % (environment_id, target)
+        return Response(payload, media_type="application/zip", headers={
+            "Content-Disposition": 'attachment; filename="%s"' % filename})
+
+    @app.get("/api/v1/environments/{environment_id}/results-bundle")
+    def environment_bundle(environment_id: str):
+        try:
+            payload = bundle.build_bug_bundle(settings, store, environment_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="环境不存在") from None
+        filename = "bundle-%s.zip" % environment_id
+        return Response(payload, media_type="application/zip", headers={
+            "Content-Disposition": 'attachment; filename="%s"' % filename})
+
+    @app.get("/api/v1/environments/{environment_id}/flaky")
+    def flaky(environment_id: str, window: int = Query(default=5, ge=2, le=20)):
+        if store.get_environment(environment_id) is None:
+            raise HTTPException(status_code=404, detail="环境不存在")
+        return bundle.flaky_summary(settings, environment_id, window)
 
     @app.get("/api/v1/environments/{environment_id}/diagnostics/{target}")
     def diagnosis(environment_id: str, target: str, profile: str = "default"):

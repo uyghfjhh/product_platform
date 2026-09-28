@@ -195,6 +195,22 @@ def main(argv: list[str] | None = None) -> int:
             context.values["session_error"] = session_error
         result = engine.run(case, context)
         results.append(result)
+        # Flaky tracking: append one verdict line per executed case to the
+        # environment-level history so UI/API can flag unstable targets.
+        history_root = environment.get("history_root")
+        if history_root:
+            try:
+                history_dir = Path(history_root)
+                history_dir.mkdir(parents=True, exist_ok=True)
+                with (history_dir / "history.jsonl").open(
+                        "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({
+                        "target": result.target, "verdict": result.verdict,
+                        "duration": result.duration_seconds,
+                        "run_id": run_id, "at": datetime.now().isoformat(),
+                    }, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
         print(json.dumps(result.to_dict(), ensure_ascii=False), flush=True)
         if result.verdict == "CANCELLED":
             break
@@ -216,8 +232,20 @@ def main(argv: list[str] | None = None) -> int:
             path = Path(path_text)
             return path if path.is_absolute() else args.output_dir / path
 
+        # Attach per-case step journals (expected/actual pairs) so the
+        # offline HTML report can render the step-level diff inspector.
+        payloads = []
+        for item in results:
+            payload = item.to_dict()
+            case_dir = (args.output_dir / item.target
+                        if len(results) > 1 else args.output_dir)
+            steps = _load_steps(case_dir)
+            if steps:
+                payload["steps"] = steps
+            payloads.append(payload)
+
         export_run_reports(
-            results,
+            payloads,
             junit_path=_resolve(args.junit) if args.junit else None,
             html_path=_resolve(args.html) if args.html else None,
             title=args.report_title, suite_name=args.suite_name)
@@ -231,6 +259,28 @@ def main(argv: list[str] | None = None) -> int:
                    ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
     )
     return 0 if counts["PASS"] == len(results) and not suite_errors else 1
+
+
+def _load_steps(case_dir: Path) -> list:
+    """Newest mirrored step journal under a case output dir, if present."""
+    artifacts = case_dir / "artifacts"
+    candidates = sorted(artifacts.glob("*/steps.json")) if artifacts.is_dir() else []
+    if not candidates and (case_dir / "steps.json").is_file():
+        candidates = [case_dir / "steps.json"]
+    if not candidates:
+        return []
+    try:
+        data = json.loads(candidates[-1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    steps = data.get("steps") if isinstance(data, dict) else None
+    if not isinstance(steps, list):
+        return []
+    return [
+        {"title": step.get("title"), "result": step.get("result"),
+         "expected": step.get("expected"), "actual": step.get("actual")}
+        for step in steps if isinstance(step, dict)
+    ]
 
 
 if __name__ == "__main__":

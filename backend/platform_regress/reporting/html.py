@@ -286,6 +286,20 @@ def generate_html_report(
   .toggle-icon {{ color: var(--text-muted); font-size: 14px; margin-left: 8px; }}
 
   /* Case Details Drawer */
+  .step-list {{ margin-bottom: 12px; }}
+  .step-row {{ border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }}
+  .step-row.step-pass {{ border-left: 3px solid var(--status-pass); }}
+  .step-row.step-fail {{ border-left: 3px solid var(--status-fail); }}
+  .step-title {{ font-size: 13px; font-weight: 600; }}
+  .step-result {{ float: right; font-size: 11px; color: var(--text-muted); }}
+  .step-diff {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }}
+  .step-col-title {{ font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }}
+  .step-col pre {{
+    background: var(--bg-secondary); border-radius: 4px; padding: 6px 8px;
+    font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap;
+    word-break: break-all; max-height: 180px; overflow: auto;
+  }}
+  .step-fail .step-col:last-child pre {{ border: 1px solid var(--status-fail); }}
   .case-details {{
     border-top: 1px solid var(--border-color);
     background: #111827;
@@ -484,11 +498,30 @@ def generate_html_report(
             </div>
           </div>
           <div class="case-details">
+            ${{renderSteps(item.steps)}}
             ${{escapeHtml(item.details || item.system_out || '暂无详细输出')}}
           </div>
         </div>
       `;
     }}).join('');
+  }}
+
+  function renderSteps(steps) {{
+    if (!steps || !steps.length) return '';
+    const rows = steps.map((step, i) => {{
+      const result = (step.result || '').toUpperCase();
+      const cls = result === 'PASS' ? 'step-pass' : (result ? 'step-fail' : '');
+      const diff = (step.expected != null || step.actual != null)
+        ? `<div class="step-diff">
+             <div class="step-col"><div class="step-col-title">预期</div><pre>${{escapeHtml(String(step.expected ?? ''))}}</pre></div>
+             <div class="step-col"><div class="step-col-title">实际</div><pre>${{escapeHtml(String(step.actual ?? ''))}}</pre></div>
+           </div>` : '';
+      return `<div class="step-row ${{cls}}">
+        <div class="step-title">${{i + 1}}. ${{escapeHtml(step.title || '')}} <span class="step-result">${{escapeHtml(result)}}</span></div>
+        ${{diff}}
+      </div>`;
+    }}).join('');
+    return `<div class="step-list">${{rows}}</div>`;
   }}
 
   function toggleCase(idx) {{

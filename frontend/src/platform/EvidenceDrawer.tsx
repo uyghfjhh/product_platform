@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Drawer, List, Typography } from 'antd';
+import { Alert, Button, Drawer, List, Typography } from 'antd';
 import { DownloadOutlined, FileTextOutlined } from '@ant-design/icons';
 
 import { api } from './api';
@@ -32,7 +32,13 @@ export default function EvidenceDrawer({ environmentId, target, onClose }: {
     ? `/api/v1/environments/${encodeURIComponent(environmentId)}/results/${encodeURIComponent(target)}/evidence/`
     : '';
 
-  return <Drawer title="执行证据" open={Boolean(target)} onClose={onClose} width={560}>
+  const bundleHref = environmentId && target
+    ? `/api/v1/environments/${encodeURIComponent(environmentId)}/results/${encodeURIComponent(target)}/bundle`
+    : '';
+
+  return <Drawer title="执行证据" open={Boolean(target)} onClose={onClose} width={560}
+    extra={target && <Button size="small" icon={<DownloadOutlined />} href={bundleHref}
+      title="打包环境记录、结果、证据与报告">故障分析包</Button>}>
     <Typography.Text type="secondary" style={{ overflowWrap: 'anywhere' }}>{target}</Typography.Text>
     {error && <Alert type="error" message={error} style={{ marginTop: 16 }} />}
     <List loading={loading} style={{ marginTop: 16 }} dataSource={index?.evidence || []}

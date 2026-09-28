@@ -48,6 +48,7 @@ def row_from_case_result(result):
         "message": reason,
         "details": details,
         "system_out": "",
+        "steps": list(result.get("steps") or []),
     }
 
 

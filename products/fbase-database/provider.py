@@ -330,6 +330,8 @@ class FbaseProvider:
                 settings, environment, cluster,
                 with_topology=case_impl is not None,
                 extended=type(case_impl).__name__ == "ExportedCommandCase")
+            context["history_root"] = str(
+                settings.environment_dir / "regression" / environment["id"])
             output = settings.environment_dir / "regression" / environment["id"] / target
             target_args = ["--suite", target] if "." not in target else [target]
             return CommandSpec([
@@ -346,6 +348,8 @@ class FbaseProvider:
             suite = cluster if target == "all" else target
             context = self._test_context(settings, environment, cluster,
                                          with_topology=True, extended=True)
+            context["history_root"] = str(
+                settings.environment_dir / "regression" / environment["id"])
             output = settings.environment_dir / "regression" / environment["id"] / target
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",

@@ -38,6 +38,7 @@ DEPLOYMENT_ACTIONS = frozenset({
     "deployment.start", "deployment.stop", "deployment.restart",
     "deployment.clean", "deployment.failover", "deployment.rejoin",
     "deployment.lag", "deployment.verify", "deployment.switchover",
+    "deployment.reset",
 })
 
 
@@ -63,6 +64,7 @@ ACTIONS = {
         Action("deployment.stop", "停止集群", "deployment", True),
         Action("deployment.restart", "重启集群", "deployment", True),
         Action("deployment.clean", "清理集群", "deployment", True),
+        Action("deployment.reset", "重置环境（杀残留进程并重启）", "deployment", True),
         Action("deployment.failover", "主备故障切换", "deployment", True),
         Action("deployment.switchover", "主备计划内切换", "deployment", True),
         Action("deployment.rejoin", "重建旧主节点", "deployment", True),

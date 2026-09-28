@@ -109,6 +109,11 @@ class PgclusterDatabaseProvider:
                 sys.executable, str(Path(__file__).with_name("pgcluster_heal.py")),
                 str(pgcluster), str(config_file), target,
             ], settings.pgcluster_root)
+        if cli_action == "reset":
+            return CommandSpec([
+                sys.executable, str(Path(__file__).with_name("pgcluster_reset.py")),
+                str(pgcluster), str(config_file), target,
+            ], settings.pgcluster_root)
         command = [sys.executable, str(pgcluster), "-f", str(config_file), cli_action]
         if cli_action != "doctor":
             command.append(target)

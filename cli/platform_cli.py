@@ -270,6 +270,37 @@ def cmd_doctor(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_pack(args) -> int:
+    """导出故障分析包（bug bundle）：环境/结果/证据/报告/历史打成 zip。"""
+    settings = load_settings()
+    store = FileStore(settings.data_dir)
+    _, environment = _resolve_product(
+        settings, store, args.target or "all", args.env, args.product)
+    from platform_app import bundle
+    target = args.target if args.target not in (None, "all") else None
+    payload = bundle.build_bug_bundle(
+        settings, store, environment["id"], target)
+    suffix = target or "all"
+    output = Path(args.output or f"bundle-{environment['id']}-{suffix}.zip")
+    output.write_bytes(payload)
+    print(f"[pack] {output.resolve()} ({len(payload)} bytes)")
+    return 0
+
+
+def cmd_reset(args) -> int:
+    """重置环境：清理残留进程并重启集群，等待健康检查通过。"""
+    settings = load_settings()
+    store = FileStore(settings.data_dir)
+    _, environment = _resolve_product(
+        settings, store, "all", args.env, args.product)
+    target = args.node or environment.get("deployment_target")
+    if not target:
+        raise SystemExit("环境未声明 deployment_target，请用 --node 指定")
+    spec = command_for(settings, environment, "deployment.reset", target, {})
+    print(f"[reset] env={environment['id']} target={target}", flush=True)
+    return subprocess.run(list(spec.command), cwd=spec.cwd).returncode
+
+
 def cmd_clean(args) -> int:
     """清理运行产物：回归输出目录、失败标记、遗留锁文件。"""
     settings = load_settings()
@@ -326,6 +357,17 @@ def main(argv: list[str] | None = None) -> int:
     clean = sub.add_parser("clean", help="清理运行产物与遗留锁")
     clean.add_argument("--env", help="只清理指定环境")
     clean.set_defaults(func=cmd_clean)
+    pack = sub.add_parser("pack", help="导出故障分析包（bug bundle zip）")
+    pack.add_argument("target", nargs="?", help="用例目标；缺省打包整个环境")
+    pack.add_argument("--env")
+    pack.add_argument("--product")
+    pack.add_argument("--output", "-o", help="输出 zip 路径")
+    pack.set_defaults(func=cmd_pack)
+    reset = sub.add_parser("reset", help="重置环境：清残留进程并重启集群")
+    reset.add_argument("--env")
+    reset.add_argument("--product")
+    reset.add_argument("--node", help="集群目标（默认取环境 deployment_target）")
+    reset.set_defaults(func=cmd_reset)
     args = parser.parse_args(argv)
     return args.func(args)
 

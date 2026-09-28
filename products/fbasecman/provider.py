@@ -243,6 +243,7 @@ class FbasecmanProvider:
                     "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 if native_target:
                     case_context.update(
@@ -259,6 +260,7 @@ class FbasecmanProvider:
                     "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -273,6 +275,7 @@ class FbasecmanProvider:
                     "legacy_source": str(settings.product_regress_root("fbasecman")),
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -289,6 +292,7 @@ class FbasecmanProvider:
                 "legacy_source": str(settings.product_regress_root("fbasecman")),
                 "legacy_override": str(override),
                 "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                "history_root": str(settings.environment_dir / "regression" / environment["id"]),
             }
             case_context.update(suite_case_context(settings, environment))
             return CommandSpec([

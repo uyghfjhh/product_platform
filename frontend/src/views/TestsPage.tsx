@@ -64,8 +64,23 @@ export default function TestsPage({
   const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
   const [failedModalOpen, setFailedModalOpen] = useState(false);
   const [failedReasons, setFailedReasons] = useState<Record<string, string>>({});
+  const [failedSteps, setFailedSteps] = useState<Record<string, Array<{
+    status: string; title?: string; actual?: string; expected?: string;
+  }>>>({});
+  const [flakyMap, setFlakyMap] = useState<Record<string, { flaky: boolean; recent: string[] }>>({});
 
-  useEffect(() => { setFailedReasons({}); }, [environment?.id]);
+  useEffect(() => { setFailedReasons({}); setFailedSteps({}); }, [environment?.id]);
+
+  // Flaky 追踪：拉取该环境最近判定历史，标记不稳定用例
+  useEffect(() => {
+    if (!environment?.id) { setFlakyMap({}); return; }
+    let cancelled = false;
+    void api<Record<string, { flaky: boolean; recent: string[] }>>(
+      `/environments/${encodeURIComponent(environment.id)}/flaky`)
+      .then((data) => { if (!cancelled) setFlakyMap(data || {}); })
+      .catch(() => { if (!cancelled) setFlakyMap({}); });
+    return () => { cancelled = true; };
+  }, [environment?.id, results]);
 
   const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
   const ReportDrawer = testFrontend(product)?.ReportViewer;
@@ -240,7 +255,7 @@ export default function TestsPage({
       if (failedReasons[c.target]) return;
       api<{
         summary?: { reason?: string };
-        parsed?: { reason?: string; steps?: Array<{ status: string; actual?: string; expected?: string }> };
+        parsed?: { reason?: string; steps?: Array<{ status: string; title?: string; actual?: string; expected?: string }> };
       }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id) : '')
         .then((data) => {
           if (cancelled) return;
@@ -250,6 +265,9 @@ export default function TestsPage({
             if (failedStep) {
               reason = failedStep.actual || failedStep.expected || '步骤执行失败';
             }
+          }
+          if (data.parsed?.steps?.length) {
+            setFailedSteps((prev) => ({ ...prev, [c.target]: data.parsed!.steps! }));
           }
           setFailedReasons((prev) => ({
             ...prev,
@@ -635,6 +653,12 @@ export default function TestsPage({
                             <span className={`result-badge ${statusClass}`}>
                               {st === 'PASS' ? '✓ PASS' : st === 'FAIL' ? '✗ FAIL' : '○ UNTESTED'}
                             </span>
+                            {flakyMap[c.target]?.flaky && (
+                              <span className="flaky-badge"
+                                title={`最近判定不一致: ${(flakyMap[c.target].recent || []).join(' → ')}`}>
+                                ⚡ flaky
+                              </span>
+                            )}
                             <span className="duration-label" title="测试耗时">
                               {dur}
                             </span>
@@ -741,6 +765,30 @@ export default function TestsPage({
                 <div className="failed-card-reason-box">
                   {failedReasons[c.target] || '正在载入失败原因与检测项...'}
                 </div>
+
+                {(failedSteps[c.target] || []).some((s) => s.status === 'FAIL') && (
+                  <div className="failed-step-diff-list">
+                    {(failedSteps[c.target] || [])
+                      .filter((s) => s.status === 'FAIL')
+                      .map((step, index) => (
+                        <div key={index} className="failed-step-diff">
+                          <div className="failed-step-diff-title">
+                            步骤{step.title ? `：${step.title}` : ` ${index + 1}`}
+                          </div>
+                          <div className="failed-step-diff-grid">
+                            <div className="diff-col">
+                              <div className="diff-col-label">预期</div>
+                              <pre>{step.expected || '（无）'}</pre>
+                            </div>
+                            <div className="diff-col actual">
+                              <div className="diff-col-label">实际</div>
+                              <pre>{step.actual || '（无）'}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
 
                 <div className="failed-card-bottom">
                   <span>测试耗时: {c.duration}</span>
