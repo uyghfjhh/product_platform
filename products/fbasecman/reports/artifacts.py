@@ -216,14 +216,15 @@ def case_log(settings: Settings, target: str, filename: str, *,
 
 
 def sync_current_results(store: Store, settings: Settings, environment: dict,
-                         target: str, started_at: str) -> int:
+                         target: str, started_at: str,
+                         operation_id: str | None = None) -> int:
     """只同步本次更新的产物，避免把此前 PASS 当成本次结论。"""
     started = datetime.fromisoformat(started_at).timestamp() - 1
     count = 0
     for case, info in recent_case_statuses(settings, environment["id"]).items():
         if info["modified_at"] < started:
             continue
-        if target not in {"failed", case, case.split(".", 1)[0]}:
+        if target not in {"failed", "all", case, case.split(".", 1)[0]}:
             continue
         status = info["status"] if info["status"] in {"PASS", "FAIL"} else "ERROR"
         directory = case_directory(settings, case, environment["id"])
@@ -237,6 +238,28 @@ def sync_current_results(store: Store, settings: Settings, environment: dict,
         store.put_result(environment["product_id"], environment["id"], case,
                          "default", status, reason, str(directory))
         count += 1
+    # Native cases write the platform result model under
+    # data/regression/<env>/**/result.json instead of the legacy report tree.
+    platform_root = settings.environment_dir / "regression" / environment["id"]
+    if platform_root.is_dir():
+        for result_path in sorted(platform_root.rglob("result.json")):
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if result.get("schema_version") != "1.0" or not result.get("target"):
+                continue
+            if operation_id and result.get("operation_id") != operation_id:
+                continue
+            if not operation_id and result_path.stat().st_mtime < started:
+                continue
+            case = result["target"]
+            if target not in {"failed", "all", case, case.split(".", 1)[0]}:
+                continue
+            store.put_result(environment["product_id"], environment["id"], case,
+                             "default", result.get("verdict", "ERROR"),
+                             result.get("reason"), str(result_path.parent))
+            count += 1
     return count
 
 

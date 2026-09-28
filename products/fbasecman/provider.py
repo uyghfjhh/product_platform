@@ -32,6 +32,72 @@ CASE_TARGETS = frozenset(
 )
 
 
+def native_case_context(settings, environment):
+    """Shared context for native fbasecman cases (binary/license/topology/assets)."""
+    topology = configured_topology(settings, environment)
+    primaries = {node.get("group"): node for node in topology["nodes"]
+                 if node.get("role") == "primary"}
+    if "mmr1" not in primaries or "mmr2" not in primaries:
+        raise RuntimeError("fbasecman 原生用例需要 mmr1/mmr2 两个主节点")
+    runtime_file = settings.fbasecman_regress_root / "regress.yaml"
+    runtime = yaml.safe_load(runtime_file.read_text(encoding="utf-8"))
+    fbasecman = runtime.get("fbasecman", {})
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    proxy_port = listener.getsockname()[1]
+    listener.close()
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", proxy_port + 2))
+    except OSError as exc:
+        raise RuntimeError("代理端口相邻的 metrics 端口已占用，请重试") from exc
+    finally:
+        probe.close()
+    context = {
+        "nodes": {"mmr1": {"host": primaries["mmr1"]["host"],
+                            "port": primaries["mmr1"]["port"]},
+                  "mmr2": {"host": primaries["mmr2"]["host"],
+                            "port": primaries["mmr2"]["port"]}},
+        "user": environment.get("database_user") or "postgres",
+        "fbasecman_bin": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_BIN")
+        or fbasecman.get("fbasecman_bin"),
+        "license_dir": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR")
+        or fbasecman.get("license_dir"),
+        "proxy_port": proxy_port,
+    }
+    extras = {}
+    for alias, group in (("pg_3", "mmr1"), ("pg_4", "mmr2")):
+        standby = next((node for node in topology["nodes"]
+                        if node.get("group") == group and node.get("role") == "standby"), None)
+        if standby:
+            extras[alias] = {"host": standby["host"], "port": standby["port"]}
+    context["extra_nodes"] = extras
+    # JDBC assets are keyed per case; inject both unconditionally so suite and
+    # failed runs carry them for any native member that needs one.
+    context.update({
+        "sql_parse_java_asset": str(settings.fbasecman_regress_root /
+            "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
+        "ha_console_java_asset": str(settings.fbasecman_regress_root /
+            "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
+        "jdbc_jar": str(settings.fbasecman_regress_root /
+            "lib_jdbc/postgresql-42.7.7.jar"),
+    })
+    return context
+
+
+def suite_case_context(settings, environment):
+    """Best-effort native context for suite/failed runs containing native cases.
+
+    Suites mix legacy and native members; when the topology or binary inputs
+    are missing the native members report BLOCKED themselves, so failures here
+    degrade to an empty mapping instead of failing the whole run.
+    """
+    try:
+        return native_case_context(settings, environment)
+    except (RuntimeError, ValueError, FileNotFoundError, OSError):
+        return {}
+
+
 class FbasecmanProvider:
     """Product rules and commands; task lifecycle belongs to the platform."""
 
@@ -108,6 +174,7 @@ class FbasecmanProvider:
         count = sync_current_results(
             store, settings, environment, task["target"],
             task["started_at"] or task["created_at"],
+            operation_id=task["id"],
         )
         if count:
             return terminal, reason
@@ -163,58 +230,8 @@ class FbasecmanProvider:
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
                 if native_target:
-                    topology = configured_topology(settings, environment)
-                    primaries = {node.get("group"): node for node in topology["nodes"]
-                                 if node.get("role") == "primary"}
-                    if "mmr1" not in primaries or "mmr2" not in primaries:
-                        raise RuntimeError("fbasecman 原生用例需要 mmr1/mmr2 两个主节点")
-                    runtime_file = settings.fbasecman_regress_root / "regress.yaml"
-                    runtime = yaml.safe_load(runtime_file.read_text(encoding="utf-8"))
-                    fbasecman = runtime.get("fbasecman", {})
-                    listener = socket.socket()
-                    listener.bind(("127.0.0.1", 0))
-                    proxy_port = listener.getsockname()[1]
-                    listener.close()
-                    probe = socket.socket()
-                    try:
-                        probe.bind(("127.0.0.1", proxy_port + 2))
-                    except OSError as exc:
-                        raise RuntimeError("代理端口相邻的 metrics 端口已占用，请重试") from exc
-                    finally:
-                        probe.close()
-                    case_context.update({
-                        "nodes": {"mmr1": {"host": primaries["mmr1"]["host"],
-                                            "port": primaries["mmr1"]["port"]},
-                                  "mmr2": {"host": primaries["mmr2"]["host"],
-                                            "port": primaries["mmr2"]["port"]}},
-                        "user": environment.get("database_user") or "postgres",
-                        "fbasecman_bin": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_BIN")
-                        or fbasecman.get("fbasecman_bin"),
-                        "license_dir": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR")
-                        or fbasecman.get("license_dir"),
-                        "proxy_port": proxy_port,
-                    })
-                    extras = {}
-                    for alias, group in (("pg_3", "mmr1"), ("pg_4", "mmr2")):
-                        standby = next((node for node in topology["nodes"]
-                                        if node.get("group") == group and node.get("role") == "standby"), None)
-                        if standby:
-                            extras[alias] = {"host": standby["host"], "port": standby["port"]}
-                    case_context["extra_nodes"] = extras
-                    if target == "ha_commands.sql_parse_extended_protocol":
-                        case_context.update({
-                            "sql_parse_java_asset": str(settings.fbasecman_regress_root /
-                                "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
-                            "jdbc_jar": str(settings.fbasecman_regress_root /
-                                "lib_jdbc/postgresql-42.7.7.jar"),
-                        })
-                    if target == "ha_commands.jdbc_console_ha_commands":
-                        case_context.update({
-                            "ha_console_java_asset": str(settings.fbasecman_regress_root /
-                                "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
-                            "jdbc_jar": str(settings.fbasecman_regress_root /
-                                "lib_jdbc/postgresql-42.7.7.jar"),
-                        })
+                    case_context.update(
+                        native_case_context(settings, environment))
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -228,6 +245,7 @@ class FbasecmanProvider:
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
+                case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -241,17 +259,28 @@ class FbasecmanProvider:
                     "legacy_override": str(override),
                     "legacy_report_root": str(legacy_root(settings, environment["id"])),
                 }
+                case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
                     "--output-dir", str(output), "--context-json", json.dumps(case_context),
                     "failed",
                 ], settings.data_dir)
+            # `all` runs through the platform engine too: the legacy run.py
+            # entrypoint does not know the native cases, so dropping it here is
+            # what lets suite-level coverage reach all 212 catalog targets.
+            output = settings.environment_dir / "regression" / environment["id"]
+            case_context = {
+                "legacy_source": str(settings.fbasecman_regress_root),
+                "legacy_override": str(override),
+                "legacy_report_root": str(legacy_root(settings, environment["id"])),
+            }
+            case_context.update(suite_case_context(settings, environment))
             return CommandSpec([
-                sys.executable, str(Path(__file__).resolve().parent / "regression" / "run.py"),
-                "--source", str(settings.fbasecman_regress_root),
-                "--override", str(override), target,
-            ], settings.fbasecman_regress_root)
+                sys.executable, "-m", "platform_regress.cli",
+                "--product-dir", str(Path(__file__).resolve().parent),
+                "--output-dir", str(output), "--context-json", json.dumps(case_context),
+            ], settings.data_dir)
         if action == "tests.prepare_fbasecman":
             profile, override = profile_paths(settings, environment["id"])
             if not profile.is_file() or not override.is_file():
