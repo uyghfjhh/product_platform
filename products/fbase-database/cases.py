@@ -3,12 +3,12 @@
 import importlib.util
 import json
 import re
-import shutil
 import uuid
 from pathlib import Path
 
 from platform_regress import (Blocked, run_declared_steps, run_sql_step,
                               SUPPORTED_COMMAND_ASSERTIONS, SUPPORTED_SQL_ASSERTIONS)
+from platform_regress.requirements import evaluate_requirements, register_requirement
 import psycopg
 
 
@@ -424,59 +424,22 @@ def _scalar(context, node, sql):
     return rows[0][0] if rows and rows[0] else None
 
 
+@register_requirement("writable_node", before="system_time_control")
+def _require_writable_node(context, requirements):
+    """Product gate: a healthy writable node (pg_isready + recovery/health row)."""
+    if not requirements.get("writable_node"):
+        return
+    cluster_name = context.environment.get("cluster_name") or \
+        context.environment.get("cluster")
+    node = context.resolve_node(requirements.get("node") or "primary")
+    row = fixtures_mod.node_status_row(context, node)
+    if not row or row[5] != "false" or row[6] != "healthy":
+        raise Blocked("cluster %s 没有健康的可写节点" % cluster_name)
+
+
 def check_requirements(context, definition):
     """Mirror the legacy requirement gate exactly (evaluate_requirements)."""
-    requirements = definition.get("requirements") or {}
-    cluster = context.environment.get("cluster")
-    cluster_name = context.environment.get("cluster_name") or cluster
-    allowed = requirements.get("clusters") or []
-    if allowed and cluster not in allowed:
-        raise Blocked("用例仅支持 cluster=%s；当前为 %s" % (",".join(allowed), cluster))
-    for command in requirements.get("commands") or []:
-        if not isinstance(command, str) or not command:
-            raise ValueError("requirements.commands 必须包含非空命令名: %s" % command)
-        if not shutil.which(command):
-            raise Blocked("缺少命令: %s；请安装 util-linux（提供 %s）" % (command, command))
-    missing_plugins = sorted(set(requirements.get("plugins") or []) -
-                             set(context.environment.get("plugins") or []))
-    if missing_plugins:
-        raise Blocked("cluster %s 未启用插件: %s" % (cluster_name, ",".join(missing_plugins)))
-    for group in requirements.get("groups") or []:
-        if group not in (context.environment.get("node_groups") or {}):
-            raise Blocked("cluster %s 缺少关系组: %s" % (cluster_name, group))
-    for selector in requirements.get("nodes") or []:
-        context.resolve_node(selector)
-    node = context.resolve_node(requirements.get("node") or "primary")
-    if requirements.get("writable_node"):
-        row = fixtures_mod.node_status_row(context, node)
-        if not row or row[5] != "false" or row[6] != "healthy":
-            raise Blocked("cluster %s 没有健康的可写节点" % cluster_name)
-    if requirements.get("system_time_control"):
-        result = context.command(["sudo", "-n", "true"], timeout_seconds=30,
-                                 merge_stderr=True)
-        if result.returncode != 0:
-            raise Blocked("密码周期用例需要免交互 sudo 调整并恢复系统时间；"
-                          "请安装 sudo 并为当前测试用户配置 sudo -n true")
-    for role in requirements.get("roles") or []:
-        try:
-            exists = fixtures_mod.query_value(
-                context, node, "postgres",
-                "SELECT count(*) FROM pg_roles WHERE rolname = '%s'"
-                % str(role).replace("'", "''"))
-        except Exception as exc:
-            raise Blocked("无法检查角色 %s: %s" % (role, exc))
-        if exists != "1":
-            raise Blocked("缺少数据库角色: %s" % role)
-    for extension in requirements.get("extensions") or []:
-        try:
-            available = fixtures_mod.query_value(
-                context, node, "postgres",
-                "SELECT count(*) FROM pg_available_extensions WHERE name = '%s'"
-                % str(extension).replace("'", "''"))
-        except Exception as exc:
-            raise Blocked("无法检查扩展 %s: %s" % (extension, exc))
-        if available != "1":
-            raise Blocked("缺少可用 PostgreSQL 扩展: %s" % extension)
+    evaluate_requirements(context, definition.get("requirements") or {})
 
 
 class ExportedCommandCase:
