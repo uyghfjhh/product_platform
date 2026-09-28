@@ -286,6 +286,18 @@ def test_command_records_nonzero_exit_without_rewriting_business_verdict(tmp_pat
     assert events[-1]["kind"] == "command.finished"
 
 
+def test_context_can_stop_product_process_before_replacement(tmp_path):
+    context = CaseContext("demo.process-replacement", tmp_path)
+    process = context.start_process(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        timeout_seconds=1,
+    )
+
+    context.stop_processes()
+
+    assert process.poll() is not None
+
+
 def test_command_allows_explicit_empty_argument(tmp_path):
     context = CaseContext("demo.empty-arg", tmp_path)
     result = context.command([sys.executable, "-c", "import sys; assert sys.argv[1] == ''", ""])

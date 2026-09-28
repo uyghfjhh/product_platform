@@ -1,18 +1,13 @@
 """fbasecman regression targets registered with the platform engine.
 
-Legacy suite cases execute in-process through ``suites.<id>.suite.run_case``
-inside the platform ``RegressionEngine``; the suite still owns fixtures,
-assertions and report artifacts, while the engine owns scheduling, verdict
-mapping and evidence collection.
+Every catalog target is registered as a platform ``RegressionCase``. Rewritten
+cases use platform SDK primitives directly; suites still being rewritten bind
+product runtimes and executors through the platform ``RuntimeExecutorCase``.
 """
 
-import importlib
 import json
 import sys
 from pathlib import Path
-
-from platform_regress import Blocked
-from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        ReloadDisableMonitorRouteLossCase,
                                        OutstandingConsistencyCase, RwToggleCase,
@@ -21,6 +16,8 @@ from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
                                         SetNodeWeightIdempotentCase)
 from products.fbasecman.ha_native import HaCommandsCase
+from products.fbasecman.common_native import CommonCase
+from products.fbasecman.runtime_cases import runtime_case
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -76,55 +73,14 @@ def _suite_specs(source):
     return specs
 
 
-class LegacyCmanCase(LegacySuiteCase):
-    """fbasecman suite case executed by its own ``run_case`` in-process."""
-
-    def __init__(self, target, metadata, default_enabled=True):
-        super().__init__(
-            target, self._resolve,
-            summary=metadata.get("summary") or "",
-            default_enabled=default_enabled,
-            # The handover suite serializes through output/handover.lock.
-            lock_name="handover" if target.startswith("handover.") else None,
-        )
-        self._metadata = metadata
-
-    def _resolve(self, context):
-        environment = context.environment or {}
-        source = Path(environment.get("legacy_source")
-                      or DEFAULT_LEGACY_ROOT).resolve()
-        override_value = environment.get("legacy_override")
-        report_value = environment.get("legacy_report_root")
-        if not override_value or not report_value:
-            raise Blocked("缺少当前环境的 fbasecman 测试配置或报告目录")
-        override = Path(override_value).resolve()
-        if not (source / "suites" / "registry.py").is_file() or not override.is_file():
-            raise Blocked("fbasecman 用例来源或环境覆盖配置不存在")
-        _EXTRA_CONFIGS[:] = [override]
-        registry = _load_registry(source)
-        suite_id, _, name = self.target.partition(".")
-        plugin = registry.get(suite_id)
-        if plugin is None:
-            raise Blocked("未注册的 fbasecman 套件: %s" % suite_id)
-        spec = next((item for item in plugin.get_cases() if item.name == name), None)
-        if spec is None:
-            raise Blocked("套件 %s 没有用例 %s" % (suite_id, name))
-        import cmanconf as configuration
-        environment_cfg = configuration.load_regression_config(source)
-        configuration.validate_profile_isolation(environment_cfg)
-        suite_module = importlib.import_module("suites.%s.suite" % suite_id)
-        run_case = getattr(suite_module, "run_case", None)
-        if run_case is None:
-            raise Blocked("套件 %s 尚未接入平台执行路径" % suite_id)
-
-        def run_root(item):
-            return (environment_cfg.output_dir / "runs" /
-                    item.suite_id / item.name)
-
-        return LegacyCaseBinding(spec, run_case, source, run_root=run_root)
-
-
 NATIVE_CASES = {
+    **{
+        "common." + name: CommonCase(name)
+        for name in (
+            "console_commands", "err_logger_rotation",
+            "route_stats_quantiles", "worker_thread_lifecycle",
+        )
+    },
     "sql_parse.savepoint_recovery_after_local_25p02": SavepointRecoveryCase(),
     "sql_parse.heartbeat_bind_normal": HeartbeatBindCase("normal"),
     "sql_parse.heartbeat_bind_invalid": HeartbeatBindCase("malformed"),
@@ -208,15 +164,12 @@ NATIVE_CASES = {
 _LEGACY_SPECS = _suite_specs(DEFAULT_LEGACY_ROOT)
 
 
-def _legacy_case(item):
+def _migrating_case(item):
+    suite_id = item["target"].partition(".")[0]
     spec = _LEGACY_SPECS.get(item["target"])
-    enabled = item.get("enabled", True)
-    if spec is not None:
-        enabled = enabled and getattr(spec, "enabled", True) \
-            and not getattr(spec, "long_time", False)
-    return LegacyCmanCase(item["target"], item, default_enabled=bool(enabled))
+    return runtime_case(item, spec)
 
 
 CASES = {item["target"]: NATIVE_CASES.get(
-    item["target"], _legacy_case(item)) for item in CASE_METADATA}
+    item["target"], _migrating_case(item)) for item in CASE_METADATA}
 CASE_ORDER = [item["target"] for item in CASE_METADATA]

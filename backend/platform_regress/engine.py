@@ -27,6 +27,15 @@ class Cancelled(RuntimeError):
     """The execution received a cooperative cancellation request."""
 
 
+class CaseFailure(Exception):
+    """A business check failed; maps to the FAIL verdict.
+
+    Product runtime adapters raise domain failures derived from this base so
+    the engine can distinguish a genuine test failure from an executor or
+    infrastructure defect (which remains ERROR).
+    """
+
+
 class RegressionCase(Protocol):
     def run(self, context: "CaseContext") -> bool | None: ...
 
@@ -164,6 +173,7 @@ class CaseContext:
         self._cleanup_actions: list[tuple[int, int, Callable[[], None]]] = []
         self._cleanup_sequence = 0
         self._processes: list[subprocess.Popen] = []
+        self._process_handles: dict[int, Any] = {}
         self._process_logs: list[Path] = []
         output_dir.mkdir(parents=True, exist_ok=True)
         # The directory contains only the current result. A rerun starts a new
@@ -187,6 +197,13 @@ class CaseContext:
         """
         self._cleanup_actions.append((priority, self._cleanup_sequence, action))
         self._cleanup_sequence += 1
+
+    def stop_processes(self) -> None:
+        """Stop product processes started by this case before starting a replacement."""
+        for process in reversed(self._processes):
+            handle = self._process_handles.pop(id(process), None)
+            self._stop_process(process, handle)
+        self._processes.clear()
 
     def cleanup_fixtures(self) -> None:
         """Run registered fixture cleanup in reverse order."""
@@ -673,7 +690,9 @@ class CaseContext:
             log_handle.close()
             raise
         self._processes.append(process)
-        self.defer_cleanup(lambda: self._stop_process(process, log_handle))
+        self._process_handles[id(process)] = log_handle
+        self.defer_cleanup(lambda: self._stop_process(
+            process, self._process_handles.pop(id(process), None)))
         self.emit("process.started", {"executable": Path(argv[0]).name, "pid": process.pid})
         deadline = time.monotonic() + timeout_seconds
         if ready_host and ready_port:
@@ -703,7 +722,8 @@ class CaseContext:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
         finally:
-            log_handle.close()
+            if log_handle is not None:
+                log_handle.close()
 
 
 class RegressionEngine:
@@ -738,6 +758,8 @@ class RegressionEngine:
             business, reason = "BLOCKED", str(exc)
         except Cancelled as exc:
             business, reason = "CANCELLED", str(exc)
+        except CaseFailure as exc:
+            business, reason = "FAIL", str(exc) or "用例断言失败"
         except AssertionError as exc:
             business, reason = "FAIL", str(exc) or "断言失败"
         except Exception as exc:  # noqa: BLE001 - executor errors are results

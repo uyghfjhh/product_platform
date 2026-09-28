@@ -9,7 +9,7 @@
 | 产品 | 用例数 | 执行路径 | 实测基线 | 未完成原因 |
 | --- | --- | --- | --- | --- |
 | fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 161 PASS + 2 FAIL + 2 BLOCKED | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
-| fbasecman | 212（148 legacy + 64 native） | 平台引擎 + 进程内 `LegacySuiteCase` 适配，套件 `run_case` 全权持有业务语义 | 见 §4.3 分套件 | native 已覆盖 sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18（全套真实环境 PASS）；剩余 148 条按 suite 分批迁移中 |
+| fbasecman | 212（144 迁移中 + 68 native） | 平台引擎 + 平台 SDK 原生用例；迁移中部分经平台 `RuntimeExecutorCase`/`_GlobalCachePlatformCase` 宿主持有产品 runtime/executor，`LegacySuiteCase`/`SuiteNativeCase` 已删除 | 见 §4.3 分套件 | native 已覆盖 common 4、sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18；common 本轮尚未在切换后的真实环境重跑，其余基线见 §4.3；剩余 144 条 verdict/teardown/env 注入已对齐平台契约，executor 与 runtime 生命周期实现仍在产品上收中 |
 
 **唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。`run.py`/`run.sh`/`tools/cli.py` 保留为独立入口，内部委托同一批 `run_case`，不是第二执行引擎。
 
@@ -32,7 +32,7 @@
 | `reporting/` | model、renderer、junit、html、export（CaseResult 事实模型→双格式；BLOCKED/CANCELLED→SKIPPED） | 已上收 |
 | `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
 
-平台侧测试：**226 passed**（D1 删除 `LegacyFbaseCase` 后两个桥接构造测试随删）；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
+平台侧测试：**229 passed**；vendored fbasecman 单测：**259 passed**；FBase vendored 单测：**149 passed**；前端生产构建通过（2026-09-28 本轮验证）。
 
 ## 3. 已完成的结构性工作
 
@@ -119,7 +119,9 @@
 
 ### D. 收尾（design.md §12 P2 未完成项）
 
-- cman 用例逐步从 `run_case` 壳迁到声明式/半声明式（`sql_parse`/`ha_commands` 的协议步骤可表达为 pgwire 断言序列）——未启动；202 条 Python executor 的逐条迁移是大规模工程，建议在真实环境回归稳定后按 suite 分批进行。
+- **迁移完成口径以 design.md §5.0.1 为准**：平台 SDK 缺能力时直接补平台公共契约；产品只保留配置、协议、专属 fixture 与业务断言；行为保真但不保留旧结构。`SuiteNativeCase`、`LegacySuiteCase`、suite `run_case`、旧 Runtime/runner 依赖全部删除前，不得宣称 SDK 原生迁移完成。
+- cman 用例逐步从 `run_case` 壳迁到声明式/半声明式：已完成 common 4 条的平台 SDK 原生宿主，步骤、列清单、并发规模、错误注入、quantiles 与 worker 生命周期判定按参考工程保留；`CaseContext.stop_processes()` 支持同一用例切换配置前停止旧实例。本轮自动验证通过，因环境切换后缺少 CLI 所需部署配置，尚待在真实 cman 环境逐条复跑。
+- 剩余 144 条状态（本轮推进）：平台执行路径已**不再经过** suite `run_case`/`run_cases`/`run_runtime_case`——判定、teardown 顺序、锁与证据桥接全部由 `RuntimeExecutorCase`（ha_commands 60、high_availability 10、handover 56）和 `_GlobalCachePlatformCase`（global_cache 18，复刻 `_run_case` 两段式判定含 core 检测）承载；套件失败类型基类上收为平台 `CaseFailure`→FAIL，verdict 与 legacy 逐条等价；handover 套件锁改为逐用例 `__enter__/__exit__`；runtime 初始化失败保留 legacy init `report.txt`；`run_root` 继续落在 `env.output_dir`（Web UI 契约不变），`_finalize_run` 把 report/summary/steps/日志镜像进平台证据面。修复一处真实缺陷：`set_legacy_config_loader` 此前绑定未包装 loader，runtime `__init__` 内部 env 加载不吃环境 override。**仍未完成**：executor 函数体与 runtime 中的通用生命周期实现（record_step/write_report/journal/run_command 等）仍在 legacy 模块，vendored `run()`/`run_case` 保留为人工诊断入口与单测 patch 点；按 §5.0.1 口径这些不算 SDK 原生完成，后续继续上收或原地收敛。
 - `run.py`/`tools/cli.py`/`run.sh` 退役进展（2026-09-28）：
   - `products/fbasecman/regression/run.py` 收缩为纯 `--check-profile` 校验工具，case 执行循环已删（平台 `platform_regress.cli` 是唯一执行入口）。
   - `products/fbasecman/regression/legacy/tools/cli.py` `do_run` 增加 deprecation 警告；`legacy/run.sh` 头注标明仅保留 env/doctor/show/test 人工诊断入口。
@@ -134,7 +136,9 @@
 2. 不得把 FAIL/BLOCKED/ERROR 改成 PASS 来凑绿；不得删步骤、松断言、跳过 setup/teardown。
 3. 平台核心不出现产品名分支；产品专属 evaluator/探针/schema 走注册挂点。
 4. 每个结论有证据：result.json + artifacts + events.jsonl 必须能回溯判定依据。
-5. 全量验证门：`pytest tests/`（当前 228）+ vendored `unit_tests/`（当前 258+1 环境失败）+ 前端 build + 真实套件抽测。
+5. 全量验证门：`pytest tests/`（当前 229）+ fbasecman vendored `unit_tests/`（当前 259）+ FBase vendored `unit_tests/`（当前 149）+ 前端 build + 真实套件抽测。
+6. “已注册到 RegressionEngine”不等于“SDK 原生迁移完成”；覆盖测试必须同时证明无 `SuiteNativeCase`、`LegacySuiteCase`、suite `run_case` 和旧 runner 运行依赖。
+7. 平台缺少通用能力时必须补平台契约，不得为赶进度把通用生命周期、并发、配置、证据或报告逻辑继续堆入产品临时宿主。
 
 ## 8. 快速复现入口
 

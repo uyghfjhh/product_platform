@@ -1,7 +1,9 @@
 """Global-cache suite failures."""
 
+from platform_regress.engine import CaseFailure
 
-class GlobalCacheFailure(RuntimeError):
+
+class GlobalCacheFailure(CaseFailure):
     pass
 
 

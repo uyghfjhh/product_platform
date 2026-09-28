@@ -25,8 +25,10 @@ from platform_regress.execution.locking import ExclusiveFileLock
 from platform_regress.persistence.atomic import atomic_write_text, write_json
 from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
 
+from .engine import CaseFailure
 
-class CaseRuntimeFailure(RuntimeError):
+
+class CaseRuntimeFailure(CaseFailure):
     """用例执行失败的统一异常类型；各 suite 可子类化保留自己的名字。"""
 
 

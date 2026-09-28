@@ -1,11 +1,8 @@
 import importlib.util
-import json
+import sys
 from pathlib import Path
 
-import pytest
-
-from platform_regress import Blocked, CaseContext, RegressionEngine
-from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
+from platform_regress import CaseContext, RegressionEngine
 
 
 TARGET = "global_cache.reuse_single_and_cross_client"
@@ -27,25 +24,6 @@ def load_cases():
     return module
 
 
-def _binding(tmp_path, run_case, status=None, reason=None):
-    """Build a resolved binding whose fake executor writes suite artifacts."""
-    report_dir = tmp_path / "runs" / "global_cache" / "reuse_single_and_cross_client"
-
-    def executor(root, spec):
-        report_dir.mkdir(parents=True, exist_ok=True)
-        (report_dir / "report.txt").write_text("原始报告\n", encoding="utf-8")
-        if status is not None:
-            (report_dir / "summary.json").write_text(
-                json.dumps({"status": status, "reason": reason}, ensure_ascii=False),
-                encoding="utf-8")
-        return run_case(root, spec)
-
-    spec = type("Spec", (), {"target": TARGET, "suite_id": "global_cache",
-                             "name": "reuse_single_and_cross_client"})()
-    return LegacyCaseBinding(spec, executor, tmp_path / "source",
-                             run_root=lambda item: report_dir)
-
-
 def _engine_run(case, tmp_path):
     context = CaseContext(TARGET, tmp_path / "output", environment={})
     return RegressionEngine().run(case, context), context
@@ -63,52 +41,11 @@ def test_long_time_cases_skip_suite_runs():
     assert disabled == LONG_TIME_TARGETS
 
 
-def test_resolve_blocked_without_environment():
+def test_resolve_blocked_without_environment(tmp_path):
     module = load_cases()
     case = module.CASES[TARGET]
-    with pytest.raises(Blocked):
-        case._resolve(type("Ctx", (), {"environment": {}})())
-
-
-@pytest.mark.parametrize("status,reason,expected", [
-    ("PASS", "全部通过", "PASS"),
-    ("FAIL", "旧断言失败", "FAIL"),
-])
-def test_inprocess_bridge_maps_suite_verdict(tmp_path, status, reason, expected):
-    case = LegacySuiteCase(TARGET, lambda ctx: _binding(
-        tmp_path, lambda root, spec: status == "PASS", status, reason))
-    result, context = _engine_run(case, tmp_path)
-    assert result.verdict == expected
-    if expected == "FAIL":
-        assert result.reason == reason
-    assert f"artifacts/{result.execution_id}/legacy-summary.json" in result.evidence
-    assert f"artifacts/{result.execution_id}/legacy-report.txt" in result.evidence
-
-
-def test_executor_exception_maps_to_fail(tmp_path):
-    def broken(root, spec):
-        raise RuntimeError("no executor found for handover case: x")
-    case = LegacySuiteCase("handover.x", lambda ctx: _binding(
-        tmp_path, broken, "FAIL", "no executor found for handover case: x"))
     result, _ = _engine_run(case, tmp_path)
-    assert result.verdict == "FAIL"
-    assert "no executor found" in result.reason
-
-
-def test_pass_without_report_is_error(tmp_path):
-    case = LegacySuiteCase(TARGET, lambda ctx: _binding(
-        tmp_path, lambda root, spec: True, None, None))
-    result, _ = _engine_run(case, tmp_path)
-    assert result.verdict == "ERROR"
-    assert "未生成可核对" in result.reason
-
-
-def test_pass_result_rejects_fail_summary(tmp_path):
-    case = LegacySuiteCase(TARGET, lambda ctx: _binding(
-        tmp_path, lambda root, spec: True, "FAIL", "矛盾"))
-    result, _ = _engine_run(case, tmp_path)
-    assert result.verdict == "ERROR"
-    assert "不一致" in result.reason
+    assert result.verdict == "BLOCKED"
 
 
 def test_savepoint_protocol_case_is_native():
@@ -131,3 +68,70 @@ def test_more_idempotent_ha_cases_are_native():
     module = load_cases()
     assert type(module.CASES["ha_commands.set_node_promoted_idempotent"]).__name__ == "IdempotentHaCommandCase"
     assert type(module.CASES["ha_commands.set_cluster_active_idempotent"]).__name__ == "IdempotentHaCommandCase"
+
+
+def test_common_cases_are_native():
+    module = load_cases()
+    names = (
+        "console_commands", "err_logger_rotation",
+        "route_stats_quantiles", "worker_thread_lifecycle",
+    )
+    for name in names:
+        assert type(module.CASES["common." + name]).__name__ == "CommonCase"
+
+
+def test_every_catalog_case_has_a_native_platform_host():
+    module = load_cases()
+    assert len(module.CASES) == 212
+    assert not [target for target, case in module.CASES.items()
+                if type(case).__name__ == "LegacyCmanCase"]
+    suite_hosts = [case for case in module.CASES.values()
+                   if type(case).__name__ == "SuiteNativeCase"]
+    runtime_hosts = [case for case in module.CASES.values()
+                     if type(case).__name__ == "RuntimeExecutorCase"]
+    global_cache_hosts = [case for case in module.CASES.values()
+                          if type(case).__name__ == "_GlobalCachePlatformCase"]
+    assert len(suite_hosts) == 0
+    assert len(runtime_hosts) + len(global_cache_hosts) == 144
+    assert len(runtime_hosts) == 126
+    assert len(global_cache_hosts) == 18
+
+
+def test_large_suites_no_longer_use_run_case_bridge():
+    module = load_cases()
+    hosts = {"global_cache": "_GlobalCachePlatformCase"}
+    for suite in ("global_cache", "ha_commands", "handover", "high_availability"):
+        cases = [case for target, case in module.CASES.items()
+                 if target.startswith(suite + ".") and target not in module.NATIVE_CASES]
+        assert cases
+        assert {type(case).__name__ for case in cases} == {
+            hosts.get(suite, "RuntimeExecutorCase")}
+
+
+def test_suite_failures_map_to_fail_verdict(tmp_path):
+    from platform_regress import CaseFailure
+
+    module = load_cases()
+    for suite, failure_name in (
+            ("ha_commands", "HaCommandFailure"),
+            ("high_availability", "HighAvailabilityFailure"),
+            ("handover", "HandoverFailure"),
+            ("global_cache", "GlobalCacheFailure")):
+        sys.path.insert(0, str(module.DEFAULT_LEGACY_ROOT))
+        try:
+            runtime_module = __import__(
+                "suites.%s.%s" % (suite, "errors" if suite == "global_cache" else "runtime"),
+                fromlist=[failure_name])
+            failure_class = getattr(runtime_module, failure_name)
+        finally:
+            sys.path.remove(str(module.DEFAULT_LEGACY_ROOT))
+        assert issubclass(failure_class, CaseFailure), failure_name
+
+
+def test_common_table_parser_matches_legacy_psql_shape():
+    from products.fbasecman.common_native import _parse_table
+
+    output = " node_name | group_name\n-----------+------------\n pg_1      | mmr_group\n(1 row)\n"
+    headers, rows = _parse_table(output)
+    assert headers == ["node_name", "group_name"]
+    assert rows == [{"node_name": "pg_1", "group_name": "mmr_group"}]

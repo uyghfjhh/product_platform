@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from platform_regress.clients.psql import build_psql_command
+from platform_regress.engine import CaseFailure
 from cmanconf import load_regression_config
 from platform_regress.evidence import EvidenceStep, StepJournal
 from platform_regress.execution.command import run_logged_command
@@ -23,7 +24,7 @@ from .console_parser import ConsoleSnapshot, parse_console_pipe_table
 from platform_regress.execution.forensics import diagnose_crash
 
 
-class HighAvailabilityFailure(RuntimeError):
+class HighAvailabilityFailure(CaseFailure):
     pass
 
 

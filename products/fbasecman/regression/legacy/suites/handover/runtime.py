@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from platform_regress.clients.psql import build_psql_command, parse_psql_table, assert_table_rows
+from platform_regress.engine import CaseFailure
 from cmanconf import load_regression_config
 from platform_regress.evidence.log_window import (
     LocalLogWindow,
@@ -38,7 +39,7 @@ from products.fbasecman.config import remove_config_block_line, set_config_block
 from suites.handover.manifest import HANDOVER_CASES
 
 
-class HandoverFailure(RuntimeError):
+class HandoverFailure(CaseFailure):
     pass
 
 
