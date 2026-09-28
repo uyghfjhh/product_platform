@@ -710,6 +710,13 @@ class HighAvailabilityRuntime(object):
 
         report_path.write_text(rendered, encoding="utf-8")
 
+        from platform_regress.persistence.atomic import write_json
+        write_json(self.run_root / "summary.json", {
+            "target": self.case.target,
+            "status": verdict,
+            "reason": summary_text,
+        })
+
     def _validate_pass_report(self):
         if not self.report_steps:
             raise HighAvailabilityFailure("PASS report has no steps")
