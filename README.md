@@ -15,7 +15,7 @@
 
 1. **多环境图形化编排(pgcluster 引擎)**:自动规划主从端口、数据目录与复制关系;一键创建/启动/停止/重启/状态/清理/体检/恢复集群;自动初始化角色认证、库表视图、MMR 拓扑与 `test_context.yaml`。
 2. **自动化测试与多环境绑定**:全局切换"当前产品"与"绑定环境";支持单用例、整套件、失败项快速重跑;导出标准 JUnit XML 与 HTML 报告。
-3. **双轨使用(CLI + Web)**:`run.sh` 完整保留回归命令(适合流水线);`web.sh` Web 控制台默认 8080,后台守护运行。
+3. **Web 任务链主入口**:`web.sh` Web 控制台默认 8080,后台守护运行;回归目标(单用例/套件/`failed`/`all`)统一经平台 `RegressionEngine` 执行,产物与判定由平台落库。产品 `cli/run.sh` 仅保留人工诊断用途(已标 deprecated)。
 4. **License 签发**:Python 重写的生成/下载/密钥管理,兼容既有产品格式,无后台申请队列。
 5. **AI 失败诊断**:证据溯源式诊断,引用不存在的证据即拒绝;AI 不修改确定性判定。
 
@@ -28,15 +28,18 @@
 ./web.sh start      # 启动(可带参数:./web.sh start 9000 0.0.0.0)
 ./web.sh status | logs | restart | stop
 
-# fbasecman 回归测试 CLI
+# 回归测试:Web 控制台操作(推荐)或 REST API
+#   POST /api/v1/operations  {"environment_id":"cman-mmr","action":"tests.fbasecman",
+#                            "target":"all|failed|<suite>|<suite.case>","acknowledge_change":true}
+# 任务进程统一调用平台引擎,例如:
+.venv/bin/python -m platform_regress.cli \
+  --product-dir products/fbasecman --output-dir <输出目录> \
+  --context-json '<环境上下文 JSON>' [target|--suite <套件>|failed]
+
+# fbasecman 旧 CLI(仅人工诊断,已标 deprecated,不走平台证据链)
 cd products/fbasecman
-./cli/run.sh doctor | show | env setup | env status | env start/stop/restart
-./cli/run.sh run rw_toggle                # 套件
-./cli/run.sh run rw_toggle.mmr_hint_switch # 单用例
-./cli/run.sh run failed                   # 重跑失败项
-./cli/run.sh test                         # 框架单测
-./cli/stable.sh show                      # 常稳命令
-./cli/run.sh clean --output
+./cli/run.sh doctor | show | env status        # 环境诊断
+./cli/stable.sh show                           # 常稳命令
 ```
 
 ## 平台使用要点
@@ -69,7 +72,7 @@ product_platform/
 ├── products/                       # 每个产品一个代码目录
 │   ├── fbase-database/             # FBase 适配、CLI、用例和 regression/legacy
 │   └── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
-├── tests/                          # 平台自身测试(45 项 pytest)
+├── tests/                          # 平台自身测试(228 项 pytest)
 ├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
 │   ├── platform/                   # SQLite、队列、锁、操作/Web 日志
 │   ├── environments/               # profile、fixture 上下文、回归证据
@@ -82,8 +85,8 @@ product_platform/
 ## 开发与构建
 
 ```bash
-.venv/bin/python -m pytest
-products/fbasecman/cli/run.sh test
+.venv/bin/python -m pytest tests/
+(cd products/fbasecman/regression/legacy && ../../../../.venv/bin/python -m pytest unit_tests/)
 (cd products/fbase-database/regression/legacy && ../../../../.venv/bin/python -m unittest discover -s unit_tests -t .)
 (cd frontend && npm run build)
 ```

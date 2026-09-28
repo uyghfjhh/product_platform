@@ -34,12 +34,8 @@ def migrated_cases():
 
 
 def native_case(target):
-    """Return this target's platform case instance, or None for the wrapper."""
-    module = _load_cases_module()
-    case = module.CASES.get(target)
-    if case is None or isinstance(case, module.LegacyFbaseCase):
-        return None
-    return case
+    """Return this target's platform case instance, or None if unregistered."""
+    return _load_cases_module().CASES.get(target)
 
 
 def _node_roles(groups):
@@ -344,10 +340,9 @@ class FbaseProvider:
             ], settings.data_dir)
         if target == "all" or any(item.startswith(target + ".")
                                   for item in ALL_CASE_TARGETS):
-            # Suite/prefix and aggregate runs mix native and legacy cases;
-            # inject the extended node map so every native target gets its
-            # selectors for free. "all" maps to the cluster prefix since
-            # catalog suites are keyed by it.
+            # Suite/prefix and aggregate runs inject the extended node map so
+            # every target gets its selectors for free. "all" maps to the
+            # cluster prefix since catalog suites are keyed by it.
             suite = cluster if target == "all" else target
             context = self._test_context(settings, environment, cluster,
                                          with_topology=True, extended=True)

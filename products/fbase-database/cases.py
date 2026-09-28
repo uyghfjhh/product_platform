@@ -690,63 +690,6 @@ def prepare_run(environment):
                 capture_output=True, text=True)
 
 
-class LegacyFbaseCase:
-    """Transition one exported target through the shared result lifecycle.
-
-    The product's old fixture executor remains behind this boundary until its
-    fixture and step kinds are replaced in the platform SDK. Only a fresh,
-    matching structured summary may determine the business verdict.
-    """
-
-    def __init__(self, target):
-        self.target = target
-
-    def run(self, context):
-        root = Path(context.environment.get("legacy_source") or
-                    Path(__file__).parent / "regression" / "legacy").resolve()
-        script = root / "run.sh"
-        if not script.is_file():
-            raise Blocked(f"旧用例执行入口不存在: {script}")
-        cluster = self.target.split(".", 1)[0]
-        result = context.command(
-            [str(script), "run", cluster, self.target, "--enable-run-id"],
-            cwd=root, timeout_seconds=7200,
-        )
-        match = re.search(r"^RUN ID: (run_[A-Za-z0-9_]+)$", result.stdout, re.MULTILINE)
-        if not match:
-            raise RuntimeError("旧用例未输出本次唯一 run ID；无法核对结果")
-        summary_path = root / "output" / "runs" / cluster / match.group(1) / "summary.json"
-        try:
-            summary_text = summary_path.read_text(encoding="utf-8")
-            summary = json.loads(summary_text)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError("旧用例未生成本次结构化报告") from exc
-        records = summary.get("cases") or []
-        if summary.get("run_id") != match.group(1) or len(records) != 1 or records[0].get("id") != self.target:
-            raise RuntimeError("旧用例报告与本次目标不匹配")
-        context.attach_text("legacy-summary.json", summary_text)
-        record = records[0]
-        run_directory = summary_path.parent.resolve()
-        sources = [root / record["report"]] if record.get("report") else []
-        sources.extend(Path(value) for value in record.get("evidence") or [])
-        for index, source in enumerate(sources, 1):
-            resolved = source.resolve()
-            if not resolved.is_relative_to(run_directory) or not resolved.is_file():
-                raise RuntimeError(f"本次旧用例证据不存在或不属于本次运行: {source}")
-            context.attach_file(f"legacy-{index}-{source.name}", resolved)
-        status = record.get("status")
-        context.step("legacy-verdict", "核对旧用例原始判定", status={
-            "SUCCESS": "PASS", "FAILED": "FAIL", "BLOCKED": "BLOCKED",
-        }.get(status, "ERROR"), details={"legacy_status": status, "run_id": match.group(1)})
-        if status == "SUCCESS" and result.returncode == 0:
-            return True
-        if status == "FAILED":
-            raise AssertionError(record.get("reason") or "旧用例业务断言失败")
-        if status == "BLOCKED":
-            raise Blocked(record.get("reason") or "旧用例前置条件未满足")
-        raise RuntimeError(f"旧用例结果与退出码不一致: {status}/{result.returncode}")
-
-
 CASES = {
     MmrRuntimePrerequisites.TARGET: MmrRuntimePrerequisites(),
     MmrClusterVerificationBasic.TARGET: MmrClusterVerificationBasic(),
@@ -768,8 +711,6 @@ CASES.update({target: FixtureSqlCase(NATIVE_SQL_CASES[target])
 _CATALOG = json.loads(
     (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8"))
 CASE_ORDER = [case["id"] for case in _CATALOG["cases"]]
-EXPORTED_TARGETS = {case["id"] for case in _CATALOG["cases"]}
-CASES.update({target: LegacyFbaseCase(target) for target in EXPORTED_TARGETS - CASES.keys()})
 
 CASE_METADATA = [{
     "suite": "mmr",
