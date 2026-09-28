@@ -684,3 +684,184 @@ class ReloadDisableMonitorRouteLossCase:
             lambda output: "1" in output and "ERROR" not in output,
             lambda: _business_query(context, psql, port, "SELECT 1;"))
         return True
+
+
+# ---------------------------------------------------------------------------
+# outstanding 队列与后端 PS 缓存一致性（模式参数化，11 条用例共用）
+# ---------------------------------------------------------------------------
+
+# 每模式 (AFTER_ERROR, AFTER_RECOVERY) 两阶段的期望缓存条目数
+_OUTSTANDING_PHASE_COUNTS = {
+    "parse_failure_single": (0, 1),
+    "parse_failure_shared_sync": (1, 3),
+    "execute_failure_shared_sync": (2, 3),
+    "lru_close_success": (1, 1),
+    "lru_close_skipped_restore": (1, 1),
+    "lru_close_multiple_restore": (1, 1),
+    "lru_confirmed_multiple_restore_order": (2, 2),
+    "long_statement_name_cleanup": (0, 1),
+    "fragmented_close_packet": (1, 2),
+    "fragmented_execute_packet": (1, 1),
+    "execute_payload_validation": (1, 1),
+}
+
+
+def _outstanding_backend_limit(mode):
+    if mode == "lru_confirmed_multiple_restore_order":
+        return 2
+    if mode.startswith("lru_"):
+        return 1
+    return 8
+
+
+def _parse_pg_cache(output):
+    """Parse the latest PG_CACHE block from probe output."""
+    if not output:
+        return {}
+    sections = output.split("PG_CACHE_BEGIN")
+    if len(sections) < 2:
+        return {}
+    latest_section = sections[-1].split("PG_CACHE_END")[0]
+    result = {}
+    for line in latest_section.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("PG_CACHE|"):
+            continue
+        parts = line.split("|", 2)
+        if len(parts) >= 3:
+            result[parts[1].strip()] = parts[2].strip().lower()
+    return result
+
+
+def _post_disconnect_ref_state(server_output, global_cache_output, marker):
+    from platform_regress.clients.psql import parse_psql_table
+    server_counts = {}
+    for row in parse_psql_table(server_output):
+        definition = row.get("definition", "")
+        if marker in definition:
+            gname = row.get("global_name", "")
+            if gname:
+                server_counts[gname] = server_counts.get(gname, 0) + 1
+    global_refs = {}
+    for row in parse_psql_table(global_cache_output):
+        desc = row.get("description", "") or row.get("definition", "")
+        if marker in desc:
+            gname = row.get("global_name", "")
+            if gname:
+                try:
+                    global_refs[gname] = int(row.get("ref_count", "0"))
+                except ValueError:
+                    global_refs[gname] = 0
+    consistent = (
+        all(global_refs.get(k, 0) == v for k, v in server_counts.items())
+        and all(v == server_counts.get(k, 0) for k, v in global_refs.items()))
+    return consistent, server_counts, global_refs
+
+
+class OutstandingConsistencyCase:
+    """outstanding.<name> 的原生宿主：协议探针驱动的两阶段缓存一致性核对。"""
+
+    def __init__(self, mode):
+        self.mode = mode
+
+    def run(self, context: CaseContext) -> bool:
+        from platform_regress.execution.phased_process import (
+            PhaseAction, PhasedProcess, observe_phases)
+
+        mode = self.mode
+        backend_limit = _outstanding_backend_limit(mode)
+        config = context.output_dir / "fbasecman.conf"
+        port = render_config(context, config, mode="none")
+        text = config.read_text(encoding="utf-8")
+        text = text.replace(
+            'pool_size 20',
+            'pool_size 1\n    pool_reserve_prepared_statement yes\n    pool_discard no')
+        text = text.replace(
+            'log_min_messages "info"',
+            'log_min_messages "info"\n'
+            'backend_prepared_statements_limit %d\n'
+            'global_prepared_statements_limit 10000' % backend_limit)
+        config.write_text(text, encoding="utf-8")
+        context.start_process([context.environment["fbasecman_bin"], str(config)],
+                              ready_host="127.0.0.1", ready_port=port,
+                              timeout_seconds=30)
+        psql = context.environment.get("psql_bin", "/usr/bin/psql")
+        _wait_mmr_routing(context, port, psql)
+
+        context.step("step-config", "确认 outstanding 与 PS 缓存一致性配置",
+                     details={"expected": "transaction pool，pool_size=1，保留 PreparedStatement，禁用 DISCARD ALL",
+                              "actual": "\n".join((
+                                  "backend_prepared_statements_limit %d" % backend_limit,
+                                  "pool_reserve_prepared_statement yes",
+                                  "pool_size 1",
+                                  'rw_split_method "none"',
+                                  "pool_discard no"))})
+
+        probe = (Path(__file__).resolve().parent / "regression" / "legacy"
+                 / "suites" / "outstanding" / "assets" / "outstanding_protocol_probe.py")
+        context.step("step-probe", "确认缓存观测不会创建 PreparedStatement",
+                     details={"expected": "测试流量使用原始 Extended 报文；pg_prepared_statements 观测使用 Simple Query Q",
+                              "actual": "driver=raw PostgreSQL protocol; cache inspection=Simple Query Q"})
+
+        logfile = context.output_dir / "protocol_probe.log"
+        proc = PhasedProcess([sys.executable, str(probe), str(port), mode, "single_group"],
+                             logfile, cwd=context.output_dir)
+        phase_data = {}
+        expected_counts = _OUTSTANDING_PHASE_COUNTS[mode]
+
+        def observe(name, marker):
+            pg_cache = _parse_pg_cache(proc.output)
+            phase_data[name] = pg_cache
+            expected_cnt = expected_counts[0] if name == "AFTER_ERROR" else expected_counts[1]
+            actual_cnt = len(pg_cache)
+            if actual_cnt != expected_cnt:
+                raise RuntimeError(
+                    "phase %s cache count mismatch: expected %s, got %s (cached: %s)"
+                    % (name, expected_cnt, actual_cnt, pg_cache))
+            return marker
+
+        _observations, rc, output = observe_phases(
+            proc,
+            [PhaseAction("AFTER_ERROR", "PHASE_READY=AFTER_ERROR", "continue"),
+             PhaseAction("AFTER_RECOVERY", "PHASE_READY=AFTER_RECOVERY", "continue")],
+            observe, timeout=30, finish_timeout=30)
+        if logfile.is_file():
+            context.attach_file("protocol_probe.log", logfile)
+        if rc != 0:
+            raise RuntimeError("protocol probe failed with rc=%s:\n%s" % (rc, output[-1000:]))
+
+        for index, name in enumerate(("AFTER_ERROR", "AFTER_RECOVERY")):
+            context.step("phase-%d" % (index + 1),
+                         "验证第%s阶段 (%s) 缓存%s状态" % (
+                             "一" if index == 0 else "二", name,
+                             "" if index == 0 else "恢复"),
+                         details={"expected": "缓存条目数等于 %d" % expected_counts[index],
+                                  "actual": "actual_count=%d; cache=%s" % (
+                                      len(phase_data.get(name, {})),
+                                      phase_data.get(name, {}))})
+
+        marker = "outstanding_case_%s" % mode
+        servers_out = _console_expect(
+            context, psql, port, "SHOW SERVER_PREP_STMTS;",
+            "show-server-prep", "查询后端服务器上的 Prepared Statements",
+            "SHOW SERVER_PREP_STMTS 正常返回结果，无错误",
+            lambda out: "ERROR" not in out and bool(out.strip()))
+        global_out = _console_expect(
+            context, psql, port, "SHOW GLOBAL_PREPARED_STATEMENTS;",
+            "show-global-prep", "查询全局缓存中的 Prepared Statements",
+            "SHOW GLOBAL_PREPARED_STATEMENTS 正常返回结果，无错误",
+            lambda out: "ERROR" not in out and bool(out.strip()))
+        consistent, s_counts, g_refs = _post_disconnect_ref_state(
+            servers_out, global_out, marker)
+        context.step("post-disconnect-consistency", "验证连接断开后引用计数与 Server 一致",
+                     status="PASS" if consistent else "FAIL",
+                     details={"expected": "Server 持有条目数与 Global Cache 引用计数保持一致",
+                              "actual": "server_counts=%s; global_refs=%s; consistent=%s"
+                                        % (s_counts, g_refs, consistent)})
+        if not consistent:
+            raise AssertionError(
+                "post-disconnect ref state inconsistent: server=%s, global=%s"
+                % (s_counts, g_refs))
+        if "OUTSTANDING_TEST=OK" not in output:
+            raise AssertionError("probe output did not report OUTSTANDING_TEST=OK")
+        return True

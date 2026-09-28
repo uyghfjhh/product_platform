@@ -15,6 +15,7 @@ from platform_regress import Blocked
 from platform_regress.suites.legacy import LegacyCaseBinding, LegacySuiteCase
 from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
                                        ReloadDisableMonitorRouteLossCase,
+                                       OutstandingConsistencyCase,
                                        SqlParseExtendedProtocolCase,
                                        JdbcConsoleHaCommandsCase)
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
@@ -139,6 +140,22 @@ NATIVE_CASES = {
         initial_query="SHOW CLUSTERS;"),
     "ha_commands.set_node_weight_idempotent": SetNodeWeightIdempotentCase(),
     "tmp.reload_disable_monitor_route_loss": ReloadDisableMonitorRouteLossCase(),
+    **{
+        "outstanding." + name: OutstandingConsistencyCase(mode)
+        for name, mode in (
+            ("lru_close_multiple_restore_consistency", "lru_close_multiple_restore"),
+            ("lru_close_skipped_restore_consistency", "lru_close_skipped_restore"),
+            ("lru_close_success_consistency", "lru_close_success"),
+            ("lru_confirmed_multiple_restore_order", "lru_confirmed_multiple_restore_order"),
+            ("long_statement_name_cleanup", "long_statement_name_cleanup"),
+            ("fragmented_close_packet", "fragmented_close_packet"),
+            ("fragmented_execute_packet", "fragmented_execute_packet"),
+            ("execute_payload_validation", "execute_payload_validation"),
+            ("parse_failure_single_consistency", "parse_failure_single"),
+            ("parse_failure_shared_sync_consistency", "parse_failure_shared_sync"),
+            ("execute_failure_shared_sync_consistency", "execute_failure_shared_sync"),
+        )
+    },
 }
 
 # Suite manifests are static: they import cleanly before any environment
