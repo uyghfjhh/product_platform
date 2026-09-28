@@ -102,7 +102,7 @@ class FbasecmanProvider:
     """Product rules and commands; task lifecycle belongs to the platform."""
 
     def validate_target(self, settings, target):
-        if target == "failed":
+        if target in {"all", "failed"}:
             return True
         valid = {case["target"] for case in self.discover(settings)}
         valid.update(case.split(".", 1)[0] for case in tuple(valid))
