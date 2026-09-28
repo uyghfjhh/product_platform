@@ -672,7 +672,7 @@ def prepare_run(environment):
     binaries before requirement probes run.
     """
     import subprocess
-    bin_dir = environment.get("fbase_bin_dir")
+    bin_dir = environment.get("db_bin_dir")
     pg_ctl = str(Path(bin_dir) / "pg_ctl") if bin_dir else "pg_ctl"
     nodes = environment.get("nodes") or {}
     for name in environment.get("node_order") or list(nodes):

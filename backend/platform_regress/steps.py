@@ -32,7 +32,9 @@ SUPPORTED_COMMAND_ASSERTIONS = frozenset({
 DEFAULT_COMMAND_TIMEOUT = 300.0
 
 _SQLSTATE = re.compile(r"ERROR:\s+([0-9A-Z]{5}):\s+([^\n]+)")
-_NULL = "__FBASE_REGRESS_NULL__"
+# NULL sentinel token written into CSV evidence; the value is part of the
+# on-disk protocol and must stay byte-identical with legacy reports.
+_NULL_TOKEN = "__FBASE_REGRESS_NULL__"
 _PSQL_DIAGNOSTIC = re.compile(
     r"^(WARNING|NOTICE|INFO|DETAIL|HINT|CONTEXT|LOCATION):")
 
@@ -125,12 +127,12 @@ def _parse_csv(output: str) -> tuple[list, list, str]:
     columns = records[0]
     rows = []
     for record in records[1:]:
-        rows.append([None if value == _NULL else value for value in record])
+        rows.append([None if value == _NULL_TOKEN else value for value in record])
     return columns, rows, "\n".join(diagnostics)
 
 
-def _fbase_binary(context: CaseContext, name: str) -> str:
-    bin_dir = context.environment.get("fbase_bin_dir")
+def _db_binary(context: CaseContext, name: str) -> str:
+    bin_dir = context.environment.get("db_bin_dir")
     return str(Path(bin_dir) / name) if bin_dir else name
 
 
@@ -154,14 +156,14 @@ def execute_psql(context: CaseContext, node: str, sql: str, *,
     endpoint = context.node_endpoint(node)
     connection = connection or {}
     argv = [
-        _fbase_binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
+        _db_binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
         "-v", "VERBOSITY=verbose", "-P", "pager=off",
         "-h", str(connection.get("host", endpoint["host"])),
         "-p", str(connection.get("port", endpoint["port"])),
         "-U", user, "-d", database,
     ]
     if structured:
-        argv.extend(["--csv", "-P", "null=%s" % _NULL])
+        argv.extend(["--csv", "-P", "null=%s" % _NULL_TOKEN])
     argv.extend(["-c", sql])
     environment = []
     if client_encoding:
@@ -543,7 +545,7 @@ def _run_background_sql_step(context: CaseContext, step: dict[str, Any],
         step["sql"].rstrip(";"), step["hold_seconds"],
         step["finish_sql"].rstrip(";"))
     argv = [
-        _fbase_binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
+        _db_binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
         "-v", "VERBOSITY=verbose", "-P", "pager=off",
         "-h", str(endpoint["host"]), "-p", str(endpoint["port"]),
         "-U", step.get("user") or context.environment.get("user") or "postgres",
@@ -597,7 +599,7 @@ def _pg_ctl_argv(context: CaseContext, endpoint: dict[str, Any],
     data_dir = endpoint.get("data_dir")
     if not data_dir:
         raise ValueError("节点缺少 data_dir，无法执行 pg_ctl")
-    argv = [_fbase_binary(context, "pg_ctl"), "-D", str(data_dir)]
+    argv = [_db_binary(context, "pg_ctl"), "-D", str(data_dir)]
     if action == "start":
         argv += ["-l", str(Path(str(data_dir)) / "startup.log"), "-w", "start"]
     elif action == "stop":

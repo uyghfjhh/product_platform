@@ -12,8 +12,10 @@ def settings_for(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
         pgcluster_root=tmp_path / "missing-pgcluster",
-        fbasecman_regress_root=tmp_path / "missing-cman",
-        fbase_regress_root=tmp_path / "missing-fbase",
+        regress_roots={
+            "fbasecman": tmp_path / "missing-cman",
+            "fbase-database": tmp_path / "missing-fbase",
+        },
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )

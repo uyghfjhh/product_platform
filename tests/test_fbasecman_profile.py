@@ -17,8 +17,6 @@ def settings_for(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
         pgcluster_root=fly_root / "pgcluster",
-        fbasecman_regress_root=repo_root / "products" / "fbasecman" / "regression" / "legacy",
-        fbase_regress_root=repo_root / "products" / "fbase-database" / "regression" / "legacy",
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )
@@ -59,7 +57,7 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
     repo_root = Path(__file__).resolve().parent.parent
     check = subprocess.run([
         sys.executable, "-m", "products.fbasecman.regression.run",
-        "--source", str(settings.fbasecman_regress_root),
+        "--source", str(settings.product_regress_root("fbasecman")),
         "--override", str(override), "--check-profile", "guc",
     ], cwd=repo_root, capture_output=True, text=True, timeout=60)
     assert check.returncode == 0, check.stdout + check.stderr

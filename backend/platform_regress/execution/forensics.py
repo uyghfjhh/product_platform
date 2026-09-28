@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-def find_core_files(search_paths: List[Path], binary_name: str = "fbasecman", since_time: Optional[float] = None) -> List[Path]:
+def find_core_files(search_paths: List[Path], binary_name: str, since_time: Optional[float] = None) -> List[Path]:
     """Find core dump files created by a crash."""
     found: List[Path] = []
     candidates = []

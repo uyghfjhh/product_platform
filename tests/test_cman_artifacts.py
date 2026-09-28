@@ -42,7 +42,7 @@ def test_report_endpoints_read_environment_isolated_artifacts(tmp_path):
     }).raise_for_status()
     root = legacy_root(settings, "lab-cman")
     root.mkdir(parents=True)
-    (root / "regress.yaml").write_text((settings.fbasecman_regress_root / "regress.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    (root / "regress.yaml").write_text((settings.product_regress_root("fbasecman") / "regress.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     _write_case(settings, "lab-cman", "ha_commands.sample", "FAIL")
 
     response = client.get("/api/v1/fbasecman/cases/ha_commands.sample/artifacts?environment_id=lab-cman")

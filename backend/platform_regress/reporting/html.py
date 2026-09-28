@@ -1,4 +1,4 @@
-"""Self-contained, interactive single-file HTML test report generator for fbasecman regression."""
+"""Self-contained, interactive single-file HTML test report generator."""
 
 import html
 import json
@@ -318,7 +318,7 @@ def generate_html_report(
   <div class="header">
     <div class="header-left">
       <h1>🚀 {html.escape(title)}</h1>
-      <div class="timestamp">生成时间: {timestamp} | fbasecman Regression Framework v2</div>
+      <div class="timestamp">生成时间: {timestamp}</div>
     </div>
     <div>
       <span class="header-tag">全自动化可视化诊断报告</span>

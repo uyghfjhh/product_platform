@@ -139,11 +139,12 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
 
     @app.get("/api/v1/integrations")
     def integrations():
-        items = (
-            ("pgcluster", settings.pgcluster_root, "pgcluster"),
-            ("fbasecman-regress", settings.fbasecman_regress_root, "run.sh"),
-            ("fbase-regress", settings.fbase_regress_root, "run.sh"),
-        )
+        items = [("pgcluster", settings.pgcluster_root, "pgcluster")]
+        for product_id in sorted(discover_products(settings.products_root)):
+            items.append(
+                ("%s-regress" % product_id,
+                 settings.product_regress_root(product_id), "run.sh")
+            )
         return [
             {"id": item_id, "path": str(root), "available": (root / entry).is_file()}
             for item_id, root, entry in items

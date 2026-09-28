@@ -78,19 +78,19 @@ def _binary(context, definition, name):
 
 def _bin_dir(context, definition):
     """Locate the FBase binary directory used by the case commands."""
-    cached = context.values.get("fbase_bin_dir")
+    cached = context.values.get("db_bin_dir")
     if cached:
         return Path(cached)
-    override = context.environment.get("fbase_bin_dir")
+    override = context.environment.get("db_bin_dir")
     if override and Path(str(override)).is_dir():
-        context.values["fbase_bin_dir"] = str(override)
+        context.values["db_bin_dir"] = str(override)
         return Path(str(override))
     for command in _commands(context, definition):
         match = re.search(r"(/\S+/bin)/(?:initdb|pg_ctl|psql|pg_basebackup)\b", command)
         if match:
-            context.values["fbase_bin_dir"] = match.group(1)
+            context.values["db_bin_dir"] = match.group(1)
             return Path(match.group(1))
-    raise Blocked("无法确定 FBase 二进制目录（未注入 fbase_bin_dir 且命令中无绝对路径）")
+    raise Blocked("无法确定 FBase 二进制目录（未注入 db_bin_dir 且命令中无绝对路径）")
 
 
 def _commands(context, definition, expand=True):

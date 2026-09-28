@@ -10,8 +10,10 @@ def settings_for(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
         pgcluster_root=tmp_path / "pgcluster",
-        fbasecman_regress_root=tmp_path / "cman",
-        fbase_regress_root=tmp_path / "fbase",
+        regress_roots={
+            "fbasecman": tmp_path / "cman",
+            "fbase-database": tmp_path / "fbase",
+        },
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )
@@ -43,8 +45,8 @@ def test_fbasecman_provider_keeps_environment_preconditions(tmp_path):
 
 def test_fbase_provider_validates_cluster_parameter(tmp_path):
     settings = settings_for(tmp_path)
-    settings.fbase_regress_root.mkdir()
-    (settings.fbase_regress_root / "run.sh").write_text("", encoding="utf-8")
+    settings.product_regress_root("fbase-database").mkdir()
+    (settings.product_regress_root("fbase-database") / "run.sh").write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="mac 或 mmr"):
         command_for(settings, {"product_id": "fbase-database"},
                     "tests.fbase", "all", {"cluster": "unknown"})

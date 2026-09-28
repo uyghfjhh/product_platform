@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,10 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 class Settings:
     data_dir: Path
     pgcluster_root: Path
-    fbasecman_regress_root: Path
-    fbase_regress_root: Path
     license_key_dir: Path
     license_vendor: str
+    regress_roots: Dict[str, Path] = field(default_factory=dict)
 
     @property
     def platform_dir(self) -> Path:
@@ -51,6 +51,13 @@ class Settings:
         """Installed product packages discovered by the modern catalog."""
         return ROOT / "products"
 
+    def product_regress_root(self, product_id: str) -> Path:
+        """Legacy regression tree of one installed product package."""
+        override = self.regress_roots.get(product_id)
+        if override is not None:
+            return Path(override)
+        return self.products_root / product_id / "regression" / "legacy"
+
 
 def load_settings() -> Settings:
     fly_root = ROOT.parent
@@ -63,22 +70,6 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         pgcluster_root=Path(
             os.environ.get("PRODUCT_PLATFORM_PGCLUSTER_ROOT", fly_root / "pgcluster")
-        )
-        .expanduser()
-        .resolve(),
-        fbasecman_regress_root=Path(
-            os.environ.get(
-                "PRODUCT_PLATFORM_CMAN_REGRESS_ROOT",
-                ROOT / "products" / "fbasecman" / "regression" / "legacy",
-            )
-        )
-        .expanduser()
-        .resolve(),
-        fbase_regress_root=Path(
-            os.environ.get(
-                "PRODUCT_PLATFORM_FBASE_REGRESS_ROOT",
-                ROOT / "products" / "fbase-database" / "regression" / "legacy",
-            )
         )
         .expanduser()
         .resolve(),

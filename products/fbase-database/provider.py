@@ -67,7 +67,7 @@ def _legacy_cluster_context(settings, cluster, with_nodes=True):
     legacy regress config (the same source the old executor used)."""
     context = {"plugins": [], "plugins_detail": {}, "node_groups": {},
                "node_order": [], "cluster_name": cluster}
-    path = Path(settings.fbase_regress_root) / "regress.yaml"
+    path = Path(settings.product_regress_root("fbase-database")) / "regress.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, ValueError):
@@ -88,7 +88,7 @@ def _legacy_cluster_context(settings, cluster, with_nodes=True):
     home = re.sub(r"\$\{(\w+)\}",
                   lambda match: os.environ.get(match.group(1), ""), home)
     if home and Path(home).is_dir():
-        context["fbase_bin_dir"] = str(Path(home) / "bin")
+        context["db_bin_dir"] = str(Path(home) / "bin")
     if not with_nodes:
         context.pop("topology_error", None)
         return context
@@ -282,7 +282,7 @@ class FbaseProvider:
             # old executor.
             context = {"user": environment.get("database_user") or "postgres",
                        "users": environment.get("database_users") or {},
-                       "legacy_source": str(settings.fbase_regress_root),
+                       "legacy_source": str(settings.product_regress_root("fbase-database")),
                        "cluster": cluster}
             context.update(_legacy_cluster_context(settings, cluster))
             return context
@@ -308,7 +308,7 @@ class FbaseProvider:
                 topology_error = str(exc)
         context = {"nodes": nodes, "user": environment.get("database_user") or "postgres",
                    "users": environment.get("database_users") or {},
-                   "legacy_source": str(settings.fbase_regress_root),
+                   "legacy_source": str(settings.product_regress_root("fbase-database")),
                    "cluster": cluster}
         context.update(_legacy_cluster_context(settings, cluster,
                                                with_nodes=False))
