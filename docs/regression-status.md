@@ -32,7 +32,7 @@
 | `reporting/` | model、renderer、junit、html、export（CaseResult 事实模型→双格式；BLOCKED/CANCELLED→SKIPPED） | 已上收 |
 | `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
 
-平台侧测试：**224 passed**；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
+平台侧测试：**228 passed**；vendored fbasecman 单测：**258 passed + 1 环境失败**（test_junit 依赖已清理的 output/runs 产物）。
 
 ## 3. 已完成的结构性工作
 
@@ -104,7 +104,8 @@
    - **2 条 native ha_commands FAIL**＝`native.render_config` 只渲 `mmr_group`，而 `HaConsoleCommands.java` 访问 `single_group`/`rep_group` → `route not found`；且 native `start_process` 的 TCP-ready 探针不覆盖 group_checker 的 mmr_role 收敛窗口 → `SHOW GROUP_ROUTING` 读出 `UNKNOWN`（历史输出为 `write-leader`）。已修：conf 补齐 rep/balance/single group + `group_names` 全量，新增 `_wait_mmr_routing` 收敛等待接入 4 处 console 断言用例；`jdbc_console_ha_commands`/`set_node_write_idempotent` 复跑 PASS。
    - **3 条同因复现**：`guc.discard_all_hint`/`discard_all_sql_parse`（DISCARD ALL rc=2 与历史逐字一致）、`tmp.reload_disable_monitor_route_loss`（步骤 5 rc=2 与历史一致）。
    - **`global_cache.discard_all_clears_backend_cache`** 对应历史已知缺陷 F-001。
-   - **`sql_parse.savepoint_recovery_after_local_25p02`** 为新增用例无历史基线，FAIL 是 25P02 事务恢复的真实产品行为差异。
+   - **`sql_parse.savepoint_recovery_after_local_25p02`**（新增用例无历史基线）首轮 FAIL 亦是 ready 窗口误报——`render_config` 补全 group 后 group_checker 首轮收敛变慢，协议探针撞上 `route not found`/未知路由态；`_wait_mmr_routing` 覆盖全部 7 处 `start_process` 调用点后复跑 PASS。
+   - 注：`rw_split_method` 非 none 的用例（sql_parse 等）`group_names` 须收缩为 `mmr_group`——fbasecman 校验 single/balance group 仅接受 `rw_split_method "none"`，与 legacy `_sql_parse_transform`/`_route_user_scope` 语义对齐。
 2. ~~**mmr 3 条 BLOCKED 复跑**~~（已完成）——`mmr.replication_set.synchronous_removal`/`mmr.default_publication.schema_filtering`/`mmr.cluster_verification.check_node_conf_table_exclusion` 平台 PASS vs 历史 BLOCKED（two_phase 前提不满足）；差异根因是用例演进为隔离 fixture 自建 two_phase=false 双节点（initdb/create_node/create_group 证据齐全），非平台失真。
 3. ~~**`mmr.node_management` 5 条 disabled 用例**~~（已完成）——`join_group`/`multi_database_active_join`/`online_join_all_retry` PASS；`multi_database_three_node_join`（步骤 35 超时 rc=124）与 `online_join_data_retry`（订阅映射冲突，历史已知缺陷 D-017）同因复现历史失败。
 4. **handover 6 条未实现用例**——维持现状：`default_enabled=False`（long_time 统计），不进入批跑；平台判定语义正确。
@@ -131,7 +132,7 @@
 2. 不得把 FAIL/BLOCKED/ERROR 改成 PASS 来凑绿；不得删步骤、松断言、跳过 setup/teardown。
 3. 平台核心不出现产品名分支；产品专属 evaluator/探针/schema 走注册挂点。
 4. 每个结论有证据：result.json + artifacts + events.jsonl 必须能回溯判定依据。
-5. 全量验证门：`pytest tests/`（当前 168）+ vendored `unit_tests/`（当前 259）+ 前端 build + 真实套件抽测。
+5. 全量验证门：`pytest tests/`（当前 228）+ vendored `unit_tests/`（当前 258+1 环境失败）+ 前端 build + 真实套件抽测。
 
 ## 8. 快速复现入口
 
