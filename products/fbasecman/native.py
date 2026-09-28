@@ -92,8 +92,13 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse") 
                  '    weight 10', '    status "active"',
                  *([f'    application_name "{app_name}"'] if app_name else []),
                  f'    system_identifier "{identifiers[name]}"', '    tls "disable"', '}',]
+    # mode "none" cases (HA console/JDBC) exercise every route group; sql_parse
+    # and other split modes scope the user to mmr_group only — fbasecman
+    # rejects single/balance groups under a non-none rw_split_method.
+    group_names = ("mmr_group,rep_group,balance_group,single_group"
+                   if mode == "none" else "mmr_group")
     data += ['user "postgres" {',
-             '    group_names "mmr_group,rep_group,balance_group,single_group"',
+             f'    group_names "{group_names}"',
              '    authentication "none"', '    storage_user "postgres"',
              '    pool "transaction"', '    pool_size 20', '    pool_discard no',
              '    pool_reserve_prepared_statement yes',
@@ -267,6 +272,8 @@ class HeartbeatBindCase:
             raise AssertionError("SQL_PARSE heartbeat 配置不完整")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        _wait_mmr_routing(context, port,
+                          context.environment.get("psql_bin", "/usr/bin/psql"))
         parse_messages, messages = _heartbeat_probe(port, self.mode)
         if self.mode == "malformed":
             passed = "E" in messages and "Z" in messages and "D" not in messages
@@ -311,6 +318,8 @@ class SqlParseExtendedProtocolCase:
             raise AssertionError("sql_parse JDBC 配置不完整")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+        _wait_mmr_routing(context, port,
+                          context.environment.get("psql_bin", "/usr/bin/psql"))
         asset = Path(context.environment.get("sql_parse_java_asset", ""))
         jar = Path(context.environment.get("jdbc_jar", ""))
         if not asset.is_file() or not jar.is_file():
@@ -494,6 +503,8 @@ class SavepointRecoveryCase:
         binary = context.environment["fbasecman_bin"]
         context.start_process([binary, str(config)], ready_host="127.0.0.1", ready_port=port,
                               timeout_seconds=30)
+        _wait_mmr_routing(context, port,
+                          context.environment.get("psql_bin", "/usr/bin/psql"))
         config_text = config.read_text(encoding="utf-8")
         if ('rw_split_method "sql_parse"' not in config_text or
                 'pool_reserve_prepared_statement yes' not in config_text):
