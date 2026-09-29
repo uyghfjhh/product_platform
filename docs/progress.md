@@ -1,5 +1,17 @@
 # 实现进度
 
+## 2026-09-30:回归报告补齐与网页证据回退(bedbf63)
+
+- **native 用例报告同构**：新增 `platform_regress/reporting/case_report.py`，从事件流渲染 `report.txt`/`steps.json`/`summary.json` 并镜像进 `regress_report_root` 的 `output/runs/<suite>/<case>/` 树(含 logs/、events.log、fbasecman.log);executor 报告权威文件以运行开始时间判定陈旧、不被覆盖。历史平台运行已回填(168 条保留权威 executor 报告、14 条 native 补齐)。修复"查看报告"空白:native 用例此前只产平台产物、无 runs/ 树。
+- **控制台进度对齐老项目**:`platform_regress.cli` 输出 `[i/n] target VERDICT 用时` 逐用例行 + `Total:` 汇总,与 fbasecman_regress_v2 的 `%-58s SUCCESS %8.3fs` 格式等价。
+- **网页证据回退**:`/results`、`/evidence`、`/bundle` 在 FileStore 无记录时回退到平台 `result.json` 事实模型——CLI 直接跑的 182 条用例在网页证据抽屉可见(results 24→206 条);保留 `output_dir` 边界校验。
+- **vendored 格式化修复**:`ops.LOCAL_HOST`/`os.environ.get(...)` 与 `%` 优先级拼接错误 6 处(cluster_ops、handover/HA/stable runtime、stable_cli、phase2_failure);`snap` 未绑定防护。
+- **环境修复**:mmr1 s2..s6 `application_name` 部署偏移(pg_242..246→241..245)纠正,`pg_240..245` 全部 streaming;core_16 failover 中断遗留的 promoted s1 已重建。
+- **fbasecman 全套回归**:ha_commands 76/76、handover 50/50、high_availability 10/10、global_cache 18/18、outstanding 11/11、rw_toggle 14/14、common 4/4 = 183/212。**4 条 FAIL 均为 fbasecman 产品真实缺陷**(老项目无对照基线):`guc.report_param_timezone_*` 同会话二次 `SHOW TimeZone` 返回 `America/New_York`(ParameterStatus 缓存丢失)、`sql_parse.savepoint_recovery_after_local_25p02` fbasecman 在 25P02 下拒绝 `ROLLBACK TO`、`tmp.reload_disable_monitor_route_loss` reload 后业务路由丢失。
+- **网页端点核对**:environments/products/bindings/operations/results/flaky/topology/actions/config/cases/case-statuses/artifacts/logs/report导出(junit+html)/bundle 全部 200 且载荷有效;`/logs` 端点需 `filename` 参数;License 实际路由为 `/licenses/*`(早前 404 系测试路径过时);stability 页为 `stability.fbasecman` 动作启动器,无独立 stable/* 端点。
+- 验证:平台 248 passed;前端 tsc+vite 构建通过;老项目单测 276 OK。
+- 遗留:products 树内 unit_tests 仅剩 pyc 缓存(层级收敛移除源文件);`data/environments/legacy_cman`(42M)、`data/platform.sqlite3` 为死文件可清理;144 条 executor `rt.*→context.*` 形态收尾仍未做(记录在 regression-status)。
+
 ## 2026-09-29:测试与历史兼容审查
 
 - 删除一条依赖本机 `data/legacy_cman/` 历史报告、文件缺失时直接返回的无效测试；删除平台 Provider 中无调用者的旧套件隔离发现函数。平台测试 249 passed。
