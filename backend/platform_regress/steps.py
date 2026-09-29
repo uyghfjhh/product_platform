@@ -313,6 +313,14 @@ def evaluate_command_assertion(assertion: dict[str, Any], returncode: int,
         assertion, StepExecutionResult(returncode, output=output))
 
 
+def step_user(context: CaseContext, step: dict[str, Any]) -> str | None:
+    """Resolve a step's ``user``; ``{env.user}`` names the environment user."""
+    user = step.get("user")
+    if user == "{env.user}":
+        return context.environment.get("user") or "postgres"
+    return user
+
+
 def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
                  node: str) -> None:
     """Execute one SQL step and preserve expected errors as business facts.
@@ -320,6 +328,7 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
     Only declared assertion shapes are accepted. An unsupported shape is an
     executor error, never an implicit PASS or a guessed assertion.
     """
+    step = context.expand(step)
     assertion = step.get("assertion") or {}
     kind = assertion.get("type")
     if step.get("type") == "cluster_action":
@@ -334,7 +343,7 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
         while True:
             try:
                 result = context.sql(node, step["sql"], database=step.get("database") or "postgres",
-                                     user=step.get("user"), password=step.get("password"))
+                                     user=step_user(context, step), password=step.get("password"))
                 expected = tuple(tuple(str(cell) for cell in row) for row in assertion.get("rows", []))
                 if result.rows == expected:
                     context.step(f"step-{index}", step["title"], details={"poll": "matched"})
@@ -354,8 +363,8 @@ def run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
     query = step["sql"]
     database = step.get("database") or "postgres"
     sql_kwargs = {"database": database}
-    if step.get("user"):
-        sql_kwargs["user"] = step["user"]
+    if step_user(context, step):
+        sql_kwargs["user"] = step_user(context, step)
     if step.get("password"):
         sql_kwargs["password"] = step["password"]
     if kind in {"sql_error", "sql_fails"}:
@@ -487,7 +496,7 @@ def _sql_execution(context: CaseContext, step: dict[str, Any],
         connection = context.expand(connection)
     execution = execute_psql(
         context, node, step["sql"],
-        user=step.get("user") or context.environment.get("user") or "postgres",
+        user=step_user(context, step) or context.environment.get("user") or "postgres",
         database=step.get("database") or "postgres",
         structured=structured,
         timeout=step.get("command_timeout"),
@@ -548,7 +557,7 @@ def _run_background_sql_step(context: CaseContext, step: dict[str, Any],
         _db_binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
         "-v", "VERBOSITY=verbose", "-P", "pager=off",
         "-h", str(endpoint["host"]), "-p", str(endpoint["port"]),
-        "-U", step.get("user") or context.environment.get("user") or "postgres",
+        "-U", step_user(context, step) or context.environment.get("user") or "postgres",
         "-d", step.get("database") or "postgres", "-c", script,
     ]
     process = context.start_command(argv)

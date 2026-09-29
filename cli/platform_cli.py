@@ -218,7 +218,7 @@ def cmd_show(args) -> int:
     result = store.get_result(product, environment["id"], args.target)
     if result:
         print(json.dumps({"latest_result": result}, ensure_ascii=False, indent=2))
-    evidence = (settings.environment_dir / "regression" / environment["id"]
+    evidence = (settings.output_dir / "regression" / environment["id"]
                 / args.target)
     if evidence.is_dir():
         print(f"[evidence] {evidence}")
@@ -318,11 +318,11 @@ def cmd_clean(args) -> int:
     for env in envs:
         if env is None:
             continue
-        remove_tree(settings.environment_dir / "regression" / env["id"])
-        legacy = (settings.environment_dir / "legacy_cman" / env["id"]
-                  / "output" / "runs")
-        remove_tree(legacy)
-        remove_tree(legacy.parent / "last_failed.json")
+        remove_tree(settings.output_dir / "regression" / env["id"])
+        runs = (settings.output_dir / env["product_id"] / env["id"]
+                / "output" / "runs")
+        remove_tree(runs)
+        remove_tree(runs.parent / "last_failed.json")
     locks = settings.data_dir / "locks"
     if locks.is_dir():
         for lock in locks.glob("*.lock"):
