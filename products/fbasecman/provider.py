@@ -160,7 +160,7 @@ class FbasecmanProvider:
         if task["action"] != "tests.fbasecman":
             return terminal, reason
         if "." not in task["target"] and task["target"] not in {"all", "failed"}:
-            aggregate = settings.environment_dir / "regression" / environment["id"] / task["target"] / "suite-result.json"
+            aggregate = settings.output_dir / "regression" / environment["id"] / task["target"] / "suite-result.json"
             try:
                 payload = json.loads(aggregate.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -173,7 +173,7 @@ class FbasecmanProvider:
                     if target not in CASE_TARGETS or row.get("operation_id") != task["id"]:
                         continue
                     matched += 1
-                    artifact = settings.environment_dir / "regression" / environment["id"] / target
+                    artifact = settings.output_dir / "regression" / environment["id"] / target
                     store.put_result(environment["product_id"], environment["id"], target,
                                      "default", row.get("verdict", "ERROR"), row.get("reason"), str(artifact))
             if not matched:
@@ -185,7 +185,7 @@ class FbasecmanProvider:
             failed = payload.get("counts", {}).get("FAIL", 0) + payload.get("counts", {}).get("ERROR", 0)
             return ("FAILED" if failed else terminal), reason
         if task["target"] in CASE_TARGETS:
-            output = settings.environment_dir / "regression" / environment["id"] / task["target"]
+            output = settings.output_dir / "regression" / environment["id"] / task["target"]
             result_path = output / "result.json"
             try:
                 result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -243,12 +243,12 @@ class FbasecmanProvider:
             if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
-                output = settings.environment_dir / "regression" / environment["id"] / target
+                output = settings.output_dir / "regression" / environment["id"] / target
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
+                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
                 }
                 if native_target:
                     case_context.update(
@@ -260,12 +260,12 @@ class FbasecmanProvider:
                     "--context-json", json.dumps(case_context), target,
                 ], settings.data_dir)
             if target not in {"all", "failed"} and "." not in target:
-                output = settings.environment_dir / "regression" / environment["id"] / target
+                output = settings.output_dir / "regression" / environment["id"] / target
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
+                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -275,12 +275,12 @@ class FbasecmanProvider:
                     "--suite", target,
                 ], settings.data_dir)
             if target == "failed":
-                output = settings.environment_dir / "regression" / environment["id"]
+                output = settings.output_dir / "regression" / environment["id"]
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.environment_dir / "regression" / environment["id"]),
+                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -292,12 +292,12 @@ class FbasecmanProvider:
             # `all` runs through the platform engine too: the legacy run.py
             # entrypoint does not know the native cases, so dropping it here is
             # what lets suite-level coverage reach all 212 catalog targets.
-            output = settings.environment_dir / "regression" / environment["id"]
+            output = settings.output_dir / "regression" / environment["id"]
             case_context = {
                 "regress_source": str(settings.product_regress_root("fbasecman")),
                 "regress_override": str(override),
                 "regress_report_root": str(evidence_root(settings, environment["id"])),
-                "history_root": str(settings.environment_dir / "regression" / environment["id"]),
+                "history_root": str(settings.output_dir / "regression" / environment["id"]),
             }
             case_context.update(suite_case_context(settings, environment))
             return CommandSpec([

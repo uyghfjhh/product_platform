@@ -16,7 +16,7 @@ def test_archived_result_evidence_is_readable_without_product_code(tmp_path):
         "host": "127.0.0.1", "port": 5432,
     }).raise_for_status()
     target = "mac.audit.log_access_restrictions"
-    output = settings.environment_dir / "regression" / "lab" / target
+    output = settings.output_dir / "regression" / "lab" / target
     evidence = output / "artifacts" / "execution" / "report.txt"
     evidence.parent.mkdir(parents=True)
     evidence.write_text("original verdict\n", encoding="utf-8")

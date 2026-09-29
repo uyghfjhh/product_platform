@@ -520,7 +520,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", target):
             raise HTTPException(status_code=404, detail="结果不存在")
         result = store.get_result(environment["product_id"], environment_id, target, profile)
-        base = (settings.environment_dir / "regression" / environment_id / target).resolve()
+        base = (settings.output_dir / "regression" / environment_id / target).resolve()
         if result is None or Path(result["artifact_dir"]).resolve() != base:
             raise HTTPException(status_code=404, detail="平台归档结果不存在")
         try:

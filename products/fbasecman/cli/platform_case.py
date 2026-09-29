@@ -165,7 +165,7 @@ def _run(args, configs) -> int:
         "regress_source": str(settings.product_regress_root(PRODUCT)),
         "regress_override": str(override),
         "regress_report_root": str(evidence_root(settings, environment_id)),
-        "history_root": str(settings.environment_dir / "regression" / environment_id),
+        "history_root": str(settings.output_dir / "regression" / environment_id),
     }
     if configs:
         context["regress_extra_configs"] = [
@@ -174,7 +174,7 @@ def _run(args, configs) -> int:
     context.update(suite_case_context(settings, environment))
 
     target = "failed" if args.target == "faild" else args.target
-    output_base = settings.environment_dir / "regression" / environment_id
+    output_base = settings.output_dir / "regression" / environment_id
     report_root = evidence_root(settings, environment_id)
     argv = ["--product-dir", str(PRODUCT_DIR),
             "--context-json", json.dumps(context)]

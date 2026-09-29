@@ -36,7 +36,7 @@ def test_demo_product_api_worker_and_evidence(tmp_path):
 
     run_task(app.state.store, settings, task_id)
     assert client.get(f"/api/v1/operations/{task_id}").json()["status"] == "SUCCEEDED"
-    output = settings.data_dir / "regression" / "demo-lab" / "smoke.context"
+    output = settings.output_dir / "regression" / "demo-lab" / "smoke.context"
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     assert result["verdict"] == "PASS"
     assert result["operation_id"] == task_id

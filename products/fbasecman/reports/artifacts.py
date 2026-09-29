@@ -240,7 +240,7 @@ def sync_current_results(store: FileStore, settings: Settings, environment: dict
         count += 1
     # Native cases write the platform result model under
     # data/regression/<env>/**/result.json instead of the legacy report tree.
-    platform_root = settings.environment_dir / "regression" / environment["id"]
+    platform_root = settings.output_dir / "regression" / environment["id"]
     if platform_root.is_dir():
         for result_path in sorted(platform_root.rglob("result.json")):
             try:

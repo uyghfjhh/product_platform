@@ -17,6 +17,13 @@ class Settings:
     license_key_dir: Path
     license_vendor: str
     regress_roots: Dict[str, Path] = field(default_factory=dict)
+    output_dir: Path | None = None
+
+    def __post_init__(self):
+        # data/ 是控制面状态；output/ 是回归产物耗材区（可随意删除重跑）。
+        if self.output_dir is None:
+            object.__setattr__(self, "output_dir",
+                             self.data_dir.parent / "output")
 
     @property
     def platform_dir(self) -> Path:
@@ -26,11 +33,10 @@ class Settings:
 
     @property
     def environment_dir(self) -> Path:
-        """Environment profiles and evidence root (regression/profiles/fbasecman).
+        """Environment profiles root (``data/profiles/<env>``).
 
         FileStore keeps environment *records* at ``data_dir/environments``;
-        that directory must not shadow this property — the evidence layout
-        (``data/{regression,profiles,fbasecman}/<env>``) predates it.
+        disposable regression output lives under ``output_dir`` instead.
         """
         return self.data_dir
 
@@ -77,4 +83,8 @@ def load_settings() -> Settings:
         .expanduser()
         .resolve(),
         license_vendor=os.environ.get("PRODUCT_PLATFORM_LICENSE_VENDOR", "飞象"),
+        output_dir=Path(
+            os.environ.get("PRODUCT_PLATFORM_OUTPUT_DIR",
+                           data_dir.parent / "output")
+        ).expanduser().resolve(),
     )

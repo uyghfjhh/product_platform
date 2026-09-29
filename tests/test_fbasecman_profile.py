@@ -61,7 +61,7 @@ def test_profile_maps_pgcluster_and_legacy_tests_to_same_topology(tmp_path):
         "--override", str(override), "--check-profile", "guc",
     ], cwd=repo_root, capture_output=True, text=True, timeout=60)
     assert check.returncode == 0, check.stdout + check.stderr
-    assert not (settings.data_dir / "fbasecman" / "cman-profile" / "output" / "env" / "test_context.yaml").exists()
+    assert not (settings.output_dir / "fbasecman" / "cman-profile" / "output" / "env" / "test_context.yaml").exists()
     case_task = client.post("/api/v1/operations", json={
         "environment_id": "cman-profile", "action": "tests.fbasecman",
         "target": "guc.search_path_reuse_sql_parse", "acknowledge_change": True,

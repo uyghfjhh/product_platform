@@ -43,7 +43,7 @@ def test_flaky_endpoint_aggregates_history(tmp_path):
     config = settings_for(tmp_path)
     client = TestClient(create_app(config, enqueuer=lambda task_id: None))
     make_env(client)
-    history = config.environment_dir / "regression" / "lab-cman"
+    history = config.output_dir / "regression" / "lab-cman"
     history.mkdir(parents=True)
     with (history / "history.jsonl").open("w", encoding="utf-8") as handle:
         for verdict in ("PASS", "FAIL", "PASS", "PASS", "FAIL"):
@@ -64,7 +64,7 @@ def test_bug_bundle_packs_environment_result_and_reports(tmp_path):
     config = settings_for(tmp_path)
     client = TestClient(create_app(config, enqueuer=lambda task_id: None))
     make_env(client)
-    regression = config.environment_dir / "regression" / "lab-cman"
+    regression = config.output_dir / "regression" / "lab-cman"
     case_dir = regression / "suite.case_a" / "artifacts" / "exec-1"
     case_dir.mkdir(parents=True)
     (case_dir / "steps.json").write_text(

@@ -198,7 +198,7 @@ class FbaseProvider:
             return terminal, reason
         parameters = json.loads(task["parameters"])
         if "." not in task["target"] and task["target"] != "all":
-            aggregate = settings.environment_dir / "regression" / environment["id"] / task["target"] / "suite-result.json"
+            aggregate = settings.output_dir / "regression" / environment["id"] / task["target"] / "suite-result.json"
             try:
                 payload = json.loads(aggregate.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -215,14 +215,14 @@ class FbaseProvider:
                 target = row.get("target")
                 if target not in ALL_CASE_TARGETS or row.get("operation_id") != task["id"]:
                     continue
-                artifact = settings.environment_dir / "regression" / environment["id"] / target
+                artifact = settings.output_dir / "regression" / environment["id"] / target
                 store.put_result(environment["product_id"], environment["id"], target,
                                  parameters.get("profile", "default"), row.get("verdict", "ERROR"),
                                  row.get("reason"), str(artifact))
             failed = payload.get("counts", {}).get("FAIL", 0) + payload.get("counts", {}).get("ERROR", 0)
             return ("FAILED" if failed else terminal), reason
         if task["target"] in ALL_CASE_TARGETS:
-            output = settings.environment_dir / "regression" / environment["id"] / task["target"]
+            output = settings.output_dir / "regression" / environment["id"] / task["target"]
             result_path = output / "result.json"
             try:
                 result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -349,8 +349,8 @@ class FbaseProvider:
                 with_topology=case_impl is not None,
                 extended=type(case_impl).__name__ == "ExportedCommandCase")
             context["history_root"] = str(
-                settings.environment_dir / "regression" / environment["id"])
-            output = settings.environment_dir / "regression" / environment["id"] / target
+                settings.output_dir / "regression" / environment["id"])
+            output = settings.output_dir / "regression" / environment["id"] / target
             target_args = ["--suite", target] if "." not in target else [target]
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
@@ -367,8 +367,8 @@ class FbaseProvider:
             context = self._test_context(settings, environment, cluster,
                                          with_topology=True, extended=True)
             context["history_root"] = str(
-                settings.environment_dir / "regression" / environment["id"])
-            output = settings.environment_dir / "regression" / environment["id"] / target
+                settings.output_dir / "regression" / environment["id"])
+            output = settings.output_dir / "regression" / environment["id"] / target
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
                 "--product-dir", str(Path(__file__).resolve().parent),

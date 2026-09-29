@@ -53,8 +53,8 @@ def build_bug_bundle(settings, store, environment_id: str,
     environment = store.get_environment(environment_id)
     if environment is None:
         raise KeyError(environment_id)
-    regression_root = settings.environment_dir / "regression" / environment_id
-    evidence_root = settings.environment_dir / "fbasecman" / environment_id
+    regression_root = settings.output_dir / "regression" / environment_id
+    evidence_root = settings.output_dir / "fbasecman" / environment_id
     profile_root = settings.environment_dir / "profiles" / environment_id
     buffer = io.BytesIO()
     state = {"bytes": 0, "skipped": 0}
@@ -138,7 +138,7 @@ def _read_history(path: Path, target: str | None) -> dict:
 def flaky_summary(settings, environment_id: str,
                   window: int = 5) -> dict:
     """Recent per-target verdict history for flaky detection (last N runs)."""
-    path = (settings.environment_dir / "regression" / environment_id
+    path = (settings.output_dir / "regression" / environment_id
             / "history.jsonl")
     stats = _read_history(path, None)
     summary = {}

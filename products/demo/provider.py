@@ -25,7 +25,7 @@ class DemoProvider:
     def command(self, settings, environment, action, target, parameters):
         if action != "tests.demo" or not self.validate_target(settings, target):
             raise ValueError("unsupported demo action or target")
-        output = settings.environment_dir / "regression" / environment["id"] / target
+        output = settings.output_dir / "regression" / environment["id"] / target
         command = [
             sys.executable, "-m", "platform_regress.cli",
             "--product-dir", str(PRODUCT_DIR), "--output-dir", str(output),
@@ -35,7 +35,7 @@ class DemoProvider:
         return CommandSpec(command, PRODUCT_DIR)
 
     def publish_result(self, store, settings, environment, task, terminal, reason):
-        output = settings.environment_dir / "regression" / environment["id"] / task["target"]
+        output = settings.output_dir / "regression" / environment["id"] / task["target"]
         result_file = output / ("suite-result.json" if task["target"] in {"smoke", "all"} else "result.json")
         try:
             result = json.loads(result_file.read_text(encoding="utf-8"))

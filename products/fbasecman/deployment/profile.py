@@ -14,7 +14,7 @@ def profile_paths(settings: Settings, environment_id: str) -> tuple[Path, Path]:
 
 
 def evidence_root(settings: Settings, environment_id: str) -> Path:
-    return settings.environment_dir / "fbasecman" / environment_id
+    return settings.output_dir / "fbasecman" / environment_id
 
 
 def build_profile(

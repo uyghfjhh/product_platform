@@ -56,7 +56,8 @@ cd products/fbasecman
 - **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
 - **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。
 - **License**:密钥库默认在 `data/license/keys`(`v1.N` 目录,厂商信息在同级 `config.json`);`PRODUCT_PLATFORM_LICENSE_KEYS`/`PRODUCT_PLATFORM_LICENSE_VENDOR` 可覆盖,迁移期可把旧 `fd_licenser` 密钥目录整体指入或拷入。签发为 Python 实现(Ed25519/Argon2id/XChaCha20),格式与签名由平台自验证,不再调用旧 C 校验器;自动测试只用临时密钥。
-- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/fbasecman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;SQLite 已彻底废除。
+- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/platform/operations/`,用例报告与证据在 `output/fbasecman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;SQLite 已彻底废除。
+- **数据分层**:`data/` 是控制面状态（环境/任务/绑定/结论/诊断/profile,不能乱删）;`output/` 是回归产物耗材区（`regression/` 平台结果、`fbasecman/` vendored 证据,可整棵删除重跑）;`PRODUCT_PLATFORM_OUTPUT_DIR` 可整体换路径。
 
 ## 目录结构
 
@@ -82,10 +83,13 @@ product_platform/
 │   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/
 │   └── demo/                       # 无数据库依赖的产品接入样例
 ├── tests/                          # 平台自身测试(250+ 项 pytest)
-├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
+├── data/                           # 控制面状态：环境/任务/绑定/结果/诊断/profile（不可随意删除）
 │   ├── platform/                   # FileHuey 队列、锁、操作/Web 日志
-│   ├── environments/               # profile、fixture 上下文、回归证据
-│   └── <legacy-pgdata>/            # 迁移期旧实例资源；由 pgcluster 管理，不是平台数据库
+│   ├── environments/ + profiles/   # 环境记录与生成的部署方案
+│   └── results/ + diagnoses/       # 结论与 AI 诊断记录
+├── output/                         # 回归产物耗材区（可整棵删除重跑）
+│   ├── regression/<env>/           # 平台结果/last_failed/history
+│   └── fbasecman/<env>/output/     # vendored 逐用例证据 + junit/report.html
 ├── docs/                           # design.md(设计文档)+ progress.md(进度)
 ├── web.sh                          # Web 控制台管理(默认 8080)
 └── pyproject.toml + uv.lock         # Python 工程(uv 管理)
