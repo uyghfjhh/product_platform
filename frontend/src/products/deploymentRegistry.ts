@@ -7,7 +7,6 @@ export type DeploymentProductAdapter = {
   hasProfileWizard: boolean;
   profilePath?: (environmentId: string) => string;
   fixtureAction?: { id: string; title: string; capability: string; changes_environment: boolean };
-  defaultDataRoot?: (environmentId: string) => string;
   workspaceClass?: string;
 };
 

@@ -46,11 +46,16 @@ def create_router(settings, store) -> APIRouter:
         product_environment(environment_id)
         deployment, override = profile_paths(settings, environment_id)
         context = legacy_root(settings, environment_id) / "output" / "env" / "test_context.yaml"
+        defaults = ProfileInput()
         return {
             "generated": deployment.is_file() and override.is_file(),
             "deployment_config": str(deployment),
             "test_override": str(override),
             "context_ready": context.is_file(),
+            "defaults": {
+                "data_root": defaults.data_root,
+                "license_file": defaults.license_file,
+            },
         }
 
     @router.post("/api/v1/environments/{environment_id}/fbasecman-profile")

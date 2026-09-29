@@ -22,7 +22,7 @@ type Props = {
   productBindings?: RegressionBinding[];
 };
 
-type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean };
+type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean; defaults?: { data_root?: string; license_file?: string } };
 
 export default function DeploymentPage({
   product,
@@ -126,10 +126,12 @@ export default function DeploymentPage({
     profileForm.setFieldsValue({
       // 默认值从当前环境派生：端口取环境登记端口，License 取部署配置同目录或留空必填。
       mmr1_port: environment.port,
-      data_root: productAdapter.defaultDataRoot?.(environment.id),
+      data_root: profile?.defaults?.data_root
+        ? `${profile.defaults.data_root}/${environment.id}`
+        : '',
       license_file: environment.deployment_config
         ? `${environment.deployment_config.replace(/\/[^/]*$/, '')}/license.dat`
-        : '',
+        : (profile?.defaults?.license_file ?? ''),
     });
     setProfileOpen(true);
   }

@@ -15,7 +15,6 @@ const frontend: ProductFrontend = {
     hasProfileWizard: true,
     profilePath: (environmentId) => `/environments/${encodeURIComponent(environmentId)}/fbasecman-profile`,
     fixtureAction: { id: 'tests.prepare_fbasecman', title: '准备 fbasecman 测试夹具', capability: 'tests', changes_environment: true },
-    defaultDataRoot: (environmentId) => `/home/postgres/fbasecman_regress_v2_mmr/${environmentId}`,
     workspaceClass: 'cman-deploy-workspace',
   }),
   test: () => ({
