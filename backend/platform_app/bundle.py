@@ -1,7 +1,7 @@
 """故障分析包（bug bundle）导出。
 
 把一次回归失败需要的全部现场打包成单个 zip，供 issue 附件或跨机器
-分析：环境记录与 profile、平台归档结果与证据、legacy 报告树、运行报告
+分析：环境记录与 profile、平台归档结果与证据、产品报告树、运行报告
 （report.html/junit.xml）、 flaky 历史与最近任务日志。  平台 API 与根
 CLI ``pack`` 共用同一构建器，保证两种入口产物一致。
 """
@@ -36,10 +36,10 @@ def _add_tree(archive: zipfile.ZipFile, root: Path, prefix: str,
         archive.write(path, prefix + "/" + str(path.relative_to(root)))
 
 
-def _legacy_run_dirs(legacy_root: Path, target: str) -> list[Path]:
+def _run_dirs(evidence_root: Path, target: str) -> list[Path]:
     """Locate ``runs/<suite>/<case>/`` directories matching a dotted target."""
     suite, _, case = target.partition(".")
-    runs = legacy_root / "output" / "runs"
+    runs = evidence_root / "output" / "runs"
     if not suite or not case or not runs.is_dir():
         return []
     matched = [directory for directory in (runs / suite).glob(case + "*")
@@ -54,7 +54,7 @@ def build_bug_bundle(settings, store, environment_id: str,
     if environment is None:
         raise KeyError(environment_id)
     regression_root = settings.environment_dir / "regression" / environment_id
-    legacy_root = settings.environment_dir / "legacy_cman" / environment_id
+    evidence_root = settings.environment_dir / "fbasecman" / environment_id
     profile_root = settings.environment_dir / "profiles" / environment_id
     buffer = io.BytesIO()
     state = {"bytes": 0, "skipped": 0}
@@ -76,13 +76,13 @@ def build_bug_bundle(settings, store, environment_id: str,
             _add_tree(archive, regression_root / target,
                       "regression/" + target, state)
             for index, directory in enumerate(
-                    _legacy_run_dirs(legacy_root, target)):
+                    _run_dirs(evidence_root, target)):
                 _add_tree(archive, directory,
-                          "legacy/runs/%d" % index, state)
+                          "runs/%d" % index, state)
         else:
             _add_tree(archive, regression_root, "regression", state)
-            _add_tree(archive, legacy_root / "output" / "runs",
-                      "legacy/runs", state)
+            _add_tree(archive, evidence_root / "output" / "runs",
+                      "runs", state)
         for name in ("report.html", "junit.xml", "last_failed.json",
                      "history.jsonl", "suite-result.json"):
             candidate = regression_root / name

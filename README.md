@@ -49,7 +49,7 @@ cd products/fbasecman
 - **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
 - **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。
 - **License**:密钥库默认在 `data/license/keys`(`v1.N` 目录,厂商信息在同级 `config.json`);`PRODUCT_PLATFORM_LICENSE_KEYS`/`PRODUCT_PLATFORM_LICENSE_VENDOR` 可覆盖,迁移期可把旧 `fd_licenser` 密钥目录整体指入或拷入。签发为 Python 实现(Ed25519/Argon2id/XChaCha20),格式与签名由平台自验证,不再调用旧 C 校验器;自动测试只用临时密钥。
-- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/legacy_cman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;旧 `platform.sqlite3` 仅作 `product-platform migrate-sqlite` 的一次性迁移源。
+- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/fbasecman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;旧 `platform.sqlite3` 仅作 `product-platform migrate-sqlite` 的一次性迁移源。
 
 ## 目录结构
 

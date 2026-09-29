@@ -11,14 +11,14 @@ from products.fbasecman.reports.artifacts import (
     case_log,
     sync_current_results,
 )
-from products.fbasecman.deployment.profile import legacy_root
+from products.fbasecman.deployment.profile import evidence_root
 
 from test_fbasecman_profile import settings_for
 
 
 def _write_case(settings, environment_id, target, status):
     suite, case = target.split(".", 1)
-    directory = legacy_root(settings, environment_id) / "output" / "runs" / suite / case
+    directory = evidence_root(settings, environment_id) / "output" / "runs" / suite / case
     directory.mkdir(parents=True)
     (directory / "summary.json").write_text(json.dumps({"target": target, "status": status, "reason": "断言结果"}))
     (directory / "report.txt").write_text(
@@ -40,7 +40,7 @@ def test_report_endpoints_read_environment_isolated_artifacts(tmp_path):
         "id": "lab-cman", "product_id": "fbasecman", "title": "测试环境",
         "host": "127.0.0.1", "port": 5432,
     }).raise_for_status()
-    root = legacy_root(settings, "lab-cman")
+    root = evidence_root(settings, "lab-cman")
     root.mkdir(parents=True)
     (root / "regress.yaml").write_text((settings.product_regress_root("fbasecman") / "regress.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     _write_case(settings, "lab-cman", "ha_commands.sample", "FAIL")
@@ -91,7 +91,7 @@ def test_running_step_updates_emit_ordered_events_once(tmp_path):
     })
     task = store.create_task("lab-a", "tests.fbasecman", "guc.sample", {}, None)
     started_at = time.time()
-    directory = legacy_root(settings, "lab-a") / "output" / "runs" / "guc" / "sample"
+    directory = evidence_root(settings, "lab-a") / "output" / "runs" / "guc" / "sample"
     directory.mkdir(parents=True)
     steps = directory / "steps.json"
     steps.write_text(json.dumps({"steps": [{

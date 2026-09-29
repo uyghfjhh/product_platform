@@ -10,7 +10,7 @@ from pathlib import Path
 
 from platform_app.config import Settings
 from platform_app.event_contracts import EntityDiscovered
-from products.fbasecman.deployment.profile import legacy_root
+from products.fbasecman.deployment.profile import evidence_root
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -30,7 +30,7 @@ def report_root(settings: Settings, environment_id: str | None) -> Path:
     if environment_id:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", environment_id):
             raise ValueError("环境 ID 无效")
-        return legacy_root(settings, environment_id)
+        return evidence_root(settings, environment_id)
     return settings.product_regress_root("fbasecman")
 
 

@@ -13,8 +13,8 @@ def profile_paths(settings: Settings, environment_id: str) -> tuple[Path, Path]:
     return root / "pgcluster.yaml", root / "regress.override.yaml"
 
 
-def legacy_root(settings: Settings, environment_id: str) -> Path:
-    return settings.environment_dir / "legacy_cman" / environment_id
+def evidence_root(settings: Settings, environment_id: str) -> Path:
+    return settings.environment_dir / "fbasecman" / environment_id
 
 
 def build_profile(
@@ -134,7 +134,7 @@ def build_profile(
             }
         },
     }
-    output_root = legacy_root(settings, environment["id"]) / "output"
+    output_root = evidence_root(settings, environment["id"]) / "output"
     regression = {
         "database": {
             "enable_citus": use_citus,
@@ -159,15 +159,15 @@ def save_profile(settings: Settings, environment: dict, **options) -> tuple[Path
     path.write_text(yaml.safe_dump(deployment, allow_unicode=True, sort_keys=False), encoding="utf-8")
     override.write_text(yaml.safe_dump(regression, allow_unicode=True, sort_keys=False), encoding="utf-8")
     # 旧报告解析器从根目录读有效配置；此副本只供展示，不参与测试执行。
-    legacy = legacy_root(settings, environment["id"])
-    legacy.mkdir(parents=True, exist_ok=True)
+    evidence = evidence_root(settings, environment["id"])
+    evidence.mkdir(parents=True, exist_ok=True)
     source = settings.product_regress_root("fbasecman") / "regress.yaml"
     merged = yaml.safe_load(source.read_text(encoding="utf-8"))
     local = source.with_name("regress.local.yaml")
     if local.is_file():
         _merge(merged, yaml.safe_load(local.read_text(encoding="utf-8")) or {})
     _merge(merged, regression)
-    (legacy / "regress.yaml").write_text(
+    (evidence / "regress.yaml").write_text(
         yaml.safe_dump(merged, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     return path, override

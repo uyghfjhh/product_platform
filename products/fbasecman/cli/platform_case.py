@@ -7,7 +7,7 @@ from pathlib import Path
 
 from platform_app.config import load_settings
 from platform_regress.cli import main as run_platform_case
-from products.fbasecman.deployment.profile import legacy_root, profile_paths
+from products.fbasecman.deployment.profile import evidence_root, profile_paths
 
 
 def main() -> int:
@@ -25,7 +25,7 @@ def main() -> int:
     context = {
         "regress_source": str(settings.product_regress_root("fbasecman")),
         "regress_override": str(override),
-        "regress_report_root": str(legacy_root(settings, args.environment)),
+        "regress_report_root": str(evidence_root(settings, args.environment)),
     }
     output = args.output_dir or settings.environment_dir / "regression" / args.environment / args.target
     return run_platform_case([

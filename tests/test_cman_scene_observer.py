@@ -8,7 +8,7 @@ from test_api import settings_for
 def test_recorded_console_rows_become_scene_entities(tmp_path):
     settings = settings_for(tmp_path)
     store = FileStore(settings.data_dir)
-    path = (settings.environment_dir / "legacy_cman" / "lab" / "output" / "runs" /
+    path = (settings.environment_dir / "fbasecman" / "lab" / "output" / "runs" /
             "rw_toggle" / "read" / "steps.json")
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"steps": [{
@@ -42,7 +42,7 @@ def test_recorded_console_rows_become_scene_entities(tmp_path):
 def test_repeated_monitor_polls_discover_entity_once(tmp_path):
     settings = settings_for(tmp_path)
     store = FileStore(settings.data_dir)
-    path = (settings.environment_dir / "legacy_cman" / "lab" / "output" / "runs" /
+    path = (settings.environment_dir / "fbasecman" / "lab" / "output" / "runs" /
             "ha_commands" / "refresh" / "steps.json")
     path.parent.mkdir(parents=True)
     output = ("$ psql -x -c 'SHOW NODE_MONITOR;'\n"

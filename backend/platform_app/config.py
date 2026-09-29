@@ -26,11 +26,11 @@ class Settings:
 
     @property
     def environment_dir(self) -> Path:
-        """Environment profiles and evidence root (regression/profiles/legacy_cman).
+        """Environment profiles and evidence root (regression/profiles/fbasecman).
 
         FileStore keeps environment *records* at ``data_dir/environments``;
         that directory must not shadow this property — the evidence layout
-        (``data/{regression,profiles,legacy_cman}/<env>``) predates it.
+        (``data/{regression,profiles,fbasecman}/<env>``) predates it.
         """
         return self.data_dir
 

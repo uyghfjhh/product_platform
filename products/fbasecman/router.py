@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from platform_app.topology import configured_topology
-from products.fbasecman.deployment.profile import legacy_root, profile_paths, save_profile
+from products.fbasecman.deployment.profile import evidence_root, profile_paths, save_profile
 from products.fbasecman.reports.artifacts import (
     case_artifacts,
     case_log,
@@ -45,7 +45,7 @@ def create_router(settings, store) -> APIRouter:
     def profile(environment_id: str):
         product_environment(environment_id)
         deployment, override = profile_paths(settings, environment_id)
-        context = legacy_root(settings, environment_id) / "output" / "env" / "test_context.yaml"
+        context = evidence_root(settings, environment_id) / "output" / "env" / "test_context.yaml"
         defaults = ProfileInput()
         return {
             "generated": deployment.is_file() and override.is_file(),

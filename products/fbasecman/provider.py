@@ -22,7 +22,7 @@ from products.fbasecman.observations import (
     parse_nodes,
     parse_replication,
 )
-from products.fbasecman.deployment.profile import legacy_root, profile_paths
+from products.fbasecman.deployment.profile import evidence_root, profile_paths
 from products.fbasecman.reports.artifacts import CaseProgressObserver, sync_current_results
 
 
@@ -239,7 +239,7 @@ class FbasecmanProvider:
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
             from products.fbasecman.cases import NATIVE_CASES
             native_target = target in NATIVE_CASES
-            regress_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
+            regress_context = evidence_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
             if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
@@ -247,7 +247,7 @@ class FbasecmanProvider:
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
-                    "regress_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_report_root": str(evidence_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 if native_target:
@@ -264,7 +264,7 @@ class FbasecmanProvider:
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
-                    "regress_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_report_root": str(evidence_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
@@ -279,7 +279,7 @@ class FbasecmanProvider:
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
-                    "regress_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_report_root": str(evidence_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
@@ -296,7 +296,7 @@ class FbasecmanProvider:
             case_context = {
                 "regress_source": str(settings.product_regress_root("fbasecman")),
                 "regress_override": str(override),
-                "regress_report_root": str(legacy_root(settings, environment["id"])),
+                "regress_report_root": str(evidence_root(settings, environment["id"])),
                 "history_root": str(settings.environment_dir / "regression" / environment["id"]),
             }
             case_context.update(suite_case_context(settings, environment))
