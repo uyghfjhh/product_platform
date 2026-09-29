@@ -205,6 +205,19 @@
   border: 1px solid rgba(56, 189, 248, 0.3) !important;
 }
 
+/* Unknown / Probe-pending Node Styling */
+.topo-node-badge.unknown {
+  background: rgba(148, 163, 184, 0.15) !important;
+  color: #94a3b8 !important;
+  border: 1px dashed rgba(148, 163, 184, 0.45) !important;
+}
+
+.topo-node-pulse.unknown {
+  background: #94a3b8 !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+
 .status-field-down {
   color: #f87171 !important;
   font-weight: 600;
@@ -247,6 +260,12 @@
   border: 1px solid rgba(245, 158, 11, 0.4);
 }
 
+.cluster-status-pill.unknown {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px dashed rgba(148, 163, 184, 0.45);
+}
+
 /* Canvas Cleaned State Watermark / Banner */
 .topo-canvas-state-banner {
   position: absolute;
@@ -273,6 +292,15 @@
 .topo-canvas-state-banner.active {
   border: 1px solid rgba(34, 197, 94, 0.4);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 15px rgba(34, 197, 94, 0.15);
+}
+
+.topo-canvas-state-banner.unknown {
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 15px rgba(148, 163, 184, 0.12);
+}
+
+.topo-canvas-state-banner.unknown .banner-title {
+  color: #94a3b8;
 }
 
 .topo-canvas-state-banner .banner-icon {

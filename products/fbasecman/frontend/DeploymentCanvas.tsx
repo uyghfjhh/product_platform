@@ -84,6 +84,7 @@ function toReference(topology: TopologyData, observed: Observed) {
     const primary = node.role === 'primary' || node.role?.includes('primary');
     const pos = nodePositions[node.id] || { x: 100, y: 100, compact: false };
     const isMacSubscriber = node.role === 'logical_subscriber' || node.id === 'logical_subscriber';
+    const probe = observed?.[node.id];
     return {
       id: node.id,
       label: `${node.label} (${node.port})`,
@@ -92,7 +93,8 @@ function toReference(topology: TopologyData, observed: Observed) {
       role: primary ? 'MMR Master (写)' : (isMacSubscriber ? '逻辑订阅端 (只读)' : 'Standby (物理备库)'),
       host: node.host,
       port: node.port,
-      status: observed?.[node.id]?.running === true ? 'active' : 'down',
+      // 区分"未探测"(observed 尚未返回/请求失败)与"确认离线"——前者不得渲染成故障红
+      status: probe?.running == null ? 'unknown' : (probe.running ? 'active' : 'down'),
       x: pos.x,
       y: pos.y,
       desc: primary
@@ -127,6 +129,7 @@ function toReference(topology: TopologyData, observed: Observed) {
       ...health,
       total_db_nodes: nodes.length,
       total_db_active: totalAlive,
+      probed: observed != null,
       proxy_running: true,
     }
   };

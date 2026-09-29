@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd';
 import {
   CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined,
@@ -50,8 +50,10 @@ export default function DeploymentPage({
   const [profileForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('2d');
-  const productAdapter = deploymentAdapter(product);
-  const DeploymentCanvas = deploymentFrontend(product)?.DeploymentCanvas;
+  // adapter 工厂每次调用返回新对象——必须 memo，否则下方 effect 依赖每轮渲染都变，
+  // 造成 topology/status 无限 refetch 且 setObserved(null) 把已取回的状态清空。
+  const productAdapter = useMemo(() => deploymentAdapter(product), [product?.id]);
+  const DeploymentCanvas = useMemo(() => deploymentFrontend(product)?.DeploymentCanvas, [product?.id]);
   const compatibleProfiles = (product?.test_profiles || []).filter((profile) =>
     profile.deployment_targets.some((pattern) => pattern.endsWith('*')
       ? Boolean(environment?.deployment_target?.startsWith(pattern.slice(0, -1)))
@@ -93,17 +95,22 @@ export default function DeploymentPage({
     }).catch((error) => message.error(error.message));
   }, [environment, productAdapter.profilePath, message]);
 
-  async function refreshStatus() {
+  async function refreshStatus(silent = false) {
     if (!environment) return;
-    setStatusLoading(true);
+    if (!silent) setStatusLoading(true);
     try {
       setObserved(await api(`/environments/${encodeURIComponent(environment.id)}/topology/status`));
     } catch (error) {
-      message.error((error as Error).message);
-    } finally { setStatusLoading(false); }
+      if (!silent) message.error((error as Error).message);
+    } finally { if (!silent) setStatusLoading(false); }
   }
 
-  useEffect(() => { if (environment?.deployment_config) void refreshStatus(); }, [environment?.id, environment?.deployment_config]);
+  useEffect(() => {
+    if (!environment?.deployment_config) return;
+    void refreshStatus(true);
+    const timer = window.setInterval(() => void refreshStatus(true), 15000);
+    return () => window.clearInterval(timer);
+  }, [environment?.id, environment?.deployment_config]);
 
   async function createProfile() {
     if (!environment) return;

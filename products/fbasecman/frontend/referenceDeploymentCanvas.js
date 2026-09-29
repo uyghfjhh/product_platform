@@ -12,10 +12,12 @@
         const clHealth = health[cl.id];
         const alive = clHealth ? clHealth.total_alive : 0;
         const total = clHealth ? clHealth.total_count : 7;
-        const isAllDown = alive === 0;
+        const isAllDown = health.probed === false ? false : alive === 0;
 
         let statusPill = '';
-        if (isAllDown) {
+        if (health.probed === false) {
+          statusPill = `<span class="cluster-status-pill unknown">状态探测中…</span>`;
+        } else if (isAllDown) {
           statusPill = `<span class="cluster-status-pill down">已离线 / 未部署 (0/${total})</span>`;
         } else if (alive === total) {
           statusPill = `<span class="cluster-status-pill active">全部就绪 (${alive}/${total})</span>`;
@@ -107,10 +109,11 @@
     // Build Node Hardware Cards
     let nodesHtml = '';
     nodes.forEach((n) => {
-      const isDown = n.status !== 'active';
-      const statusClass = isDown ? 'down' : 'active';
+      const isDown = n.status === 'down';
+      const isUnknown = n.status === 'unknown';
+      const statusClass = isDown ? 'down' : (isUnknown ? 'unknown' : 'active');
       const nodeCardClass = isDown ? 'node-down' : 'node-active';
-      const roleBadge = isDown ? '离线 DOWN' : (n.role || n.type);
+      const roleBadge = isDown ? '离线 DOWN' : (isUnknown ? '探测中' : (n.role || n.type));
       const compactClass = n.compact ? 'compact' : '';
       const isDb = n.type === 'db_master' || n.type === 'db_standby' || n.type === 'proxy';
 
@@ -161,7 +164,17 @@
     const totalActive = health.total_db_active || 0;
     const totalNodes = health.total_db_nodes || 14;
 
-    if (totalActive === 0) {
+    if (health.probed === false) {
+      bannerHtml = `
+        <div class="topo-canvas-state-banner unknown">
+          <div class="banner-icon">📡</div>
+          <div class="banner-content">
+            <div class="banner-title">正在探测节点运行状态…</div>
+            <div class="banner-desc">节点状态尚未返回或探测请求失败，画布将在下一轮探测后自动刷新；也可点击右上角【🔄 刷新拓扑】手动重试。</div>
+          </div>
+        </div>
+      `;
+    } else if (totalActive === 0) {
       bannerHtml = `
         <div class="topo-canvas-state-banner down">
           <div class="banner-icon">🧹</div>
