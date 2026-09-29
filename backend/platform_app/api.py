@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -527,21 +528,28 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
                 index[target] = (path.parent, mtime)
         return index
 
+    def _row_timestamp(row: dict) -> float:
+        value = row.get("updated_at")
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return datetime.fromisoformat(
+                str(value).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
     @app.get("/api/v1/environments/{environment_id}/results")
     def results(environment_id: str):
         if store.get_environment(environment_id) is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         rows = store.list_results(environment_id)
-        seen = {row["target"] for row in rows}
         environment = store.get_environment(environment_id)
         for target, (base, mtime) in platform_result_index(environment_id).items():
-            if target in seen:
-                continue
             try:
                 payload = json.loads((base / "result.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            rows.append({
+            fresh = {
                 "product_id": environment["product_id"],
                 "environment_id": environment_id,
                 "target": target, "profile": "default",
@@ -549,7 +557,14 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
                 "reason": payload.get("reason"),
                 "artifact_dir": str(base),
                 "updated_at": mtime,
-            })
+            }
+            stale = next((row for row in rows if row["target"] == target), None)
+            if stale is None:
+                rows.append(fresh)
+            elif mtime > _row_timestamp(stale):
+                # A store row predates the platform archive (e.g. CLI reruns
+                # after a web-run failure) — the newer fact wins the row.
+                stale.update(fresh)
         return rows
 
     def archived_result(environment_id: str, target: str, profile: str) -> tuple[Path, dict]:
