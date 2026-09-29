@@ -21,7 +21,6 @@ from suites.global_cache.runtime import (
     GlobalCacheFailure,
     VerificationFailure,
     _find_case,
-    _load_env,
     _safe_name,
     _validate_report_levels,
     case_items,

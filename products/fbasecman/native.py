@@ -825,7 +825,7 @@ class OutstandingConsistencyCase:
                                   'rw_split_method "none"',
                                   "pool_discard no"))})
 
-        probe = (Path(__file__).resolve().parent / "regression" / "legacy"
+        probe = (Path(__file__).resolve().parent / "regression"
                  / "suites" / "outstanding" / "assets" / "outstanding_protocol_probe.py")
         context.step("step-probe", "确认缓存观测不会创建 PreparedStatement",
                      details={"expected": "测试流量使用原始 Extended 报文；pg_prepared_statements 观测使用 Simple Query Q",
@@ -1084,7 +1084,7 @@ class RwToggleCase:
 
     def _run_jdbc(self, context, psql, port, read_port):
         group = self.group
-        asset = (Path(__file__).resolve().parent / "regression" / "legacy"
+        asset = (Path(__file__).resolve().parent / "regression"
                  / "suites" / "rw_toggle" / "assets" / "RwToggleJdbc.java")
         jar = Path(context.environment.get("jdbc_jar", ""))
         if not asset.is_file() or not jar.is_file():

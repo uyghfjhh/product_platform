@@ -147,7 +147,7 @@ def test_platform_case_path_never_loads_suite_runner_or_run_case():
     import subprocess
 
     repo = Path(__file__).parents[1]
-    legacy = repo / "products" / "fbasecman" / "regression" / "legacy"
+    legacy = repo / "products" / "fbasecman" / "regression"
     code = """
 import importlib, sys
 sys.path[:0] = [%r, %r, %r]

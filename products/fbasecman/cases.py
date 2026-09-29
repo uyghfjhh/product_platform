@@ -21,7 +21,7 @@ from products.fbasecman.runtime_cases import runtime_case
 
 PRODUCT_ROOT = Path(__file__).parent
 REPO_ROOT = PRODUCT_ROOT.parent.parent
-DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression" / "legacy"
+DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression"
 CATALOG = json.loads((PRODUCT_ROOT / "regression" / "catalog.json").read_text(encoding="utf-8"))
 if CATALOG.get("schema_version") != 1:
     raise ValueError("fbasecman 用例目录版本无效")

@@ -62,7 +62,7 @@
 
 ### 2.6 旧架构退役与 Shim 物理删除（提交 `45f08f9`、`772e9b3`）
 - **FBase 死桥清理**：由于 228 条 FBase 用例已全部原生运行在平台声明式步骤引擎上，`products/fbase-database/cases.py` 中用于兼容旧 `run.sh` 的 `LegacyFbaseCase` 及相关兜底分支已**全部删除**。
-- **fbasecman framework shim 物理删除**：`products/fbasecman/regression/legacy/framework/` 下所有的兼容 shim 模块已**完全物理删除**；业务配置转换收口至 `legacy/cmanconf.py`，平台代码与产品包彻底解绑。
+- **fbasecman framework shim 物理删除**：`products/fbasecman/regression/framework/`（原 `regression/legacy/framework/`）下所有的兼容 shim 模块已**完全物理删除**；业务配置转换收口至 `regression/cmanconf.py`，平台代码与产品包彻底解绑。
 
 ---
 
@@ -72,14 +72,14 @@ fbasecman 144 条 executor 用例已完成 `rt.*`→`ops.*`/`context` 形态迁�
 （`fbasecman_ops` PEP 562 转发 facade + `RuntimeBinding.context_executor`，
 runtime 构造注入 resolver `env`/`context_data`）；产品侧 executor 与 runtime
 方法库按 §5.0.1.3 属产品知识，物理位置保留在 `products/fbasecman/`
-产品包内（`regression/legacy/` 子路径现为纯 vendored 产品知识与资产——
+产品包内（`regression/` 子树现为纯 vendored 产品知识与资产，目录层级已从 `regression/legacy/` 收敛——
 `run.sh`/`tools/cli.py`/`suite.py`/`plugin.py`/`registry.py`/vendored
 `unit_tests/`/内层重复 `products/` 包/零引用 `env/` 已于 2026-09-29 物理
 删除，非平台运行路径依赖）。当前代码距离“理想终态”只剩下以下
 收尾工作：
 
 ### 3.1 ~~`fbase-database` 的 `framework/` 遗留目录~~（已关闭）
-- **现状**：`products/fbase-database/regression/legacy/` 已随 vendored `unit_tests/` 一并物理删除；仅保留 `regress.yaml`（集群拓扑与 license/tmp_root/local_host/contrib_root 的环境配置源）与三份问题单文档。
+- **现状**：`products/fbase-database/regression/legacy/` 已随 vendored `unit_tests/` 一并物理删除，`legacy/` 层级随后移除；`regress.yaml` 现位于 `regression/`（集群拓扑与 license/tmp_root/local_host/contrib_root 的环境配置源）与三份问题单文档。
 - **结论**：fbase-database 平台路径对该目录已无代码依赖，`cases.json` 是唯一用例来源。
 
 ### 3.2 ~~`test_junit.py` 的环境孤儿断言~~（已随 vendored `unit_tests/` 删除关闭）
@@ -236,7 +236,7 @@ graph TD
    - **风险定性**：一旦上游 `render_config` 对基础配置做出微调（如默认 `pool_size` 调整为 10 或修改了空白缩进），`text.replace()` 会**静默失效且不抛出任何异常**，导致用例在错误的配置下运行，排查隐蔽性极高。
    - **整改建议**：`render_config(context, path, *, overrides: dict = None)` 应支持结构化参数注入，在初次生成时根据用例参数写入，杜绝下游文本级二次替换。
 2. **底层协议探针脚本内的通信地址硬编码**：
-   - 在辅助探针脚本 [outstanding_protocol_probe.py:377](file:///home/postgres/fly_dev/product_platform/products/fbasecman/regression/legacy/suites/outstanding/assets/outstanding_protocol_probe.py#L377) 中：
+   - 在辅助探针脚本 [outstanding_protocol_probe.py:377](file:///home/postgres/fly_dev/product_platform/products/fbasecman/regression/suites/outstanding/assets/outstanding_protocol_probe.py#L377) 中：
      `return ProtocolClient("127.0.0.1", port, database)`
    - 脚本的命令行参数只接收 `PORT MODE DATABASE`，写死了 `127.0.0.1`，同样阻碍了测试流量发往远端被测实例。
 3. **拓扑别名与数据库内置业务对象的强耦合**：

@@ -334,7 +334,3 @@ def _preflight(root_dir):
 
 _suite_registry.set_default_preflight_check(_preflight)
 _suite_registry.set_default_quiet_env_var("FBASECMAN_QUIET_ENV")
-
-import platform_regress.runtime as _runtime  # noqa: E402
-
-_runtime.set_legacy_config_loader(load_regression_config)

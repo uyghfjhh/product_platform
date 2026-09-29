@@ -24,7 +24,7 @@ from platform_regress.suites.executor import RuntimeBinding, RuntimeExecutorCase
 
 PRODUCT_ROOT = Path(__file__).parent
 REPO_ROOT = PRODUCT_ROOT.parent.parent
-DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression" / "legacy"
+DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression"
 _EXTRA_CONFIGS = []
 _LOADER_PROFILED = False
 
@@ -46,11 +46,6 @@ def _ensure_imports(source):
         return original(root_dir, extra_configs=extras, validate=validate)
 
     cmanconf.load_regression_config = load_with_profile
-    # ``set_legacy_config_loader`` captured the unwrapped loader during the
-    # cmanconf import above; re-register the wrapped one so runtime __init__
-    # paths resolve the same environment overlay as this resolver.
-    import platform_regress.runtime as _runtime
-    _runtime.set_legacy_config_loader(load_with_profile)
     _LOADER_PROFILED = True
 
 

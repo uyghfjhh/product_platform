@@ -166,19 +166,22 @@ class FbasecmanProvider:
             except (OSError, ValueError):
                 payload = {}
             rows = payload.get("results") if isinstance(payload, dict) else None
-            if not isinstance(rows, list) or not rows:
-                fallback = "批量回归未生成聚合结果"
+            matched = 0
+            if isinstance(rows, list):
+                for row in rows:
+                    target = row.get("target")
+                    if target not in CASE_TARGETS or row.get("operation_id") != task["id"]:
+                        continue
+                    matched += 1
+                    artifact = settings.environment_dir / "regression" / environment["id"] / target
+                    store.put_result(environment["product_id"], environment["id"], target,
+                                     "default", row.get("verdict", "ERROR"), row.get("reason"), str(artifact))
+            if not matched:
+                fallback = "批量回归未生成可归因到本次执行的聚合结果"
                 store.put_result(environment["product_id"], environment["id"], task["target"],
-                                 "default", "PASS" if terminal == "SUCCEEDED" else "ERROR", fallback,
+                                 "default", "ERROR", fallback,
                                  str(settings.platform_dir / "operations" / (task["id"] + ".log")))
-                return terminal, fallback
-            for row in rows:
-                target = row.get("target")
-                if target not in CASE_TARGETS or row.get("operation_id") != task["id"]:
-                    continue
-                artifact = settings.environment_dir / "regression" / environment["id"] / target
-                store.put_result(environment["product_id"], environment["id"], target,
-                                 "default", row.get("verdict", "ERROR"), row.get("reason"), str(artifact))
+                return ("FAILED" if terminal == "SUCCEEDED" else terminal), fallback
             failed = payload.get("counts", {}).get("FAIL", 0) + payload.get("counts", {}).get("ERROR", 0)
             return ("FAILED" if failed else terminal), reason
         if task["target"] in CASE_TARGETS:

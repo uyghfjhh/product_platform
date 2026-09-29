@@ -126,9 +126,9 @@
   - `products/fbasecman/regression/run.py` 保留 `--check-profile` 校验（target 存在性改查 `catalog.json`，不再 import `suites.registry`）。
   - `legacy/run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`case.py`、`suites/registry.py`、vendored `unit_tests/`（259 项）、legacy 树内重复 `products/fbasecman/` 包（2713 行）、零引用的 `env/`（1204 行，依赖早已不存在的 `framework.*`）、`tests/`、`output/`、一次性迁移脚本 `export_legacy_catalog.py` 全部删除；`tools/` 仅留 `web_reports.py`（平台报告解析仍经它）与 stable 工具链；`cli/run.sh` 收敛为 `platform_case.py` 薄壳。
   - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`。
-  - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）；`fbase-database/regression/legacy/` vendored 树（framework/suites/unit_tests/run.sh/templates）已物理删除，仅保留 `regress.yaml` 集群配置源与问题单文档；`cli/run.sh` 收敛为 `platform-case` 薄壳。
+  - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）；`fbase-database/regression/legacy/` vendored 树（framework/suites/unit_tests/run.sh/templates）已物理删除，`legacy/` 层级随后随产品回归树收敛移除，`regress.yaml` 现位于 `regression/` 集群配置源与问题单文档；`cli/run.sh` 收敛为 `platform-case` 薄壳。
   - **fbasecman `framework/` shim 已物理删除**（提交 772e9b3）：全部 `framework.*` import retarget 到 `platform_regress.*`；产品私有胶水并入 `legacy/cmanconf.py`；平台 `runtime.py` 改用 `set_legacy_config_loader()` 注入契约；`tools/architecture.py` 改守 cmanconf 边界。
-  - `fbase-database/regression/legacy/framework/` 已随 vendored 单测一并物理删除（见上条）。
+  - `fbase-database/regression/framework/`（原 `regression/legacy/framework/`）已随 vendored 单测一并物理删除（见上条）。
 
 ## 7. 验收标准与红线
 

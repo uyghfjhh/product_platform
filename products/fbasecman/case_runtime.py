@@ -45,7 +45,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
     # 所有 fbasecman 用例共享同一批后端数据库，必须串行执行，共用一把锁。
     lock_name = "fbasecman_cases"
 
-    def __init__(self, root, case, env=None, context_data=None):
+    def __init__(self, root, case, env, context_data=None):
         super(FbasecmanCaseRuntime, self).__init__(
             root, case, env=env, context_data=context_data)
         self.proxy_log = self.run_root / "fbasecman.log"

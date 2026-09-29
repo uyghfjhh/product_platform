@@ -48,11 +48,11 @@ class Settings:
         return ROOT / "products"
 
     def product_regress_root(self, product_id: str) -> Path:
-        """Legacy regression tree of one installed product package."""
+        """Regression resource tree of one installed product package."""
         override = self.regress_roots.get(product_id)
         if override is not None:
             return Path(override)
-        return self.products_root / product_id / "regression" / "legacy"
+        return self.products_root / product_id / "regression"
 
 
 def load_settings() -> Settings:

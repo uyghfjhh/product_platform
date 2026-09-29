@@ -10,9 +10,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-
-from cmanconf import load_regression_config
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhasedProcess
 from platform_regress.evidence import (
@@ -93,16 +90,6 @@ def _find_case(target):
         if case.name == target:
             return case
     raise GlobalCacheFailure("unknown global_cache case: %s" % target)
-
-
-def _load_env(root):
-    env = load_regression_config(root)
-    if not env.test_context_file.exists():
-        raise GlobalCacheFailure(
-            "missing %s, run ./run.sh env setup first" % env.test_context_file
-        )
-    context = yaml.safe_load(env.test_context_file.read_text(encoding="utf-8")) or {}
-    return env, context
 
 
 def _format_case(case):

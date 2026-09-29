@@ -18,7 +18,7 @@ import yaml
 
 from platform_regress.clients.psql import build_psql_command, parse_psql_table, assert_table_rows
 from platform_regress.engine import CaseFailure
-from cmanconf import load_regression_config
+
 from platform_regress.evidence.log_window import (
     LocalLogWindow,
     parse_remote_log_snapshot,
@@ -116,10 +116,10 @@ def _relevant_pg_lines(text, sql=None, limit=36):
 
 
 class HandoverRuntime(object):
-    def __init__(self, root, case, env=None, context_data=None):
+    def __init__(self, root, case, env, context_data=None):
         self.root = Path(root)
         self.case = case
-        self.env = env if env is not None else load_regression_config(self.root)
+        self.env = env
         if not self.env.test_context_file.exists():
             raise HandoverFailure("missing %s, run ./run.sh env setup first" % self.env.test_context_file)
         self.context = (context_data if context_data is not None

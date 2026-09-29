@@ -72,7 +72,7 @@ product_platform/
 │   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
 ├── products/                       # 每个产品一个代码目录
 │   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
-│   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
+│   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/
 │   └── demo/                       # 无数据库依赖的产品接入样例
 ├── tests/                          # 平台自身测试(249 项 pytest)
 ├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
@@ -100,7 +100,7 @@ product_platform/
 ## 会话工作规则(AI/开发必读)
 
 1. 工作树有大量未提交修改与未跟踪产物;**禁止 `git reset`、批量清理、删除 core/锁文件**;只编辑明确涉及的文件,编辑前先核对当前内容。
-2. **目标产品代码归 `products/<product_id>/`**;平台核心不得新增产品分支。旧回归工程已归入对应产品的 `regression/legacy/`，不再保留顶层 `regress/` 或平台产品适配器目录；目标协议见 [docs/design.md](docs/design.md)。
+2. **目标产品代码归 `products/<product_id>/`**;平台核心不得新增产品分支。旧回归工程已归入对应产品的 `regression/`，不再保留顶层 `regress/` 或平台产品适配器目录；目标协议见 [docs/design.md](docs/design.md)。
 3. AI 不修改确定性测试判定;报告解析不从展示文本猜测结论。
 4. 回归测试、数据库集群部署和 License 通用能力归平台；迁移期可隔离调用旧资产，但新实现不继续复制旧框架。部署统一数据库集群引擎，不回退旧 `env setup/start/stop/heal`。
 5. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
