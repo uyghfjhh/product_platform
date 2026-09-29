@@ -25,7 +25,7 @@ def test_catalog_and_environment_persist_without_external_services(tmp_path):
     config = settings_for(tmp_path)
     client = TestClient(create_app(config, enqueuer=lambda task_id: None))
     products = client.get("/api/v1/products").json()
-    assert {item["id"] for item in products} == {"fbasecman", "fbase-database"}
+    assert {item["id"] for item in products} == {"fbasecman", "fbase-database", "demo"}
 
     environment = {
         "id": "lab-cman",

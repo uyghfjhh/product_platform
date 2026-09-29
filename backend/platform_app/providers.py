@@ -7,9 +7,6 @@ adapter. This module owns only common types, process isolation, and dispatch.
 from __future__ import annotations
 
 import importlib.util
-import json
-import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,29 +62,6 @@ class ProductProvider(Protocol):
     def observe_runtime(self, settings: Settings, environment: dict) -> list: ...
 
     def validate_target(self, settings: Settings, target: str) -> bool: ...
-
-
-def _discover(settings: Settings, root: Path, script: str) -> list[dict]:
-    """Run legacy suite discovery in a separate interpreter.
-
-    Both migrated source trees currently expose a top-level ``framework``
-    package. Importing them into the API process would mix incompatible
-    modules, so discovery remains isolated until their suites use the SDK.
-    """
-    if not root.is_dir():
-        raise FileNotFoundError("用例来源目录不存在: %s" % root)
-    repo_root = settings.products_root.parent
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join((
-        str(root), str(repo_root), str(repo_root / "backend"), env.get("PYTHONPATH", ""),
-    ))
-    result = subprocess.run(
-        [sys.executable, "-c", script], cwd=root, capture_output=True,
-        text=True, env=env, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("读取用例目录失败: %s" % (result.stderr.strip() or result.returncode))
-    return json.loads(result.stdout)
 
 
 class PgclusterDatabaseProvider:

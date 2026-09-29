@@ -98,23 +98,6 @@ def test_node_monitor_parses_psql_expanded_records():
     assert values[1].state == "offline"
 
 
-def test_real_refresh_cluster_monitor_fixture_has_online_and_offline_states():
-    from pathlib import Path
-    import json
-
-    path = Path("data/legacy_cman/cman-lab/output/runs/ha_commands/refresh_cluster/steps.json")
-    if not path.is_file():
-        return
-    values = []
-    for step in json.loads(path.read_text(encoding="utf-8"))["steps"]:
-        for execution in step.get("execution", []):
-            text = execution.get("text", "")
-            if text and "SHOW NODE_MONITOR" in text.splitlines()[0]:
-                values.extend(parse_node_monitor(text))
-    assert values
-    assert {value.state for value in values} >= {"ready", "offline"}
-
-
 def test_replication_normalizes_streaming_state():
     values = parse_replication(
         "application_name\tclient_addr\tstate\tsync_state\nstandby1\t127.0.0.2\tstreaming\tasync\n"

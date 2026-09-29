@@ -10,6 +10,7 @@
 | --- | --- |
 | [docs/design.md](docs/design.md) | v3 目标架构:平台公共部署/回归/License 内核、单目录产品包、数据与事件契约、实施路线 |
 | [docs/progress.md](docs/progress.md) | 当前代码进度、旧方案历史记录与工作区约束;旧 P1–P8 不再是实施路线 |
+| [products/demo/README.md](products/demo/README.md) | 最小产品接入样例:manifest、Provider、SDK 用例和前端注册 |
 
 ## 核心特性
 
@@ -71,7 +72,8 @@ product_platform/
 │   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
 ├── products/                       # 每个产品一个代码目录
 │   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
-│   └── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
+│   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
+│   └── demo/                       # 无数据库依赖的产品接入样例
 ├── tests/                          # 平台自身测试(249 项 pytest)
 ├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
 │   ├── platform/                   # SQLite、队列、锁、操作/Web 日志

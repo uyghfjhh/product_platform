@@ -1,0 +1,16 @@
+id: demo
+title: 接入示例
+plugin_api: v1
+provider: provider.py
+capabilities:
+  tests: demo-regression
+test_profiles:
+  - id: smoke
+    title: 接入验证
+    suites: [smoke]
+    deployment_targets: [demo.local]
+actions:
+  - id: tests.demo
+    title: 运行接入验证
+    capability: tests
+    validate_target: true
