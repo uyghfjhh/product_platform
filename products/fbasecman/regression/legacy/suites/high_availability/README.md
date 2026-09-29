@@ -13,7 +13,7 @@ suites/high_availability/
 ├── README.md                 # 说明文档
 ├── case.py                   # HighAvailabilityCase 数据模型
 ├── manifest.py               # 10 个用例清单与元数据声明
-├── suite.py                  # CLI 入口与调度器 (show, run, run_case)
+├── dispatch.py               # executor 注册表（平台 RuntimeExecutorCase 消费）
 ├── runtime.py                # 执行上下文、三层证据与五大时间戳记录器
 ├── console_parser.py         # 控制台表格输出结构化解析与字段语义断言器
 ├── cluster_ops.py            # 单机 5 实例的启停、探活、升主、重建工具
@@ -58,13 +58,13 @@ suites/high_availability/
 
 ## 运行方式
 
+用例经平台引擎执行（仓库根）：
+
 ```bash
-# 查看所有用例
-./run.sh show high_availability
-
-# 运行单条用例
-./run.sh run high_availability.core_19_set_node_atomicity
-
-# 运行完整套件
-./run.sh run high_availability
+# 运行单条用例或完整套件
+python3 -m platform_regress.cli --product-dir products/fbasecman \
+    --output-dir <输出目录> --context-json '<环境 context>' \
+    high_availability[.<case_name>]
 ```
+
+用例清单见 `manifest.py`。

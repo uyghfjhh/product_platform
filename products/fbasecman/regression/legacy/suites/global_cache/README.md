@@ -8,7 +8,7 @@
 ```text
 suites/global_cache/
 ├── manifest.py             18 条正式用例和关键参数
-├── suite.py                场景编排、executor registry 和部分行为断言
+├── dispatch.py             场景编排、executor 注册表和组合执行层
 ├── runtime.py              运行目录、产品进程、console/PG 日志窗口和产物策略
 ├── drivers.py              JDBC/libpq 资产编译、执行和源码 API/SQL 提取
 ├── state.py                三条 console SHOW 的统一快照模型
