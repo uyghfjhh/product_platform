@@ -62,7 +62,7 @@ def _node_roles(groups):
     return roles
 
 
-def _legacy_cluster_context(settings, cluster, with_nodes=True):
+def _cluster_context(settings, cluster, with_nodes=True):
     """Read product plugins, binaries, nodes and relation groups from the
     legacy regress config (the same source the old executor used)."""
     context = {"plugins": [], "plugins_detail": {}, "node_groups": {},
@@ -302,9 +302,8 @@ class FbaseProvider:
             # old executor.
             context = {"user": environment.get("database_user") or "postgres",
                        "users": environment.get("database_users") or {},
-                       "legacy_source": str(settings.product_regress_root("fbase-database")),
                        "cluster": cluster}
-            context.update(_legacy_cluster_context(settings, cluster))
+            context.update(_cluster_context(settings, cluster))
             return context
         nodes, topology_error = {}, None
         if with_topology:
@@ -328,9 +327,8 @@ class FbaseProvider:
                 topology_error = str(exc)
         context = {"nodes": nodes, "user": environment.get("database_user") or "postgres",
                    "users": environment.get("database_users") or {},
-                   "legacy_source": str(settings.product_regress_root("fbase-database")),
                    "cluster": cluster}
-        context.update(_legacy_cluster_context(settings, cluster,
+        context.update(_cluster_context(settings, cluster,
                                                with_nodes=False))
         if topology_error:
             context["topology_error"] = topology_error

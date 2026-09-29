@@ -57,8 +57,9 @@ def collect_results_from_run(output_dir):
 
     Prefers the platform fact model (``suite-result.json`` for multi-target
     runs, ``result.json`` for single-target runs and per-target child
-    directories); falls back to the legacy ``runs/<suite>/<case>/``
-    summary.json layout for suite-owned artifacts.
+    directories); when those are absent (e.g. interrupted runs), falls back
+    to scanning the per-case artifact tree ``runs/<suite>/<case>/summary.json``
+    that ``CaseRuntime.write_summary`` still produces.
     """
     output_dir = Path(output_dir)
     suite_file = output_dir / "suite-result.json"

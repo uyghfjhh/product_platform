@@ -21,7 +21,7 @@ from products.fbasecman.runtime_cases import runtime_case
 
 PRODUCT_ROOT = Path(__file__).parent
 REPO_ROOT = PRODUCT_ROOT.parent.parent
-DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression"
+DEFAULT_REGRESS_ROOT = PRODUCT_ROOT / "regression"
 CATALOG = json.loads((PRODUCT_ROOT / "regression" / "catalog.json").read_text(encoding="utf-8"))
 if CATALOG.get("schema_version") != 1:
     raise ValueError("fbasecman 用例目录版本无效")
@@ -137,7 +137,7 @@ NATIVE_CASES = {
 # Suite manifests are static: they import cleanly before any environment
 # override exists (config values only matter when load_regression_config is
 # called, which reads _EXTRA_CONFIGS lazily).
-_LEGACY_SPECS = _suite_specs(DEFAULT_LEGACY_ROOT)
+_LEGACY_SPECS = _suite_specs(DEFAULT_REGRESS_ROOT)
 
 
 def _migrating_case(item):

@@ -117,14 +117,14 @@ def test_suite_failures_map_to_fail_verdict(tmp_path):
             ("high_availability", "HighAvailabilityFailure"),
             ("handover", "HandoverFailure"),
             ("global_cache", "GlobalCacheFailure")):
-        sys.path.insert(0, str(module.DEFAULT_LEGACY_ROOT))
+        sys.path.insert(0, str(module.DEFAULT_REGRESS_ROOT))
         try:
             runtime_module = __import__(
                 "suites.%s.%s" % (suite, "errors" if suite == "global_cache" else "runtime"),
                 fromlist=[failure_name])
             failure_class = getattr(runtime_module, failure_name)
         finally:
-            sys.path.remove(str(module.DEFAULT_LEGACY_ROOT))
+            sys.path.remove(str(module.DEFAULT_REGRESS_ROOT))
         assert issubclass(failure_class, CaseFailure), failure_name
 
 

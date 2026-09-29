@@ -23,9 +23,9 @@ def main() -> int:
     settings = load_settings()
     _, override = profile_paths(settings, args.environment)
     context = {
-        "legacy_source": str(settings.product_regress_root("fbasecman")),
-        "legacy_override": str(override),
-        "legacy_report_root": str(legacy_root(settings, args.environment)),
+        "regress_source": str(settings.product_regress_root("fbasecman")),
+        "regress_override": str(override),
+        "regress_report_root": str(legacy_root(settings, args.environment)),
     }
     output = args.output_dir or settings.environment_dir / "regression" / args.environment / args.target
     return run_platform_case([

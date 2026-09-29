@@ -148,7 +148,7 @@
 # 平台 cli 单用例/套件/failed
 PYTHONPATH=<repo>:<repo>/backend .venv/bin/python -m platform_regress.cli \
   --product-dir products/fbasecman --output-dir <out> \
-  --context-json '{"legacy_source":..., "legacy_override":..., "legacy_report_root":...}' \
+  --context-json '{"regress_source":..., "regress_override":..., "regress_report_root":...}' \
   common.console_commands | --suite common | failed
 # 任务入口（provider 决定路径）
 tests.fbasecman  →  platform_regress.cli（单用例/--suite/failed 全路径）

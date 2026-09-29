@@ -24,7 +24,7 @@ from platform_regress.suites.executor import RuntimeBinding, RuntimeExecutorCase
 
 PRODUCT_ROOT = Path(__file__).parent
 REPO_ROOT = PRODUCT_ROOT.parent.parent
-DEFAULT_LEGACY_ROOT = PRODUCT_ROOT / "regression"
+DEFAULT_REGRESS_ROOT = PRODUCT_ROOT / "regression"
 _EXTRA_CONFIGS = []
 _LOADER_PROFILED = False
 
@@ -51,9 +51,9 @@ def _ensure_imports(source):
 
 def _environment(context):
     environment = context.environment or {}
-    source = Path(environment.get("legacy_source") or DEFAULT_LEGACY_ROOT).resolve()
-    override_value = environment.get("legacy_override")
-    report_value = environment.get("legacy_report_root")
+    source = Path(environment.get("regress_source") or DEFAULT_REGRESS_ROOT).resolve()
+    override_value = environment.get("regress_override")
+    report_value = environment.get("regress_report_root")
     if not override_value or not report_value:
         raise Blocked("缺少当前环境的 fbasecman 测试配置或报告目录")
     override = Path(override_value).resolve()

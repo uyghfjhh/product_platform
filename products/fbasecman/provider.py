@@ -239,15 +239,15 @@ class FbasecmanProvider:
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
             from products.fbasecman.cases import NATIVE_CASES
             native_target = target in NATIVE_CASES
-            legacy_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
-            if not native_target and not legacy_context.is_file():
+            regress_context = legacy_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
+            if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
                 output = settings.environment_dir / "regression" / environment["id"] / target
                 case_context = {
-                    "legacy_source": str(settings.product_regress_root("fbasecman")),
-                    "legacy_override": str(override),
-                    "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_source": str(settings.product_regress_root("fbasecman")),
+                    "regress_override": str(override),
+                    "regress_report_root": str(legacy_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 if native_target:
@@ -262,9 +262,9 @@ class FbasecmanProvider:
             if target not in {"all", "failed"} and "." not in target:
                 output = settings.environment_dir / "regression" / environment["id"] / target
                 case_context = {
-                    "legacy_source": str(settings.product_regress_root("fbasecman")),
-                    "legacy_override": str(override),
-                    "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_source": str(settings.product_regress_root("fbasecman")),
+                    "regress_override": str(override),
+                    "regress_report_root": str(legacy_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
@@ -277,9 +277,9 @@ class FbasecmanProvider:
             if target == "failed":
                 output = settings.environment_dir / "regression" / environment["id"]
                 case_context = {
-                    "legacy_source": str(settings.product_regress_root("fbasecman")),
-                    "legacy_override": str(override),
-                    "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                    "regress_source": str(settings.product_regress_root("fbasecman")),
+                    "regress_override": str(override),
+                    "regress_report_root": str(legacy_root(settings, environment["id"])),
                     "history_root": str(settings.environment_dir / "regression" / environment["id"]),
                 }
                 case_context.update(suite_case_context(settings, environment))
@@ -294,9 +294,9 @@ class FbasecmanProvider:
             # what lets suite-level coverage reach all 212 catalog targets.
             output = settings.environment_dir / "regression" / environment["id"]
             case_context = {
-                "legacy_source": str(settings.product_regress_root("fbasecman")),
-                "legacy_override": str(override),
-                "legacy_report_root": str(legacy_root(settings, environment["id"])),
+                "regress_source": str(settings.product_regress_root("fbasecman")),
+                "regress_override": str(override),
+                "regress_report_root": str(legacy_root(settings, environment["id"])),
                 "history_root": str(settings.environment_dir / "regression" / environment["id"]),
             }
             case_context.update(suite_case_context(settings, environment))
