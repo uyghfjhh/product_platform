@@ -59,7 +59,9 @@ def _environment(context):
     override = Path(override_value).resolve()
     if not (source / "cmanconf.py").is_file() or not override.is_file():
         raise Blocked("fbasecman 用例来源或环境覆盖配置不存在")
-    _EXTRA_CONFIGS[:] = [override]
+    extras = [Path(path).resolve()
+              for path in (environment.get("regress_extra_configs") or [])]
+    _EXTRA_CONFIGS[:] = [override] + extras
     _ensure_imports(source)
     import cmanconf
     env = cmanconf.load_regression_config(source)

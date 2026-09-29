@@ -37,12 +37,16 @@
   --product-dir products/fbasecman --output-dir <输出目录> \
   --context-json '<环境上下文 JSON>' [target|--suite <套件>|failed]
 
-# fbasecman 命令行薄壳(自动解析回归绑定环境,注入上下文后调平台引擎)
+# fbasecman 命令行(对齐旧 ./run.sh 用法;环境自动解析回归绑定)
 cd products/fbasecman
 ./cli/run.sh run ha_commands                    # 套件
 ./cli/run.sh run ha_commands.xxx                # 单条
-./cli/run.sh run failed|all [-e <环境>]
+./cli/run.sh run failed|all [-e <环境>] [--junit [P]] [--html [P]]
 ./cli/run.sh show [suite]                       # 列用例目录
+./cli/run.sh env status|start|stop|restart|heal|clean|setup  # 转平台 deployment.*
+./cli/run.sh doctor                             # 环境体检(deployment.doctor)
+./cli/run.sh clean [--output] [--prune-logs]    # 清产物
+./cli/run.sh outout clean | web | test
 ./cli/stable.sh show                            # 常稳命令
 ```
 
