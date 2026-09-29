@@ -8,7 +8,7 @@
 
 | 产品 | 用例数 | 执行路径 | 实测基线 | 未完成原因 |
 | --- | --- | --- | --- | --- |
-| fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 161 PASS + 2 FAIL + 2 BLOCKED | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
+| fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 164 PASS + 1 保真 FAIL（2026-09-29 优雅退出修复后全量复跑） | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
 | fbasecman | 212（144 平台宿主 executor + 68 native） | 平台引擎 + 平台 SDK 原生用例；144 条经 `RuntimeExecutorCase`/`_GlobalCachePlatformCase` 宿主，`LegacySuiteCase`/`SuiteNativeCase` 已删除 | 见 §4.3 分套件 | **144 条 executor 已完成 `rt.*`→`ops.*`/`context` 形态改写**（`def case_x(context)` + `fbasecman_ops` PEP 562 转发 facade，`context_executor` 钩子）；runtime 构造注入 resolver `env`/`context_data`，不再自行 legacy 加载；四套件真机批跑 137 PASS / 1 flaky（core_19 复跑 PASS）；native 覆盖 common 4、sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18 |
 
 **唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。vendored 诊断入口已物理删除：`run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`run_case`、`suites/registry.py`、vendored `unit_tests/` 与 legacy 树内重复的 `products/fbasecman/` 副本全部移除；`products/fbasecman/cli/run.sh` 收敛为 `platform_case.py` 薄壳；`products/fbasecman/regression/run.py` 保留 `--check-profile`（target 存在性改查 `catalog.json`，不再依赖 registry）。
@@ -32,7 +32,7 @@
 | `reporting/` | model、renderer、junit、html、export（CaseResult 事实模型→双格式；BLOCKED/CANCELLED→SKIPPED） | 已上收 |
 | `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
 
-平台侧测试：**229 passed**；vendored fbasecman 单测：**259 passed**；FBase vendored 单测：**149 passed**；前端生产构建通过（2026-09-28 本轮验证）。
+平台侧测试：**254 passed**（含 `test_resource_ledger` 6 项：台账登记/死主清扫/取消抑制/ipcs 解析）；前端生产构建通过。
 
 ## 3. 已完成的结构性工作
 
@@ -51,10 +51,9 @@
 
 ### 4.2 fbase-database · mmr（批跑 165=170-5 disabled）
 
-- **161 PASS**
-- **FAIL ×2**：`streaming.default_publication_preparation`（`node[node135] two_phase enabled unless copy_data=false`——与 legacy 3/4 次逐字一致，产品行为）；`cluster_verification.connection_failure_priority`（恢复 20s 不收敛——legacy 同模式已知 flaky）
-- **BLOCKED ×2**（批间节点占用暂态）：`cluster_verification.node_state`、`time_difference` — **待复跑定性**
-- `mmr.node_management.*` 5 条 `default_enabled=False`（资源密集 join 类），批跑跳过、可单独跑——**待单独验证**
+- **164 PASS**（2026-09-29 优雅退出修复后全量复跑：此前 18 条会话 BLOCKED、隔离端口 FAIL 簇、2 条"停止后 10s 仍被监听"全部清零）
+- **FAIL ×1**：`streaming.default_publication_preparation`（`node[node135] two_phase enabled unless copy_data=false`——与 legacy 逐字一致的保真产品缺陷）
+- `mmr.node_management.*` 5 条 `default_enabled=False`（资源密集 join 类），批跑跳过、可单独跑
 
 ### 4.3 fbasecman（212）
 
@@ -113,6 +112,7 @@
 
 ### C. 环境事项
 
+- **优雅退出机制（2026-09-29 落地）**：取消时 cleanup 命令可执行（引擎 `suppress_cancellation`）；隔离资源台账 `<history_root>/ledgers/` 按 owner pid 死亡自动回收；`ipcs` cpid 死判定清扫孤儿 SysV shm（`reset` 前置 + 隔离 fixture 入口）；`_wait_ports_free` 超时先 SIGTERM 框架内监听者。SIGTERM/SIGKILL 两条路径均实测自愈。本机制消灭此前"套件中断→尸体 postmaster 占口→下轮连环失败"的因果链。
 - cman-lab MMR 环境已归位（复制家族全绿）；`qa_case.orders` 等套件自建表在套件生命周期内管理，不算环境基线。
 - `regress.local.yaml` 符号链接到 cman-lab override——vendored `run.sh` 已删除，该链接仅为历史兼容残留；平台路径由 `_EXTRA_CONFIGS` 注入，不依赖该链接。
 - ~~fbasecman 二进制版本固定问题~~（2026-09-28 完成）——`deployment/fixture.py` 生成 `test_context.yaml` 时写入 `binaries` 段：fbasecman 本地二进制与远端 PostgreSQL 二进制各记录 `path`/`sha256`/`size`/`mtime`（远端经 SSH `stat`+`sha256sum` 采集），与 `group_uuid`/`role_passwords`/`system_identifiers`/`ciphertexts` 并存。验证见 `tests/test_fixture_fingerprint.py`（4 项）。

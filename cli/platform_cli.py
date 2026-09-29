@@ -248,7 +248,15 @@ def cmd_doctor(args) -> int:
     report(settings.data_dir.is_dir(), "数据目录", str(settings.data_dir))
     for product_id in sorted(_products(settings)):
         root = settings.product_regress_root(product_id)
-        report(root.is_dir(), f"{product_id} 回归资源", str(root))
+        try:
+            discovered = provider_for(settings, product_id).discover(settings)
+        except Exception:
+            discovered = None
+        if discovered is not None:
+            report(bool(discovered), f"{product_id} 回归资源",
+                   f"{len(discovered)} 条用例")
+        else:
+            report(root.is_dir(), f"{product_id} 回归资源", str(root))
     bindings = store.list_regression_bindings()
     report(bool(bindings), "回归绑定", f"{len(bindings)} 条")
     for binding in bindings:
