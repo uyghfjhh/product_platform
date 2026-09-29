@@ -297,8 +297,8 @@ def pg_log_window_script(postgres_dir, port, user, since, label):
     """
     return """set -eu
 PG={pg}/bin/psql
-data_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show log_directory')
+data_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show data_directory')
+log_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show log_directory')
 case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
 run_start=$(date -d '@{since}' '+%Y-%m-%d %H:%M:%S')
 printf 'NODE={label} PORT={port} DATA_DIR=%s LOG_DIR=%s RUN_START=%s\\n' \"$data_dir\" \"$log_dir\" \"$run_start\"
@@ -312,7 +312,7 @@ for file in $(find \"$log_dir\" -maxdepth 1 -type f -newermt '@{since}' -print |
   ' | grep -Ei 'table_test|test_prepare|mmrhint|mmrport|rephint|balance|ERROR|FATAL|PANIC' || true
 done
 """.format(pg=shlex.quote(str(postgres_dir)), port=int(port), user=shlex.quote(str(user)),
-             since=int(since), label=label)
+             since=int(since), label=label, host=ops.LOCAL_HOST)
 
 
 def pg_log_targets(config):
@@ -327,8 +327,8 @@ def pg_log_archive_script(postgres_dir, port, user, since, label):
     """Build a remote archive command that never moves PostgreSQL's open log."""
     return """set -eu
 PG={pg}/bin/psql
-data_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show log_directory')
+data_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show data_directory')
+log_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show log_directory')
 case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
 archive_dir=\"$log_dir/stable_archive\"
 mkdir -p \"$archive_dir\"
@@ -360,7 +360,7 @@ printf 'ARCHIVED_FILES=%s\\n' \"$archived\"
 printf 'SKIPPED_OPEN_FILES=%s\\n' \"$skipped_open\"
 printf 'ARCHIVE=%s\\n' \"$archive_path\"
 """.format(pg=shlex.quote(str(postgres_dir)), port=int(port), user=shlex.quote(str(user)),
-           since=int(since), label=label)
+           since=int(since), label=label, host=ops.LOCAL_HOST)
 
 
 class StableRuntime(object):

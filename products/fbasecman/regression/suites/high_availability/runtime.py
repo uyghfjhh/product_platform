@@ -248,6 +248,7 @@ class HighAvailabilityRuntime(object):
         self.fbasecman.start(conf)
 
         # Wait for initial monitor probe to publish topology
+        snap = None
         deadline = time.time() + 10
         while time.time() < deadline:
             try:
@@ -285,7 +286,7 @@ class HighAvailabilityRuntime(object):
             title="启动 fbasecman 与探活初始化",
             action="启动 fbasecman 代理并等待 Monitor 完成首轮探活与拓扑发布",
             command="$ %s %s" % (self.fbasecman.binary, conf),
-            intermediate="$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c 'SHOW CLUSTERS;'\n%s" % (
+            intermediate=("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c 'SHOW CLUSTERS;'\n%s") % (
                 pg_bin, self.listen_port, snap_text
             ),
             evidence="\n".join(self.extract_log_lines(["monitor", "cluster", "listen", "ready"], max_lines=4)),
@@ -346,7 +347,7 @@ class HighAvailabilityRuntime(object):
             tuples_only=False,
         )
         pg_bin = self.env.config["local"]["postgres_dir"]
-        cmd_str = "$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c %s" % (
+        cmd_str = ("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c %s") % (
             pg_bin,
             self.listen_port,
             repr(sql),
@@ -386,7 +387,7 @@ class HighAvailabilityRuntime(object):
             tuples_only=True,
         )
         pg_bin = self.env.config["local"]["postgres_dir"]
-        cmd_str = "$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U %s -d %s -c %s" % (
+        cmd_str = ("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U %s -d %s -c %s") % (
             pg_bin,
             self.listen_port,
             user,

@@ -507,11 +507,50 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
             "available": True,
         }
 
+    def platform_result_index(environment_id: str) -> dict[str, tuple[Path, float]]:
+        """Latest platform result.json per target (single-run and suite-run dirs)."""
+        root = settings.output_dir / "regression" / environment_id
+        index: dict[str, tuple[Path, float]] = {}
+        if not root.is_dir():
+            return index
+        for path in root.rglob("result.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            target = payload.get("target")
+            if payload.get("schema_version") != "1.0" or not isinstance(target, str):
+                continue
+            mtime = path.stat().st_mtime
+            previous = index.get(target)
+            if previous is None or mtime > previous[1]:
+                index[target] = (path.parent, mtime)
+        return index
+
     @app.get("/api/v1/environments/{environment_id}/results")
     def results(environment_id: str):
         if store.get_environment(environment_id) is None:
             raise HTTPException(status_code=404, detail="环境不存在")
-        return store.list_results(environment_id)
+        rows = store.list_results(environment_id)
+        seen = {row["target"] for row in rows}
+        environment = store.get_environment(environment_id)
+        for target, (base, mtime) in platform_result_index(environment_id).items():
+            if target in seen:
+                continue
+            try:
+                payload = json.loads((base / "result.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            rows.append({
+                "product_id": environment["product_id"],
+                "environment_id": environment_id,
+                "target": target, "profile": "default",
+                "status": payload.get("verdict", "ERROR"),
+                "reason": payload.get("reason"),
+                "artifact_dir": str(base),
+                "updated_at": mtime,
+            })
+        return rows
 
     def archived_result(environment_id: str, target: str, profile: str) -> tuple[Path, dict]:
         environment = store.get_environment(environment_id)
@@ -520,8 +559,17 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", target):
             raise HTTPException(status_code=404, detail="结果不存在")
         result = store.get_result(environment["product_id"], environment_id, target, profile)
-        base = (settings.output_dir / "regression" / environment_id / target).resolve()
-        if result is None or Path(result["artifact_dir"]).resolve() != base:
+        output_root = settings.output_dir.resolve()
+        base: Path | None = None
+        if result is not None:
+            recorded = Path(result["artifact_dir"]).resolve()
+            if recorded.is_relative_to(output_root) and (recorded / "result.json").is_file():
+                base = recorded
+        if base is None:
+            entry = platform_result_index(environment_id).get(target)
+            if entry is not None:
+                base = entry[0].resolve()
+        if base is None:
             raise HTTPException(status_code=404, detail="平台归档结果不存在")
         try:
             payload = json.loads((base / "result.json").read_text(encoding="utf-8"))

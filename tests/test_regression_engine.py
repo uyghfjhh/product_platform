@@ -117,7 +117,10 @@ def test_product_case_runs_via_platform_cli(tmp_path):
         cwd=root, env=env, capture_output=True, text=True, timeout=20, check=False,
     )
     assert process.returncode == 0, process.stdout + process.stderr
-    assert json.loads(process.stdout)["verdict"] == "PASS"
+    json_line = [line for line in process.stdout.splitlines()
+                 if line.startswith("{")][-1]
+    assert json.loads(json_line)["verdict"] == "PASS"
+    assert "[1/1]" in process.stdout and "PASS" in process.stdout.splitlines()[0]
     payload = json.loads((output / "result.json").read_text())
     assert payload["evidence"] == [f"artifacts/{payload['execution_id']}/sql.log"]
 

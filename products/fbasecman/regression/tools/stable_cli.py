@@ -115,7 +115,7 @@ def format_state(state, cfg=None):
             main_port = state.get("ports", {}).get("main")
             postgres = cfg.runtime_config.config["local"]["postgres_dir"]
             if main_port:
-                console = "%s -h " + os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1") + " -p %s -U admin -d console" % (
+                console = ("%s -h " + os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1") + " -p %s -U admin -d console") % (
                     shlex.quote(str(Path(postgres) / "bin" / "psql")), main_port)
                 lines.append("  console_connect: %s" % console)
     if failed:

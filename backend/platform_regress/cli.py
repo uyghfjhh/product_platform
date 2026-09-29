@@ -195,6 +195,25 @@ def main(argv: list[str] | None = None) -> int:
             context.values["session_error"] = session_error
         result = engine.run(case, context)
         results.append(result)
+        # Old-style per-case progress line (like the legacy suites printed):
+        # `[12/76] suite.case                          PASS      3.412s`.
+        line = "[%d/%d] %-58s %-8s %8.3fs" % (
+            len(results), len(targets), result.target, result.verdict,
+            result.duration_seconds)
+        if result.verdict != "PASS" and result.reason:
+            line += ": %s" % (result.reason.splitlines() or [""])[0][:160]
+        print(line, flush=True)
+        # Render the per-case human report (report.txt/steps.json/
+        # summary.json) from the event stream — the legacy suite format,
+        # generated for every case so native cases report no thinner than
+        # executor-hosted ones.  Mirrors into the legacy run tree when the
+        # product injected regress_report_root and no legacy report exists.
+        try:
+            from .reporting.case_report import write_case_artifacts
+            write_case_artifacts(context, result, environment,
+                                 purpose=str(getattr(case, "title", "") or ""))
+        except Exception:  # noqa: BLE001 - report generation never fails a verdict
+            pass
         # Flaky tracking: append one verdict line per executed case to the
         # environment-level history so UI/API can flag unstable targets.
         history_root = environment.get("history_root")
@@ -252,6 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(results) == 1 and not suite_errors:
         return EXIT_CODES[results[0].verdict]
     counts = {status: sum(item.verdict == status for item in results) for status in EXIT_CODES}
+    # Old-style suite summary line, e.g. `Total: PASS:60 FAIL:2 ERROR:1`.
+    print("Total: " + " ".join(
+        "%s:%d" % (status, counts[status]) for status in EXIT_CODES
+        if counts[status]) + ("  (targets:%d)" % len(targets)
+                              if len(targets) != len(results) else ""),
+        flush=True)
     (args.output_dir / "suite-result.json").write_text(
         json.dumps({"targets": targets, "counts": counts,
                     "session_cleanup_errors": suite_errors,

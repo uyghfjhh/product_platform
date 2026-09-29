@@ -769,7 +769,7 @@ class HandoverRuntime(object):
             "mmr2_s1": ("test_mmr2_s1", db["mmr_pg_user"], db["mmr_host"], db["ports"]["mmr2_standby1"]),
         }
         pgdata_name, user, host, port = nodes[node]
-        psql_cmd = '%s/bin/psql -h ' + ops.LOCAL_HOST + ' -p %s -U %s -d %s -c "%s"' % (
+        psql_cmd = ('%s/bin/psql -h ' + ops.LOCAL_HOST + ' -p %s -U %s -d %s -c "%s"') % (
             pg_dir, port, user, dbname, sql.replace('"', '\\"')
         )
         result = self._pg_runner.run_remote(user, host, psql_cmd, "pg_sql_%s_%02d.log" % (node, self._command_no), check=False)

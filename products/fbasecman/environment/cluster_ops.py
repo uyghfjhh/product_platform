@@ -105,8 +105,7 @@ class NodeController(object):
                 slot_cmd = (
                     '%s/bin/psql -h ' + os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1") + ' -p %d -U postgres -d postgres -c '
                     '"SELECT pg_create_physical_replication_slot(\'regress_%s_s%d\') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name=\'regress_%s_s%d\');"'
-                    % (self.pg_dir, port, group_prefix, i, group_prefix, i)
-                )
+                ) % (self.pg_dir, port, group_prefix, i, group_prefix, i)
                 self._run_cmd(slot_cmd, "pg_ensure_slots_%s_%d.log" % (node_key, i))
         return rc == 0
 
@@ -149,7 +148,7 @@ class NodeController(object):
     def is_in_recovery(self, node_key):
         """Check if node is currently in recovery (standby)."""
         _, port = self.nodes[node_key]
-        cmd = '%s/bin/psql -h ' + os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1") + ' -p %d -U %s -d postgres -tAc "SELECT pg_is_in_recovery();"' % (
+        cmd = ('%s/bin/psql -h ' + os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1") + ' -p %d -U %s -d postgres -tAc "SELECT pg_is_in_recovery();"') % (
             self.pg_dir, port, self.user
         )
         rc, out = self._run_cmd(cmd, "pg_recovery_%s.log" % node_key)
