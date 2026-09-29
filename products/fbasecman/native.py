@@ -169,11 +169,14 @@ def _console_expect(context: CaseContext, psql: str, port: int, sql: str,
 
 def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
                       timeout_seconds: float = 30.0) -> str:
-    """等 group_checker 收敛：SHOW GROUP_ROUTING mmr_group 不再出现 UNKNOWN。
+    """等 group_checker 收敛：mmr_group 路由表出现 active 写目标行。
 
     ``context.start_process`` 的 ready 探针只等监听端口可连；fbasecman 的
-    monitor/group_checker 异步探测 mmr_role 需要若干秒，立即查询会读到
-    UNKNOWN 列。历史用例经 console-ready 探针隐式覆盖了这段收敛窗口，
+    monitor/group_checker 异步探测 mmr_role 需要若干秒。收敛前的输出有
+    两种形态：候选行标 UNKNOWN，或 pg_cluster_2 的行整体缺席、写路由
+    落到 promoted_cluster 成员上（write-leader + promoted）——后者不含
+    UNKNOWN 字样，故必须等"is_write_target=true 且 effective_state=active"
+    的行出现才算收敛。历史用例经 console-ready 探针隐式覆盖了这段窗口，
     native 入口必须显式等待同一收敛状态再断言。
     """
     deadline = time.monotonic() + timeout_seconds
@@ -183,10 +186,30 @@ def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
     while time.monotonic() < deadline:
         result = context.command(query, timeout_seconds=10)
         last = result.stdout or ""
-        if result.returncode == 0 and "pg_" in last and "UNKNOWN" not in last:
+        if result.returncode != 0 or "pg_" not in last:
+            time.sleep(0.5)
+            continue
+        if _routing_converged(last):
             return last
         time.sleep(0.5)
     raise Blocked("MMR 路由探测未在 %ss 内收敛" % timeout_seconds)
+
+
+def _routing_converged(output: str) -> bool:
+    # ``psql -A -t`` 输出无表头；列序为 SHOW GROUP_ROUTING 固定契约：
+    # group_name|group_mode|user_name|cluster_name|current_primary|
+    # candidate_node|candidate_type|effective_grouprole|effective_state|
+    # is_write_target|write_source|fallback_reason|route_status|...
+    # 收敛前有两种形态：grouprole 列仍为 UNKNOWN（monitor 探测未完成），
+    # 或 pg_cluster_2 行整体缺席、写路由落到 promoted_cluster 成员
+    # （effective_state=promoted）。两者都必须继续等。
+    if "UNKNOWN" in output:
+        return False
+    for line in output.splitlines():
+        cols = [col.strip() for col in line.split("|")]
+        if len(cols) > 9 and cols[9] == "true" and cols[8] == "active":
+            return True
+    return False
 
 
 def _read_exact(sock, size):
