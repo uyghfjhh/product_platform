@@ -86,7 +86,7 @@ def _run_jdbc_console_ha_commands(context):
         ops.check("验证 %s 路由结果" % marker_name,
                  "结果为 pg_cluster_1 的 primary 或 standby",
                  "marker output checked",
-                 any((marker_name + "=%s" % port) in output
+                 any((marker_name + f"={port}") in output
                      for port in (ports["mmr1"], ports["mmr1_standby1"])))
     ops.check(
         "验证每条 JDBC 持久化命令的配置快照",

@@ -100,9 +100,7 @@ def _run_libpq_case(context, extra_args=None, step_title=None):
     ops.run_command(compile_cmd, ops.logs_dir / "gcc.log", cwd=ops.driver_dir, step_title="编译 libpq driver")
     run_env = os.environ.copy()
     run_env["LD_LIBRARY_PATH"] = "%s/lib:%s" % (cfg, run_env.get("LD_LIBRARY_PATH", ""))
-    conninfo = "host=" + ops.LOCAL_HOST + " port=%s user=postgres dbname=postgres sslmode=disable" % (
-        ops.listen_port
-    )
+    conninfo = f"host={ops.LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
     allow_failure = False
     cmd = [str(binary), conninfo, "mmr_hint"]
     if extra_args:

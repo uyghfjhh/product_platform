@@ -683,7 +683,7 @@ class CaseContext:
         if timed_out:
             self._terminate_process_group(process)
             stdout, _ = process.communicate()
-            output = (stdout or "") + "\n命令执行超时（%ss），已终止" % timeout_seconds
+            output = (stdout or "") + f"\n命令执行超时（{timeout_seconds}s），已终止"
             return subprocess.CompletedProcess(list(argv), 124, output, None)
         return subprocess.CompletedProcess(
             list(argv), process.returncode, stdout or "", None)

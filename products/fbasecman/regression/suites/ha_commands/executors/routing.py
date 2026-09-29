@@ -109,8 +109,8 @@ def _run_sql_parse_extended_protocol(context):
         ops.logs_dir / "HaSqlParseExtended.javac.log", cwd=ops.workdir,
         step_title="编译 sql_parse 扩展协议 JDBC driver")
     jdbc_url = (
-        "jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/mmr_group?"
-        "prepareThreshold=1&preferQueryMode=extended" % ops.listen_port)
+        f"jdbc:postgresql://{ops.LOCAL_HOST}:{ops.listen_port}/mmr_group?"
+        "prepareThreshold=1&preferQueryMode=extended")
     _, output = ops.run_command(
         ["java", "-cp", "%s:%s" % (ops.workdir, jar),
          "HaSqlParseExtended", jdbc_url, "postgres", ""],

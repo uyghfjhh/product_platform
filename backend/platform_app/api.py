@@ -51,7 +51,7 @@ class EnvironmentInput(BaseModel):
 
 
 class OperationInput(BaseModel):
-    environment_id: str
+    environment_id: str = Field(pattern=IDENTIFIER)
     action: str
     target: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)

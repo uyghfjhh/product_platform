@@ -111,9 +111,8 @@ def _port_transform(context, group):
         content = content.replace('ports "%s"' % ops.listen_port,
                                   'ports "%s,%s"' %
                                   (ops.listen_port, ops.read_port), 1)
-        marker = 'group "%s" {\n' % group
-        content = content.replace(marker, marker + '    write_port %s\n' %
-                                  ops.listen_port, 1)
+        marker = f'group "{group}" {{\n'
+        content = content.replace(marker, marker + f'    write_port {ops.listen_port}\n', 1)
         return content.replace('    rw_split_method "none"',
                                '    rw_split_method "port"', 1)
     return transform

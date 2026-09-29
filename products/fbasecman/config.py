@@ -42,7 +42,7 @@ def set_config_block_line(rendered, block_kind, block_name, key, line):
     else:
         if block_body and not block_body.endswith("\n"):
             block_body += "\n"
-        new_body = block_body + "    %s\n" % line.strip()
+        new_body = block_body + f"    {line.strip()}\n"
     return rendered[:match.start()] + block_head + new_body + block_tail + rendered[match.end():]
 
 

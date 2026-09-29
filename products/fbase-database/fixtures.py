@@ -86,7 +86,7 @@ def runner_run(context, argv, check=True, timeout=None, input_text=None):
     except TimeoutError as exc:
         returncode = 124
         output = (getattr(exc, "partial_stdout", "") or
-                  "") + "\n命令执行超时（%ss）" % effective
+                  "") + f"\n命令执行超时（{effective}s）"
     completed = subprocess.CompletedProcess(argv, returncode, output, None)
     if check and completed.returncode != 0:
         raise OperationError("命令执行失败(%s): %s\n%s" % (
@@ -1298,7 +1298,7 @@ def _shared_mmr_conflict_topology(context, definition, options):
             stream.write("max_replication_slots = 10\nmax_wal_senders = 10\n")
             stream.write("debug_logical_replication_streaming = '%s'\n" % debug_mode)
             stream.write("logical_decoding_work_mem = '64kB'\n")
-            stream.write("listen_addresses = '" + _env(context, "local_host", "127.0.0.1") + "'\nport = %s\n" % port)
+            stream.write("listen_addresses = '" + _env(context, "local_host", "127.0.0.1") + f"'\nport = {port}\n")
         isolated._release_port(context, port)
         runner_run(context, [
             binary(context, "pg_ctl"), "-D", str(data_dir), "-l",

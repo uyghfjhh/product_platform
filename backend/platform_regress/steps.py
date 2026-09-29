@@ -182,7 +182,7 @@ def execute_psql(context: CaseContext, node: str, sql: str, *,
     except TimeoutError as exc:
         returncode = 124
         output = (getattr(exc, "partial_stdout", "") or
-                  "") + "\n命令执行超时（%ss）" % effective_timeout
+                  "") + f"\n命令执行超时（{effective_timeout}s）"
     match = _SQLSTATE.search(output)
     columns: list = []
     rows: list = []
@@ -476,7 +476,7 @@ def run_command_step(context: CaseContext, step: dict[str, Any], index: int,
     except TimeoutError as exc:
         returncode = 124
         output = ((getattr(exc, "partial_stdout", "") or "") +
-                  "\n命令执行超时（%ss）" % timeout_seconds)
+                  f"\n命令执行超时（{timeout_seconds}s）")
     execution = StepExecutionResult(returncode, output=output, command=argv)
     passed, actual, reason = evaluate_assertion(assertion, execution)
     _record_step(context, key, title, passed, actual,

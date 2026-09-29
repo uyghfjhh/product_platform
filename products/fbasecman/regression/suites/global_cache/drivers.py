@@ -205,7 +205,7 @@ def libpq_run_spec(context, binary, extra_args=None, include_rw_method=True):
     run_env["LD_LIBRARY_PATH"] = "%s/lib:%s" % (
         postgres_dir, run_env.get("LD_LIBRARY_PATH", "")
     )
-    conninfo = "host=" + ops.LOCAL_HOST + " port=%s user=postgres dbname=postgres sslmode=disable" % ops.listen_port
+    conninfo = f"host={ops.LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
     command = [str(binary), conninfo]
     if include_rw_method:
         command.append("mmr_hint")

@@ -51,9 +51,15 @@ def _deployment_roots(config: Path) -> list[str]:
 
 
 def _stray_processes(roots: list[str]) -> list[int]:
-    """PIDs whose cmdline references the deployment's own directories."""
+    """PIDs whose cmdline passes a deployment-rooted path as an argument.
+
+    A deployment root must match a whole argument (``-D /data/node1``) —
+    never a substring — so ``/pgdata/mmr1`` cannot kill ``mmr11`` and an
+    editor open on a config file inside the root is not a stray process.
+    """
     self_pid = os.getpid()
     pids = []
+    normalized = [root.rstrip("/") for root in roots]
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
@@ -61,11 +67,22 @@ def _stray_processes(roots: list[str]) -> list[int]:
         if pid == self_pid:
             continue
         try:
-            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
-                "utf-8", errors="replace")
+            argv = (entry / "cmdline").read_bytes().split(b"\x00")
         except OSError:
             continue
-        if any(root in cmdline for root in roots):
+        matched = False
+        for arg in argv:
+            text = arg.decode("utf-8", errors="replace")
+            candidates = [text]
+            if text.startswith("-D"):
+                candidates.append(text[2:])
+            if "=" in text:
+                candidates.append(text.split("=", 1)[1])
+            if any(candidate == root or candidate.startswith(root + "/")
+                   for candidate in candidates for root in normalized):
+                matched = True
+                break
+        if matched:
             pids.append(pid)
     return pids
 

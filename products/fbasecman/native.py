@@ -993,8 +993,8 @@ class RwToggleCase:
         if self.route_mode == "port":
             text = text.replace('ports "%s"' % port,
                                 'ports "%s,%s"' % (port, read_port), 1)
-            marker = 'group "%s" {\n' % group
-            text = text.replace(marker, marker + '    write_port %s\n' % port, 1)
+            marker = f'group "{group}" {{\n'
+            text = text.replace(marker, marker + f'    write_port {port}\n', 1)
         config.write_text(text, encoding="utf-8")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
                               ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,

@@ -309,8 +309,10 @@ def cmd_reset(args) -> int:
     # shared memory block ... is still in use").  Only creator-dead segments
     # are removed, so live clusters are never touched.
     try:
+        import pwd
         from platform_regress.ledger import sweep_orphaned_sysv_shm
-        removed = sweep_orphaned_sysv_shm()
+        removed = sweep_orphaned_sysv_shm(
+            owner=pwd.getpwuid(os.geteuid()).pw_name)
         if removed:
             print("[reset] 清除孤儿共享内存段: %s"
                   % ", ".join(str(item["shmid"]) for item in removed), flush=True)

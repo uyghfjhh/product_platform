@@ -702,7 +702,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
         command = self._jdbc_command() if workload.kind == "jdbc" else self._pgbench_command(workload)
         env = os.environ.copy()
         if workload.kind == "jdbc":
-            env.update({"JDBC_URL": "jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/mmrhint" % self.main_port,
+            env.update({"JDBC_URL": f"jdbc:postgresql://{ops.LOCAL_HOST}:{self.main_port}/mmrhint",
                         "JDBC_USER": "mmrhint", "JDBC_PASSWORD": "", "JDBC_PREPARE_THRESHOLD": "1",
                         "JDBC_DIR": str(self.root / self.cfg.runtime_config.config["local"]["jdbc_lib_dir"])})
         process = start_background(command, cwd=self.run_dir, env=env, output_path=log)

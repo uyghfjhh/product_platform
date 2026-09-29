@@ -90,7 +90,7 @@ def _run(context, argv, timeout=30):
         return result.returncode, result.stdout
     except TimeoutError as exc:
         output = (getattr(exc, "partial_stdout", "") or "")
-        return 124, output + "\n命令执行超时（%ss）" % timeout
+        return 124, output + f"\n命令执行超时（{timeout}s）"
 
 
 def _binary(context, definition, name):
@@ -196,7 +196,12 @@ def _sweep_dead_owners(context, definition):
                                    "stop", "-m", "immediate"], timeout=30)
                 # A postmaster that ignores pg_ctl still holds its port;
                 # SIGTERM by pid is the bounded fallback for dead-owner dirs.
+                # Verify the pid is really this cluster's postmaster first —
+                # a stale postmaster.pid can name a recycled pid of an
+                # unrelated process.
                 for pid in _cluster_pids(cluster):
+                    if _postgres_data_dir(pid) != cluster:
+                        continue
                     try:
                         os.kill(pid, 15)
                     except OSError:
