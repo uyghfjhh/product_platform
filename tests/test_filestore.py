@@ -144,6 +144,28 @@ def test_sqlite_import_on_first_boot(tmp_path):
     assert store.get_environment("legacy") is None
 
 
+def test_sqlite_reimport_never_overwrites(tmp_path):
+    """标记丢失导致的重复导入只补缺，不覆盖已存在的记录。"""
+    db = tmp_path / "platform" / "platform.sqlite3"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE environments (id TEXT PRIMARY KEY, product_id TEXT,"
+                 " title TEXT, host TEXT, port INTEGER, database_name TEXT,"
+                 " database_user TEXT, deployment_config TEXT, deployment_target TEXT,"
+                 " created_at TEXT)")
+    conn.execute("INSERT INTO environments VALUES('legacy','fbasecman','Stale','h',1,"
+                 "'d','u',NULL,NULL,'2024-01-01')")
+    conn.commit()
+    conn.close()
+
+    store = FileStore(tmp_path)
+    store.update_environment("legacy", _env("legacy", title="Current"))
+    (tmp_path / ".sqlite_imported").unlink()  # 模拟标记丢失
+
+    FileStore(tmp_path)
+    assert store.get_environment("legacy")["title"] == "Current"
+
+
 def test_task_meta_is_json_and_events_jsonl(tmp_path):
     store = FileStore(tmp_path)
     store.put_environment(_env("lab"))

@@ -16,6 +16,7 @@ flock 独占锁，保证并发安全。
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -35,6 +36,8 @@ def now() -> str:
 class ConflictError(RuntimeError):
     pass
 
+
+logger = logging.getLogger(__name__)
 
 ACTIVE_STATUSES = ("QUEUED", "RUNNING", "CANCELLING")
 TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}
@@ -171,12 +174,21 @@ class FileStore:
             with self._locked():
                 if marker.exists():
                     return
-                self._import_sqlite_rows(legacy)
+                skipped = self._import_sqlite_rows(legacy)
                 marker.write_text(now(), encoding="utf-8")
-        except sqlite3.Error:
-            return  # 旧库损坏不应阻塞文件存储启动
+                if skipped:
+                    logger.warning(
+                        "旧 SQLite 导入跳过了 %d 条已存在的记录——"
+                        "若这不是首次导入，请检查 .sqlite_imported 标记是否丢失",
+                        skipped,
+                    )
+        except (sqlite3.Error, OSError, KeyError, ValueError) as exc:
+            # 旧库损坏不应阻塞文件存储启动；skip-existing 使重试幂等
+            logger.warning("旧 SQLite 数据导入失败并跳过: %s", exc)
 
-    def _import_sqlite_rows(self, db_path: Path) -> None:
+    def _import_sqlite_rows(self, db_path: Path) -> int:
+        """逐条导入旧库行；已存在的目标文件一律跳过，返回跳过计数。"""
+        skipped = 0
         connection = sqlite3.connect(db_path, timeout=10)
         connection.row_factory = sqlite3.Row
         try:
@@ -189,23 +201,33 @@ class FileStore:
                 for row in connection.execute("SELECT * FROM environments"):
                     env = dict(row)
                     env.setdefault("created_at", now())
+                    path = self._env_path(env["id"])
+                    if path.exists():
+                        skipped += 1
+                        continue
                     self._atomic_write(
-                        self._env_path(env["id"]),
+                        path,
                         yaml.safe_dump(env, allow_unicode=True, sort_keys=True),
                     )
             if "regression_bindings" in tables:
                 bindings = self._read_bindings()
                 for row in connection.execute("SELECT * FROM regression_bindings"):
                     record = dict(row)
-                    bindings.setdefault(record["product_id"], {})[
-                        record.get("profile_id", "default")
-                    ] = record
+                    profiles = bindings.setdefault(record["product_id"], {})
+                    profile_id = record.get("profile_id", "default")
+                    if profile_id in profiles:
+                        skipped += 1
+                        continue
+                    profiles[profile_id] = record
                 self._write_bindings(bindings)
             if "tasks" in tables:
                 for row in connection.execute("SELECT * FROM tasks ORDER BY created_at"):
                     task = dict(row)
                     task.setdefault("last_sequence", 0)
                     task.setdefault("cancel_requested", 0)
+                    if self._task_meta(task["id"]).exists():
+                        skipped += 1
+                        continue
                     self._write_task(task)
             if "events" in tables:
                 grouped: dict[str, list[dict]] = {}
@@ -217,6 +239,9 @@ class FileStore:
                     grouped.setdefault(event["task_id"], []).append(event)
                 for task_id, events in grouped.items():
                     events_file = self._task_events(task_id)
+                    if events_file.exists():
+                        skipped += 1
+                        continue
                     events_file.parent.mkdir(parents=True, exist_ok=True)
                     self._atomic_write(
                         events_file,
@@ -232,6 +257,9 @@ class FileStore:
                         record["environment_id"], record["product_id"],
                         record["target"], record["profile"],
                     )
+                    if path.exists():
+                        skipped += 1
+                        continue
                     path.parent.mkdir(parents=True, exist_ok=True)
                     self._atomic_write(
                         path, json.dumps(record, ensure_ascii=False, indent=2)
@@ -244,12 +272,16 @@ class FileStore:
                         record["environment_id"], record["product_id"],
                         record["target"], record["profile"],
                     )
+                    if path.exists():
+                        skipped += 1
+                        continue
                     path.parent.mkdir(parents=True, exist_ok=True)
                     self._atomic_write(
                         path, json.dumps(record, ensure_ascii=False, indent=2)
                     )
         finally:
             connection.close()
+        return skipped
 
     # ---- 环境 -------------------------------------------------------------
 
