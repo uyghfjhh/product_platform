@@ -34,11 +34,22 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
   const controlsRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const activeContextRef = useRef<{ cleanup: () => void } | null>(null);
+  // Status polling must not rebuild the WebGL scene (camera/animations would
+  // reset every cycle).  The builder reads the latest snapshot via this ref;
+  // a separate effect recolors node materials in place when observed changes.
+  const observedRef = useRef(observed);
+  observedRef.current = observed;
+  const nodeMaterialsRef = useRef<Map<string, {
+    node: any;
+    led: any;
+    ledColor: number;
+  }>>(new Map());
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const container = containerRef.current;
+    nodeMaterialsRef.current.clear();
     const width = container.clientWidth || 900;
     const canvasHeight = typeof height === 'number' ? height : 560;
 
@@ -291,9 +302,9 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
         primaryPos = new THREE.Vector3(cPos.x, 1.5, cPos.z + 2.8);
         primaryNodePosMap[groupName] = primaryPos;
 
-        const isStopped = observed?.[primaryNode.id]?.running === false;
+        const primaryState = observedRef.current?.[primaryNode.id]?.running;
         const nodeGeo = new THREE.CylinderGeometry(1.65, 1.65, 2.5, 24);
-        const nodeMat = isStopped
+        const nodeMat = primaryState === false
           ? new THREE.MeshStandardMaterial({ color: 0xef4444, wireframe: true, emissive: 0x7f1d1d })
           : new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.88, roughness: 0.22 });
         const nodeMesh = new THREE.Mesh(nodeGeo, nodeMat);
@@ -304,7 +315,10 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
 
         // Green LED ring for primary
         const ledGeo = new THREE.TorusGeometry(1.68, 0.12, 16, 32);
-        const ledMat = new THREE.MeshBasicMaterial({ color: isStopped ? 0xef4444 : 0x10b981 });
+        const ledMat = new THREE.MeshBasicMaterial({
+          color: primaryState === false ? 0xef4444 : primaryState === true ? 0x10b981 : 0x64748b,
+        });
+        nodeMaterialsRef.current.set(primaryNode.id, { node: nodeMat, led: ledMat, ledColor: 0x10b981 });
         const ledMesh = new THREE.Mesh(ledGeo, ledMat);
         ledMesh.position.copy(primaryPos);
         ledMesh.rotation.x = Math.PI / 2;
@@ -326,9 +340,9 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
         const nz = cPos.z - 2.2;
         const sbPos = new THREE.Vector3(nx, 1.4, nz);
 
-        const isStopped = observed?.[sbNode.id]?.running === false;
+        const standbyState = observedRef.current?.[sbNode.id]?.running;
         const nodeGeo = new THREE.CylinderGeometry(1.35, 1.35, 2.1, 20);
-        const nodeMat = isStopped
+        const nodeMat = standbyState === false
           ? new THREE.MeshStandardMaterial({ color: 0xef4444, wireframe: true, emissive: 0x7f1d1d })
           : new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.88, roughness: 0.22 });
         const nodeMesh = new THREE.Mesh(nodeGeo, nodeMat);
@@ -339,7 +353,10 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
 
         // Cyan LED ring for standby
         const ledGeo = new THREE.TorusGeometry(1.38, 0.1, 16, 32);
-        const ledMat = new THREE.MeshBasicMaterial({ color: isStopped ? 0xef4444 : 0x38bdf8 });
+        const ledMat = new THREE.MeshBasicMaterial({
+          color: standbyState === false ? 0xef4444 : standbyState === true ? 0x38bdf8 : 0x64748b,
+        });
+        nodeMaterialsRef.current.set(sbNode.id, { node: nodeMat, led: ledMat, ledColor: 0x38bdf8 });
         const ledMesh = new THREE.Mesh(ledGeo, ledMat);
         ledMesh.position.copy(sbPos);
         ledMesh.rotation.x = Math.PI / 2;
@@ -442,7 +459,23 @@ export default function ThreeTopologyView({ topology, observed, onSelectNode, he
     return () => {
       activeContextRef.current?.cleanup();
     };
-  }, [topology, observed, height, onSelectNode, isAutoRotate]);
+  }, [topology, height, onSelectNode, isAutoRotate]);
+
+  // Recolor node materials in place when the observed status snapshot changes.
+  useEffect(() => {
+    for (const [id, mats] of nodeMaterialsRef.current) {
+      const state = observed?.[id]?.running;
+      const stopped = state === false;
+      mats.node.color.setHex(stopped ? 0xef4444 : 0x1e293b);
+      mats.node.wireframe = stopped;
+      mats.node.emissive.setHex(stopped ? 0x7f1d1d : 0x000000);
+      mats.node.metalness = stopped ? 0 : 0.88;
+      mats.node.roughness = stopped ? 1 : 0.22;
+      mats.node.needsUpdate = true;
+      mats.led.color.setHex(
+        stopped ? 0xef4444 : state === true ? mats.ledColor : 0x64748b);
+    }
+  }, [observed]);
 
   function handleResetView() {
     if (controlsRef.current && cameraRef.current) {

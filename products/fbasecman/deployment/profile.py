@@ -44,7 +44,7 @@ def build_profile(
     # PostgreSQL data directories belong to the target host. Refuse the
     # platform checkout/data tree so a deployment cannot fill the control disk.
     platform_root = Path(__file__).resolve().parents[3]
-    if "product_platform" in normalized_root.parts or normalized_root == platform_root:
+    if normalized_root.is_relative_to(platform_root):
         raise ValueError("数据库数据目录不能位于平台项目目录，请填写目标主机路径")
     if not (Path(license_file).is_absolute() or license_file.startswith("/")):
         raise ValueError("License 文件需要绝对路径")

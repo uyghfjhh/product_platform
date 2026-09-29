@@ -101,7 +101,14 @@ export default function DeploymentPage({
     if (!environment) return;
     if (!silent) setStatusLoading(true);
     try {
-      setObserved(await api(`/environments/${encodeURIComponent(environment.id)}/topology/status`));
+      const next = await api<Record<string, { running: boolean | null; message: string }>>(
+        `/environments/${encodeURIComponent(environment.id)}/topology/status`);
+      // Reuse the previous object when nothing changed — downstream canvases
+      // rebuild DOM/WebGL scenes on identity, so an identical poll must be free.
+      setObserved((prev) => {
+        if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
+        return next;
+      });
     } catch (error) {
       if (!silent) message.error((error as Error).message);
     } finally { if (!silent) setStatusLoading(false); }
@@ -366,8 +373,10 @@ export default function DeploymentPage({
               </Tag>
             )}
             {selectedNode && (
-              <Tag color={observed?.[selectedNode.id]?.running === false ? 'error' : 'success'}>
-                {observed?.[selectedNode.id]?.running === false ? '已停止' : '运行中'}
+              <Tag color={observed?.[selectedNode.id]?.running === false ? 'error'
+                : observed?.[selectedNode.id]?.running === true ? 'success' : 'default'}>
+                {observed?.[selectedNode.id]?.running === false ? '已停止'
+                  : observed?.[selectedNode.id]?.running === true ? '运行中' : '探测中'}
               </Tag>
             )}
           </div>
@@ -428,6 +437,7 @@ export default function DeploymentPage({
                       key={name}
                       danger={name === 'stop'}
                       type={name === 'start' ? 'primary' : 'default'}
+                      disabled={loading}
                       onClick={() => void run(action, selectedNode.id)}
                     >
                       {name === 'start' ? '启动节点' : name === 'stop' ? '停止节点' : '重启节点'}
@@ -435,12 +445,12 @@ export default function DeploymentPage({
                   );
                 })}
                 {selectedNode.group && actions.some((item) => item.id === 'deployment.failover') && (
-                  <Button onClick={() => void run(actions.find((item) => item.id === 'deployment.failover')!, `streaming.${selectedNode.group}`)}>
+                  <Button disabled={loading} onClick={() => void run(actions.find((item) => item.id === 'deployment.failover')!, `streaming.${selectedNode.group}`)}>
                     主备切换
                   </Button>
                 )}
                 {selectedNode.group && actions.some((item) => item.id === 'deployment.rejoin') && (
-                  <Button onClick={() => void run(actions.find((item) => item.id === 'deployment.rejoin')!, `streaming.${selectedNode.group}`)}>
+                  <Button disabled={loading} onClick={() => void run(actions.find((item) => item.id === 'deployment.rejoin')!, `streaming.${selectedNode.group}`)}>
                     旧主重建
                   </Button>
                 )}

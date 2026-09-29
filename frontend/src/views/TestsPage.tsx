@@ -249,14 +249,14 @@ export default function TestsPage({
 
   // 打开失败弹窗时，异步获取失败原因与步骤断言
   useEffect(() => {
-    if (!failedModalOpen || failedCasesList.length === 0) return;
+    if (!failedModalOpen || failedCasesList.length === 0 || !adapter.artifactPath) return;
     let cancelled = false;
     failedCasesList.forEach((c) => {
       if (failedReasons[c.target]) return;
       api<{
         summary?: { reason?: string };
         parsed?: { reason?: string; steps?: Array<{ status: string; title?: string; actual?: string; expected?: string }> };
-      }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id) : '')
+      }>(adapter.artifactPath!(c.target, environment?.id))
         .then((data) => {
           if (cancelled) return;
           let reason = data.summary?.reason || data.parsed?.reason;

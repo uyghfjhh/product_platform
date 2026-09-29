@@ -1,6 +1,8 @@
 """Platform tests for the generic ManagedDaemon lifecycle kernel."""
 
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -143,6 +145,56 @@ class ManagedDaemonTest(unittest.TestCase):
                 ["/bin/testdaemon", "--config", str(root / "c.conf"), "--daemon"],
                 starts[0],
             )
+
+
+    def test_recycled_pid_in_pid_file_is_not_killed(self):
+        """A stale pid file pointing at a reused PID must not be SIGTERMed."""
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sleeper = subprocess.Popen(["sleep", "30"])
+            try:
+                (root / "testdaemon.pid").write_text(str(sleeper.pid))
+                kills = []
+
+                def execute(command, logfile, **kwargs):
+                    kills.append(command)
+                    if isinstance(command, list) and command[:2] == ["kill", "-0"]:
+                        return (0, "")
+                    return (0, "")
+
+                daemon = make_daemon(root, execute=execute)
+                daemon._force_cleanup(best_effort=True)
+                terms = [c for c in kills
+                         if isinstance(c, list) and c[:2] == ["kill", "-TERM"]]
+                self.assertEqual([], terms)
+                self.assertFalse((root / "testdaemon.pid").exists())
+            finally:
+                sleeper.kill()
+                sleeper.wait()
+
+    def test_pid_file_owned_by_daemon_is_killed(self):
+        """A live process whose cmdline references the binary is ours."""
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            daemon = make_daemon(root)
+            fake = subprocess.Popen(
+                ["bash", "-c", "exec -a /bin/testdaemon sleep 30"])
+            try:
+                # cmdline stays empty until the child's exec lands; poll for it.
+                owned = False
+                for _ in range(50):
+                    if daemon._owns_pid(str(fake.pid)):
+                        owned = True
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(owned)
+                self.assertFalse(daemon._owns_pid(str(os.getpid())))
+            finally:
+                fake.kill()
+                fake.wait()
 
 
 if __name__ == "__main__":

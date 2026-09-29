@@ -54,7 +54,12 @@ def build_bug_bundle(settings, store, environment_id: str,
     if environment is None:
         raise KeyError(environment_id)
     regression_root = settings.output_dir / "regression" / environment_id
-    evidence_root = settings.output_dir / "fbasecman" / environment_id
+    product_id = environment.get("product_id")
+    evidence_root = (
+        settings.output_dir / product_id / environment_id
+        if isinstance(product_id, str) and product_id
+        else settings.output_dir / "_none" / environment_id
+    )
     profile_root = settings.environment_dir / "profiles" / environment_id
     buffer = io.BytesIO()
     state = {"bytes": 0, "skipped": 0}

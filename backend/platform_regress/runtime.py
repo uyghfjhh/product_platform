@@ -171,10 +171,14 @@ class CaseRuntime(object):
     # ------------------------------------------------------------------
 
     def run_command(self, command, logfile, cwd=None, env=None, echo=False,
-                    check=True, step_title=None, record=True):
-        """执行命令并落日志；record=True 时自动记录为一个报告步骤。"""
+                    check=True, step_title=None, record=True, timeout=None):
+        """执行命令并落日志；record=True 时自动记录为一个报告步骤。
+
+        ``timeout`` 秒数到达后终止整个进程组（TERM 后升级 KILL）；默认
+        ``None`` 保持无超时，与既有套件行为一致——需要硬性上限的用例
+        显式传入即可。"""
         result = run_logged_command(command, logfile, cwd=cwd or self.root,
-                                    env=env, echo=echo)
+                                    env=env, echo=echo, timeout=timeout)
         if record:
             self.record_step(step_title or "执行命令", result.command,
                              "命令执行完成", result.output,

@@ -189,6 +189,17 @@ class ManagedDaemon(object):
             except OSError:
                 pass
             return
+        if not self._owns_pid(pid_text):
+            # The PID was recycled after a hard kill: the stale file must not
+            # condemn an unrelated process.  Drop it and let the port probe
+            # decide whether the daemon itself is still alive.
+            self.trace("[cleanup] pid file %s names an unrelated process; ignoring"
+                       % pid_text)
+            try:
+                self.pid_file.unlink()
+            except OSError:
+                pass
+            return
         self.trace("[cleanup] kill residual %s pid=%s" % (self.name, pid_text))
         self.execute(
             ["kill", "-TERM", pid_text], self.logs_dir / ("kill_pidfile_%s.log" % pid_text),
@@ -208,6 +219,10 @@ class ManagedDaemon(object):
                 )
             return
         for pid in sorted(set(re.findall(r"pid=(\d+)", output))):
+            if not self._owns_pid(pid):
+                self.trace("[cleanup] port %s held by unrelated pid=%s; leaving it alone"
+                           % (self.listen_port, pid))
+                continue
             self.trace("[cleanup] kill residual %s pid=%s on port=%s" % (self.name, pid, self.listen_port))
             self.execute(
                 ["kill", "-TERM", pid], self.logs_dir / ("kill_%s.log" % pid),
@@ -215,3 +230,18 @@ class ManagedDaemon(object):
             )
         if output:
             self.sleep(0.5)
+
+    def _owns_pid(self, pid):
+        """PID files and port probes survive hard kills; recycled PIDs must
+        never receive our SIGTERM.  A pid counts as ours only when its
+        cmdline references this daemon's binary (path or name+conf)."""
+        try:
+            raw = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+        except OSError:
+            return False
+        text = raw.decode("utf-8", errors="replace").replace("\x00", " ")
+        if self.binary and self.binary in text:
+            return True
+        base = Path(self.binary).name
+        conf = str(self.active_conf or "")
+        return bool(base) and base in text and bool(conf) and conf in text
