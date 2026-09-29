@@ -272,7 +272,7 @@ def load_mac_metadata_denials():
             raise ValueError(f"等保用例不符合无状态执行契约: {target}")
         for step in case["steps"]:
             sql = step.get("sql", "")
-            if (step.get("type") != "sql" or step.get("user") != "postgres"
+            if (step.get("type") != "sql" or step.get("user") not in {"postgres", "{env.user}"}
                     or step.get("assertion", {}).get("type") != "sql_fails"
                     or not sql.startswith("BEGIN;") or not sql.rstrip().endswith("ROLLBACK")):
                 raise ValueError(f"等保用例存在未受保护的步骤: {target}")
@@ -339,7 +339,7 @@ class FixtureSqlCase(DeclarativeSqlCase):
             if fixture.get("type") == "settings":
                 node = fixture.get("node", self.definition["steps"][0].get("node", "primary"))
                 node = node.split(":")[-1]
-                user = fixture.get("user")
+                user = context.expand(fixture.get("user"))
                 for name, value in fixture.get("values", {}).items():
                     context.set_setting(node, name, str(value), user=user)
                 continue
@@ -406,7 +406,7 @@ def load_native_sql_cases():
                     or (step.get("type") == "wait_sql"
                         and step.get("assertion", {}).get("type") == "rows_equal")
                     or (step.get("type") == "sql"
-                        and step.get("user", "postgres") == "postgres"
+                        and step.get("user", "postgres") in {"postgres", "{env.user}"}
                         and step.get("assertion", {}).get("type") in supported)
                     for step in steps)):
             continue

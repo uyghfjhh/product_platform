@@ -30,11 +30,11 @@ def _run_jdbc_console_ha_commands(context):
         ops.logs_dir / "HaConsoleCommands.javac.log", cwd=ops.workdir,
         step_title="编译 JDBC 控制台高可用命令 driver")
     jdbc_url = jdbc_client.build_url(
-        "127.0.0.1", ops.listen_port, "console", {"preferQueryMode": "simple"})
+        ops.LOCAL_HOST, ops.listen_port, "console", {"preferQueryMode": "simple"})
     business_url = jdbc_client.build_url(
-        "127.0.0.1", ops.listen_port, "mmr_group", {"preferQueryMode": "simple"})
+        ops.LOCAL_HOST, ops.listen_port, "mmr_group", {"preferQueryMode": "simple"})
     single_url = jdbc_client.build_url(
-        "127.0.0.1", ops.listen_port, "single_group", {"preferQueryMode": "simple"})
+        ops.LOCAL_HOST, ops.listen_port, "single_group", {"preferQueryMode": "simple"})
     snapshots = ops.workdir / "jdbc-config-snapshots"
     ports = ops.env.config["database"]["ports"]
     _, output = ops.run_command(

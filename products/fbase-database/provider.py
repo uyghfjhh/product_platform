@@ -87,20 +87,40 @@ def _legacy_cluster_context(settings, cluster, with_nodes=True):
     home = str((data.get("postgres") or {}).get("home") or "")
     home = re.sub(r"\$\{(\w+)\}",
                   lambda match: os.environ.get(match.group(1), ""), home)
-    if home and Path(home).is_dir():
-        context["db_bin_dir"] = str(Path(home) / "bin")
-    if not with_nodes:
-        context.pop("topology_error", None)
-        return context
+    if home:
+        context["db_home"] = home
+        if Path(home).is_dir():
+            context["db_bin_dir"] = str(Path(home) / "bin")
+    # Environment-overridable literals consumed by declarative steps:
+    # {env.tmp_root} / {env.local_host} / {env.license_file} / {env.contrib_root}
+    context["tmp_root"] = str(data.get("tmp_root") or
+                              os.environ.get("FBASE_REGRESS_TMP_ROOT", "/tmp/fbase_regress"))
+    context["local_host"] = str(data.get("local_host") or
+                                os.environ.get("FBASE_LOCAL_HOST", "127.0.0.1"))
+    postgres_cfg = data.get("postgres") or {}
+    license_file = (postgres_cfg.get("license_file") or
+                    os.environ.get("FBASE_LICENSE_FILE"))
+    if license_file:
+        context["license_file"] = str(license_file)
+    contrib_root = (postgres_cfg.get("contrib_root") or
+                    os.environ.get("FBASE_CONTRIB_ROOT"))
+    if contrib_root:
+        context["contrib_root"] = str(contrib_root)
     roles = _node_roles(groups)
-    nodes = {}
+    cluster_nodes = {}
     for name, node in (cluster_config.get("nodes") or {}).items():
         endpoint = {"host": node["host"], "port": node["port"],
                     "data_dir": node.get("data_dir") or "",
                     "role": roles.get(name, "standalone")}
-        nodes[name] = endpoint
-    context["nodes"] = nodes
-    context["node_order"] = list(nodes)
+        cluster_nodes[name] = endpoint
+    # Full node map is always available for {node.<name>.<field>} expansion in
+    # declarative steps, even when ``nodes`` carries only selector endpoints.
+    context["cluster_nodes"] = cluster_nodes
+    if not with_nodes:
+        context.pop("topology_error", None)
+        return context
+    context["nodes"] = cluster_nodes
+    context["node_order"] = list(cluster_nodes)
     # Convenience aliases keep hand-written native cases working inside suite
     # runs where the full node map replaces the minimal selector map. They are
     # resolved last in resolve_selector, so real selectors always win.
@@ -113,7 +133,7 @@ def _legacy_cluster_context(settings, cluster, with_nodes=True):
         for member in (groups.get("mmr") or {}).get("members") or {}
     }
     for candidate in candidates + list(prefixed):
-        if candidate in nodes:
+        if candidate in cluster_nodes:
             continue
         try:
             aliases[candidate] = resolve_selector(

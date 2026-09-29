@@ -15,6 +15,7 @@ suite 运行时按需继承本类，只补充自己的用例级逻辑，例如
 ``suites.ha_commands.runtime.HaCommandRuntime``。
 """
 
+import os
 import difflib
 import re
 import shlex
@@ -301,7 +302,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
     def _record_ha_state(self, sql, phase):
         state_sql = self._ha_state_sql(sql)
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1",
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
             self.listen_port, "admin", "console", state_sql,
         )
         result = run_logged_command(
@@ -339,7 +340,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
         self.last_ha_sql = sql.strip()
         config_before = self.active_conf.read_text(encoding="utf-8") if self.active_conf else None
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1",
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
             self.listen_port, "admin", "console", sql,
         )
         retry_enabled = sql.lstrip().upper().startswith("SHOW ")
@@ -378,7 +379,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
     def psql_monitor(self, sql, title, expected, predicate, retry_timeout=5):
         """Run monitor SHOW in expanded form so field assertions are exact."""
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1", self.listen_port,
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), self.listen_port,
             "admin", "console", sql, expanded=True,
         )
 
@@ -428,7 +429,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
             for k, v in expected_rows.items()
         )
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1", self.listen_port,
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), self.listen_port,
             "admin", "console", sql,
         )
 
@@ -446,7 +447,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
                       port=None, user="postgres", retry_timeout=0):
         """Run a query through the configured MMR business route."""
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1",
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
             port or self.listen_port, user, group, sql,
         )
 
@@ -462,7 +463,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
                             group="mmr_group", port=None, user="postgres"):
         """执行业务 SQL 并断言它按预期失败（rc != 0 且输出匹配 predicate）。"""
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1",
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
             port or self.listen_port, user, group, sql,
         )
 
@@ -477,7 +478,7 @@ class FbasecmanCaseRuntime(CaseRuntime):
         """执行 console 命令并断言被拒绝；可选校验配置未被污染。"""
         config_before = self.active_conf.read_bytes() if self.active_conf else None
         command = build_psql_command(
-            self.env.config["local"]["postgres_dir"], "127.0.0.1",
+            self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
             self.listen_port, "admin", "console", sql,
         )
 

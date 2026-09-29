@@ -1,6 +1,7 @@
 """Platform SDK hosts for the fbasecman common regression suite."""
 
 from __future__ import annotations
+import os
 
 import concurrent.futures
 import json
@@ -72,7 +73,7 @@ class CommonCase:
         config = context.output_dir / "fbasecman.conf"
         port = render_config(context, config, mode="none", transform=transform)
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port,
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=90)
         return config, port, context.environment.get("psql_bin", "/usr/bin/psql")
 
@@ -154,7 +155,7 @@ class CommonCase:
                              if str(row.get("count", "")).isdigit())
         _check(context, "errors-baseline", "正常业务零错误基线", 0,
                baseline_count, baseline_count == 0)
-        auth = context.command([psql, "-h", "127.0.0.1", "-p", str(port),
+        auth = context.command([psql, "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
                                 "-U", "auth_test_user", "-d", "postgres", "-c", "SELECT 1;"],
                                timeout_seconds=15)
         missing = _business_query(context, psql, port, "SELECT 1;", "unknown_db_9999")

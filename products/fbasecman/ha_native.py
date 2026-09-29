@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+import os
 
 import difflib
 import re
@@ -96,7 +97,7 @@ class HaRuntime:
             self.proxy_log.unlink()
         self._proc = self.context.start_process(
             [self.binary, str(config)],
-            ready_host="127.0.0.1", ready_port=port, timeout_seconds=90)
+            ready_host=self.context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=90)
         _wait_mmr_routing(self.context, port, self.psql_bin)
         self.context.step(
             self._key(), "启动 fbasecman",
@@ -233,7 +234,7 @@ class HaRuntime:
         return _expect(
             self.context, self._key(), title, expected, predicate,
             lambda: self.context.command(
-                [self.psql_bin, "-h", "127.0.0.1", "-p", str(self.port),
+                [self.psql_bin, "-h", self.context.environment.get("local_host", "127.0.0.1"), "-p", str(self.port),
                  "-U", "admin", "-d", "console", "-x", "-c", sql],
                 cwd=self.workdir, timeout_seconds=15, merge_stderr=True),
             retry_seconds=float(retry_timeout))

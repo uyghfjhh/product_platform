@@ -30,7 +30,7 @@ def _wait_standby_readiness(context, node_key="A1", timeout=20):
     last_output = ""
     while time.time() < deadline:
         rc, output = ops.nodes._run_cmd(
-            '%s/bin/psql -h 127.0.0.1 -p %d -U %s -d postgres -tAc "SELECT 1;"'
+            '%s/bin/psql -h ' + ops.LOCAL_HOST + ' -p %d -U %s -d postgres -tAc "SELECT 1;"'
             % (ops.nodes.pg_dir, port, ops.nodes.user),
             "pg_ready_%s.log" % node_key,
         )

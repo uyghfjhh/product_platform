@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Raw PostgreSQL protocol driver for outstanding/cache consistency tests."""
 
+import os
 import struct
 import sys
 import time
@@ -374,7 +375,7 @@ def _connect_with_retry(port, database, attempts=30):
     last_error = None
     for _ in range(attempts):
         try:
-            return ProtocolClient("127.0.0.1", port, database)
+            return ProtocolClient(os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), port, database)
         except Exception as exc:
             last_error = exc
             time.sleep(0.2)

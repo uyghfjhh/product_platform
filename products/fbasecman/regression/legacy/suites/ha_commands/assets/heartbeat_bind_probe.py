@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Minimal PostgreSQL extended-protocol probe for SQL_PARSE heartbeat Bind."""
 
+import os
 import struct
 import sys
 
@@ -26,7 +27,7 @@ def bind_execute(sock, mode="normal"):
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: heartbeat_bind_probe.py PORT normal|malformed")
-    sock = connect("127.0.0.1", sys.argv[1], "mmr_group", "postgres",
+    sock = connect(os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), sys.argv[1], "mmr_group", "postgres",
                    application_name="ha_heartbeat_bind_probe", timeout=5)
     try:
         parse_messages = parse(sock)

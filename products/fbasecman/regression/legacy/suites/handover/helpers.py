@@ -127,7 +127,7 @@ def _thread_ratio_actual(records):
 def _wait_for_thread_statistics_profile(context, timeout_seconds):
     """Wait for all clients and the document's 3:2 workload ratio to settle."""
     command = build_psql_command(
-        ops.env.config["local"]["postgres_dir"], "127.0.0.1", ops.listen_port,
+        ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
         "admin", "console", "SHOW THREAD_STATUS;",
     )
     deadline = time.time() + timeout_seconds
@@ -439,7 +439,7 @@ def _phase_console_observation(context, phase, queries, log_prefix):
     passed = True
     for index, sql in enumerate(queries, 1):
         command = build_psql_command(
-            ops.env.config["local"]["postgres_dir"], "127.0.0.1", ops.listen_port,
+            ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
             "admin", "console", sql,
         )
         logfile = ops.logs_dir / ("%s_%s_%02d.log" % (log_prefix, phase.lower(), index))

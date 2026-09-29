@@ -58,6 +58,7 @@ def native_case_context(settings, environment):
                             "port": primaries["mmr1"]["port"]},
                   "mmr2": {"host": primaries["mmr2"]["host"],
                             "port": primaries["mmr2"]["port"]}},
+        "local_host": os.environ.get("FBCMAN_LOCAL_HOST") or "127.0.0.1",
         "user": environment.get("database_user") or "postgres",
         "fbasecman_bin": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_BIN")
         or fbasecman.get("fbasecman_bin"),

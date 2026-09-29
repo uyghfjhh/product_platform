@@ -164,7 +164,7 @@ def execute_global_prepared_statements(context):
     if compile_res.returncode != 0:
         raise HandoverFailure("HandoverGlobalPrepared JDBC compile failed: %s" % compile_res.output)
 
-    url = "jdbc:postgresql://127.0.0.1:%s/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended" % ops.listen_port
+    url = "jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended" % ops.listen_port
     process = PhasedProcess(
         ["java", "-cp", "%s:%s" % (jar, build), "HandoverGlobalPrepared", url],
         ops.logs_dir / "global_ps_first_run.log", cwd=build,

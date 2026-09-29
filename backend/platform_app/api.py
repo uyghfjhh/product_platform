@@ -144,7 +144,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         for product_id in sorted(discover_products(settings.products_root)):
             items.append(
                 ("%s-regress" % product_id,
-                 settings.product_regress_root(product_id), "run.sh")
+                 settings.product_regress_root(product_id), "regress.yaml")
             )
         return [
             {"id": item_id, "path": str(root), "available": (root / entry).is_file()}

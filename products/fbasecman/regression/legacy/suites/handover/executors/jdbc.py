@@ -23,7 +23,7 @@ def execute_jdbc(context):
     if compile_result.returncode != 0:
         raise HandoverFailure("JDBC compile failed: %s" % compile_result.output)
 
-    url = jdbc_client.build_url("127.0.0.1", ops.listen_port, "postgres", {"user": "postgres"})
+    url = jdbc_client.build_url(ops.LOCAL_HOST, ops.listen_port, "postgres", {"user": "postgres"})
     run_log = ops.logs_dir / "jdbc_run.log"
     protocol_mode = "old" if version == "42.2.7" else "new"
     phase_groups = ("OLD_11", "OLD_12", "OLD_13", "OLD_14") if protocol_mode == "old" else (
@@ -32,7 +32,7 @@ def execute_jdbc(context):
 
     def observe(phase, marker):
         command = build_psql_command(
-            ops.env.config["local"]["postgres_dir"], "127.0.0.1", ops.listen_port,
+            ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
             "admin", "console", "SHOW CLIENTS;",
         )
         logfile = ops.logs_dir / ("jdbc_%s_show_clients.log" % phase.lower())

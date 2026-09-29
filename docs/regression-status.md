@@ -126,9 +126,9 @@
   - `products/fbasecman/regression/run.py` 保留 `--check-profile` 校验（target 存在性改查 `catalog.json`，不再 import `suites.registry`）。
   - `legacy/run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`case.py`、`suites/registry.py`、vendored `unit_tests/`（259 项）、legacy 树内重复 `products/fbasecman/` 包（2713 行）、零引用的 `env/`（1204 行，依赖早已不存在的 `framework.*`）、`tests/`、`output/`、一次性迁移脚本 `export_legacy_catalog.py` 全部删除；`tools/` 仅留 `web_reports.py`（平台报告解析仍经它）与 stable 工具链；`cli/run.sh` 收敛为 `platform_case.py` 薄壳。
   - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`。
-  - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）——`fbase-database/regression/legacy/run.sh` 失去最后一个平台运行时调用方，现为 vendored `unit_tests/test_cli.py` 的 patch 目标与人工入口，随单测迁移一并退役。
+  - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）；`fbase-database/regression/legacy/` vendored 树（framework/suites/unit_tests/run.sh/templates）已物理删除，仅保留 `regress.yaml` 集群配置源与问题单文档；`cli/run.sh` 收敛为 `platform-case` 薄壳。
   - **fbasecman `framework/` shim 已物理删除**（提交 772e9b3）：全部 `framework.*` import retarget 到 `platform_regress.*`；产品私有胶水并入 `legacy/cmanconf.py`；平台 `runtime.py` 改用 `set_legacy_config_loader()` 注入契约；`tools/architecture.py` 改守 cmanconf 边界。
-  - `fbase-database/regression/legacy/framework/` 仍保留：vendored 单测 patch 点待迁移。
+  - `fbase-database/regression/legacy/framework/` 已随 vendored 单测一并物理删除（见上条）。
 
 ## 7. 验收标准与红线
 
@@ -136,7 +136,7 @@
 2. 不得把 FAIL/BLOCKED/ERROR 改成 PASS 来凑绿；不得删步骤、松断言、跳过 setup/teardown。
 3. 平台核心不出现产品名分支；产品专属 evaluator/探针/schema 走注册挂点。
 4. 每个结论有证据：result.json + artifacts + events.jsonl 必须能回溯判定依据。
-5. 全量验证门：`pytest tests/`（当前 249）+ FBase vendored `unit_tests/`（当前 149）+ 前端 build + 真实套件抽测。fbasecman vendored `unit_tests/` 已随诊断入口一并删除（其 patch 面针对已删编排层）。
+5. 全量验证门：`pytest tests/`（当前 249）+ 前端 build + 真实套件抽测。两套 vendored `unit_tests/` 均已删除（patch 面针对已删编排层/导出后失修）。
 6. “已注册到 RegressionEngine”不等于“SDK 原生迁移完成”；覆盖测试必须同时证明无 `SuiteNativeCase`、`LegacySuiteCase`、suite `run_case` 和旧 runner 运行依赖。
 7. 平台缺少通用能力时必须补平台契约，不得为赶进度把通用生命周期、并发、配置、证据或报告逻辑继续堆入产品临时宿主。
 

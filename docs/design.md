@@ -562,7 +562,6 @@ AI 是后置能力：
 
 ```bash
 .venv/bin/python -m pytest
-(cd products/fbase-database/regression/legacy && ../../../../.venv/bin/python -m unittest discover -s unit_tests -t .)
 (cd frontend && npm run build)
 git diff --check
 ```

@@ -230,7 +230,7 @@ def _run_sql_parse_heartbeat_bind_normal(context):
         ["javac", "-cp", str(jar), "-d", str(ops.workdir), str(source)],
         ops.logs_dir / "HeartbeatBindNormal.javac.log", cwd=ops.workdir,
         step_title="编译 SQL_PARSE heartbeat JDBC 测试")
-    jdbc_url = ("jdbc:postgresql://127.0.0.1:%s/mmr_group?"
+    jdbc_url = ("jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/mmr_group?"
                 "prepareThreshold=1&preferQueryMode=extended&"
                 "binaryTransfer=false") % ops.listen_port
     _, output = ops.run_command(

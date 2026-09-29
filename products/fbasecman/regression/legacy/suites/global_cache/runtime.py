@@ -50,6 +50,7 @@ from suites.global_cache.manifest import (
     formal_case_items,
 )
 from suites.global_cache.reports.runtime import GlobalCacheReportMixin
+import fbasecman_ops as ops
 
 DEFAULT_FBASECMAN_LOG_LEVEL = os.environ.get("FBASECMAN_LOG_LEVEL", "debug1")
 REPORT_FBASECMAN_CONFIG_PREFIXES = (
@@ -150,7 +151,7 @@ def _is_local_tcp_port_free(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("127.0.0.1", port))
+        sock.bind((ops.LOCAL_HOST, port))
         return True
     except OSError:
         return False

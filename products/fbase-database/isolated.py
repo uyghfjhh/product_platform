@@ -10,6 +10,7 @@ legacy executor instead of being approximated here.
 """
 
 import errno
+import os
 import re
 import shutil
 import socket
@@ -19,21 +20,37 @@ from pathlib import Path
 from platform_regress import Blocked
 
 
-TMP_PREFIX = "/tmp/fbase_regress_"
+TMP_PREFIX = os.environ.get("FBASE_REGRESS_TMP_PREFIX", "/tmp/fbase_regress_")
+
+
+def _tmp_prefix(context):
+    """Disposable-root prefix for this run.
+
+    Prefers the injected ``environment["tmp_root"]`` so a configured root and
+    the safety check stay consistent; falls back to ``FBASE_REGRESS_TMP_ROOT``
+    and finally the module default.
+    """
+    root = str((context.environment or {}).get("tmp_root") or
+               os.environ.get("FBASE_REGRESS_TMP_ROOT") or "")
+    if not root:
+        return TMP_PREFIX
+    return root if root.endswith("_") else root + "_"
+
 
 # Fixture names that only register root-directory cleanup.  The tuple carries
-# the legacy default directory and cleanup title.
+# the legacy directory suffix (appended to the run's tmp prefix) and cleanup
+# title.
 ROOT_FIXTURES = {
-    "isolated_license": ("/tmp/fbase_regress_license", "删除 license 隔离集群"),
-    "isolated_sm3_auth": ("/tmp/fbase_regress_sm3_auth", "删除 SM3 认证隔离集群"),
-    "isolated_tlcp_transfer": ("/tmp/fbase_regress_tlcp_transfer",
+    "isolated_license": ("license", "删除 license 隔离集群"),
+    "isolated_sm3_auth": ("sm3_auth", "删除 SM3 认证隔离集群"),
+    "isolated_tlcp_transfer": ("tlcp_transfer",
                                "删除 TLCP 导出导入隔离集群"),
-    "isolated_tlcp_session": ("/tmp/fbase_regress_tlcp_session",
+    "isolated_tlcp_session": ("tlcp_session",
                               "删除共享 TLCP 元数据隔离集群"),
-    "isolated_tlcp_audit": ("/tmp/fbase_regress_tlcp_audit", "删除 TLCP 审计隔离集群"),
-    "isolated_tlcp_handshake": ("/tmp/fbase_regress_tlcp_handshake",
+    "isolated_tlcp_audit": ("tlcp_audit", "删除 TLCP 审计隔离集群"),
+    "isolated_tlcp_handshake": ("tlcp_handshake",
                                 "删除 TLCP 双向认证隔离集群"),
-    "isolated_ssl": ("/tmp/fbase_regress_ssl", "删除 SSL 隔离集群"),
+    "isolated_ssl": ("ssl", "删除 SSL 隔离集群"),
 }
 
 SUPPORTED_FIXTURES = frozenset(
@@ -55,8 +72,9 @@ def setup_fixture(context, definition, name, options):
     elif name == "isolated_tde":
         _isolated_tde(context, definition, options)
     elif name in ROOT_FIXTURES:
-        default_dir, title = ROOT_FIXTURES[name]
-        _isolated_cluster_root(context, definition, options, name, default_dir, title)
+        suffix, title = ROOT_FIXTURES[name]
+        _isolated_cluster_root(context, definition, options, name,
+                               _tmp_prefix(context) + suffix, title)
     else:
         raise ValueError("平台暂不支持隔离 fixture: %s" % name)
 
@@ -142,7 +160,7 @@ def _allocate_listener(reserved):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            listener.bind(("127.0.0.1", port))
+            listener.bind((os.environ.get("FBASE_LOCAL_HOST", "127.0.0.1"), port))
         except OSError as exc:
             listener.close()
             if exc.errno == errno.EADDRINUSE:
@@ -251,7 +269,7 @@ def _reclaim_stale_listeners(context, definition):
             if data_dir is None:
                 raise Blocked("端口 %s 被 PID %s 占用，但无法确认其 PostgreSQL 数据目录"
                               % (port, pid))
-            if (not str(data_dir).startswith(TMP_PREFIX) or
+            if (not str(data_dir).startswith(_tmp_prefix(context)) or
                     not (data_dir / "PG_VERSION").is_file()):
                 raise Blocked(
                     "端口 %s 被非本框架隔离实例占用（PID %s，数据目录 %s），拒绝停止"
@@ -270,7 +288,7 @@ def _remove_stale_cluster_root(context, definition, data_dir):
     if not data_dir.exists() and not any(cluster.exists()
                                          for cluster in command_clusters):
         return
-    if not str(data_dir).startswith(TMP_PREFIX):
+    if not str(data_dir).startswith(_tmp_prefix(context)):
         raise Blocked("拒绝清理非框架隔离目录: %s" % data_dir)
     clusters = []
     if (data_dir / "PG_VERSION").is_file():
@@ -295,8 +313,8 @@ def _isolated_cluster_root(context, definition, options, fixture_name,
                            default_data_dir, cleanup_name):
     """Register cleanup for a root containing one or more disposable clusters."""
     data_dir = Path(options.get("data_dir", default_data_dir))
-    if not str(data_dir).startswith(TMP_PREFIX):
-        raise ValueError("%s data_dir 必须位于 %s 下" % (fixture_name, TMP_PREFIX))
+    if not str(data_dir).startswith(_tmp_prefix(context)):
+        raise ValueError("%s data_dir 必须位于 %s 下" % (fixture_name, _tmp_prefix(context)))
     _remove_stale_cluster_root(context, definition, data_dir)
 
     def cleanup():
@@ -335,7 +353,7 @@ def _isolated_mmr_node_creation(context, definition, options):
     """Remove disposable instances and expose their real test topology."""
     _isolated_cluster_root(context, definition, options,
                            "isolated_mmr_node_creation",
-                           "/tmp/fbase_regress_mmr_node_creation",
+                           _tmp_prefix(context) + "mmr_node_creation",
                            "删除多活节点创建隔离实例")
     _reclaim_stale_listeners(context, definition)
     _reserve_ports(context, definition)
@@ -343,10 +361,10 @@ def _isolated_mmr_node_creation(context, definition, options):
 
 def _isolated_mmr_daemon(context, definition, options):
     """Stop and delete the disposable instance used for MMR worker lifecycle."""
-    data_dir = Path(options.get("data_dir", "/tmp/fbase_regress_mmr_daemon"))
+    data_dir = Path(options.get("data_dir", _tmp_prefix(context) + "mmr_daemon"))
     declared_port = str(options.get("port", "15445"))
-    if not str(data_dir).startswith(TMP_PREFIX):
-        raise ValueError("isolated_mmr_daemon data_dir 必须位于 %s 下" % TMP_PREFIX)
+    if not str(data_dir).startswith(_tmp_prefix(context)):
+        raise ValueError("isolated_mmr_daemon data_dir 必须位于 %s 下" % _tmp_prefix(context))
     _remove_stale_cluster_root(context, definition, data_dir)
     _reserve_ports(context, definition, [declared_port])
     allocated_port = context.values["isolated_mmr_port_mapping"][declared_port]
@@ -362,9 +380,9 @@ def _isolated_mmr_daemon(context, definition, options):
 
 def _isolated_password_log(context, definition, options):
     """Preserve server stderr captures from the password-masking case."""
-    data_dir = Path(options.get("data_dir", "/tmp/fbase_regress_password_log"))
-    if not str(data_dir).startswith(TMP_PREFIX):
-        raise ValueError("isolated_password_log data_dir 必须位于 %s 下" % TMP_PREFIX)
+    data_dir = Path(options.get("data_dir", _tmp_prefix(context) + "password_log"))
+    if not str(data_dir).startswith(_tmp_prefix(context)):
+        raise ValueError("isolated_password_log data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
@@ -380,9 +398,9 @@ def _isolated_password_log(context, definition, options):
 
 def _isolated_password_expiry(context, definition, options):
     """Remove the disposable server used by the password-cycle case."""
-    data_dir = Path(options.get("data_dir", "/tmp/fbase_regress_password_expiry"))
-    if not str(data_dir).startswith(TMP_PREFIX):
-        raise ValueError("isolated_password_expiry data_dir 必须位于 %s 下" % TMP_PREFIX)
+    data_dir = Path(options.get("data_dir", _tmp_prefix(context) + "password_expiry"))
+    if not str(data_dir).startswith(_tmp_prefix(context)):
+        raise ValueError("isolated_password_expiry data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
@@ -395,10 +413,10 @@ def _isolated_password_expiry(context, definition, options):
 
 def _isolated_tde(context, definition, options):
     """Register cleanup for a TDE cluster created by reportable case steps."""
-    data_dir = Path(options.get("data_dir", "/tmp/fbase_regress_tde"))
-    key_file = Path(options.get("key_file", "/tmp/fbase_regress_tde.txt"))
-    if not str(data_dir).startswith(TMP_PREFIX):
-        raise ValueError("isolated_tde data_dir 必须位于 %s 下" % TMP_PREFIX)
+    data_dir = Path(options.get("data_dir", _tmp_prefix(context) + "tde"))
+    key_file = Path(options.get("key_file", _tmp_prefix(context) + "tde.txt"))
+    if not str(data_dir).startswith(_tmp_prefix(context)):
+        raise ValueError("isolated_tde data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),

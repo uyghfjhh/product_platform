@@ -225,16 +225,56 @@ class CaseContext:
         if errors:
             raise RuntimeError("; ".join(errors))
 
+    _ENV_PLACEHOLDER = re.compile(r"\{env\.([A-Za-z_][A-Za-z0-9_.]*)\}")
+    _NODE_PLACEHOLDER = re.compile(
+        r"\{node\.([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\}")
+
     def expand(self, value: Any) -> Any:
         """Expand per-run placeholders in declarative fixtures and steps.
 
-        ``{run_id}`` becomes this execution's unique id; strings holding a
-        declared listener port are rewritten to the reserved port recorded in
+        ``{run_id}`` becomes this execution's unique id; ``{env.<key>}`` reads
+        ``environment[key]``; ``{node.<name>.<field>}`` reads field ``<field>``
+        of node ``<name>`` from ``environment["nodes"]`` (``host``/``port``/
+        ``data_dir``...).  Strings holding a declared listener port are
+        rewritten to the reserved port recorded in
         ``values["isolated_mmr_port_mapping"]`` (``port=<n>``, ``-p <n>`` and ``:<n>``
         forms), so product cases can keep their exported commands verbatim.
         """
         if isinstance(value, str):
             expanded = value.replace("{run_id}", str(self.values["run_id"]))
+            if "{env." in expanded or "{node." in expanded:
+                env = self.environment or {}
+                nodes = env.get("nodes") or {}
+
+                def _env_value(match):
+                    key = match.group(1)
+                    if "." in key:  # dotted path into nested dicts
+                        current = env
+                        for part in key.split("."):
+                            if not isinstance(current, dict) or part not in current:
+                                raise Blocked(f"用例环境缺少键: {key}")
+                            current = current[part]
+                        return str(current)
+                    if key not in env or env[key] in (None, ""):
+                        raise Blocked(f"用例环境缺少键: {key}")
+                    return str(env[key])
+
+                def _node_value(match):
+                    name, field = match.group(1), match.group(2)
+                    node = nodes.get(name) or (
+                        env.get("cluster_nodes") or {}).get(name)
+                    if not isinstance(node, dict):
+                        resolved = (env.get("node_aliases") or {}).get(name)
+                        if resolved is None:
+                            resolved = resolve_selector(env, name)
+                        node = nodes.get(resolved) or (
+                            env.get("cluster_nodes") or {}).get(resolved)
+                    if not isinstance(node, dict) or node.get(field) in (None, ""):
+                        raise Blocked(f"用例环境缺少节点字段: {name}.{field}")
+                    return str(node[field])
+
+                expanded = self._NODE_PLACEHOLDER.sub(_node_value, expanded)
+                expanded = self._ENV_PLACEHOLDER.sub(_env_value, expanded)
             ports = self.values.get("isolated_mmr_port_mapping") or {}
             if expanded in ports:
                 return ports[expanded]

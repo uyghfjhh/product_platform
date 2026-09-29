@@ -24,7 +24,7 @@
 | :--- | :---: | :---: | :--- | :--- |
 | **产品接入与发现机制** | 85% | **98%** | `config.py`、`api.py`、`cli.py` 均已改为 `discover_products()` 动态扫描 | 仅待增加第三产品（demo）插拔测试 |
 | **数据库集群部署能力** | 90% | **92%** | 全面由平台 `PgclusterDatabaseProvider` 接管，产品零底层生命周期 | 部署页深色交互与 8081 参考站对齐 |
-| **回归测试框架通用内核** | 70% | **96%** | `requirements`/`daemon`/`jdbc`/`pgwire`/`evidence`/`reporting` 全上收平台；fbasecman 212 条全部平台宿主（68 SDK-native + 144 `context`/`ops` executor），`LegacySuiteCase` 清零 | `fbase-database` 的 legacy framework 待随单测退役 |
+| **回归测试框架通用内核** | 70% | **96%** | `requirements`/`daemon`/`jdbc`/`pgwire`/`evidence`/`reporting` 全上收平台；fbasecman 212 条全部平台宿主（68 SDK-native + 144 `context`/`ops` executor），`LegacySuiteCase` 清零；`fbase-database` vendored legacy 树（framework/suites/unit_tests）已物理删除，仅保留 `regress.yaml` 配置源 | — |
 | **通用 License 签发** | 95% | **98%** | 纯 Python 实现，多产品/多版本/多 MAC 统一签发并通过 C 校验 | 生产密钥管理与轮换流程保持通用 |
 | **任务、锁与事件/证据** | 90% | **95%** | 资源级排他锁、不可变 execution、原子 `result.json` 全平台化 | 健壮性增强（如节点瞬断重试防级联） |
 | **前端平台壳与产品解耦** | 60% | **95%** | `TestsPage` 静态字典移除、`StabilityPage` 动作动态化、3D 拓扑角色动态化 | 前端包完全声明化 |
@@ -78,10 +78,9 @@ runtime 构造注入 resolver `env`/`context_data`）；产品侧 executor 与 r
 删除，非平台运行路径依赖）。当前代码距离“理想终态”只剩下以下
 收尾工作：
 
-### 3.1 `fbase-database` 的 `framework/` 遗留目录
-- **现状**：`products/fbase-database/regression/legacy/framework/` 仍存在。
-- **原因**：这是因为其同目录下的 vendored `unit_tests/`（149 项单测，如 `test_cli.py`）仍在测试该 framework 的部分类和帮助输出。
-- **待办**：将这部分单测中的 patch 点重定向到平台原生测试后，该目录即可物理删除。
+### 3.1 ~~`fbase-database` 的 `framework/` 遗留目录~~（已关闭）
+- **现状**：`products/fbase-database/regression/legacy/` 已随 vendored `unit_tests/` 一并物理删除；仅保留 `regress.yaml`（集群拓扑与 license/tmp_root/local_host/contrib_root 的环境配置源）与三份问题单文档。
+- **结论**：fbase-database 平台路径对该目录已无代码依赖，`cases.json` 是唯一用例来源。
 
 ### 3.2 ~~`test_junit.py` 的环境孤儿断言~~（已随 vendored `unit_tests/` 删除关闭）
 
@@ -211,6 +210,13 @@ graph TD
 | **阶段一 (P0)** | `fbasecman/native.py`、`isolated.py`、`router.py` | 1. `_console_query`/`_business_query` 接收 host 参数；<br>2. 移除 `/home/postgres` 默认值；<br>3. `TMP_PREFIX` 支持环境变量覆盖。 | 原生用例具备远程主机与多用户部署执行能力。 |
 | **阶段二 (P1)** | `platform_app/topology.py`、`replication_observations.py`、`ports.py` | 1. 拓扑与复制解析下沉至产品层 Provider；<br>2. `ports.py` 泛化为动态申请 $N$ 个端口；<br>3. JDBC jar 自动版本扫描。 | 平台核心真正支持非 Postgres 类的新产品无缝插拔。 |
 | **阶段三 (P2)** | `fbase-database/cases.json` (5000+ 硬编码) | 建立平台运行前宏展开机制：在 `run_command_step` 中自动将 `/usr/local/fbase15.15/bin` 动态置换为 `context.environment["db_bin_dir"]`，将 `/home/postgres/license/` 动态置换为 `context.environment["license_file"]`。 | 彻底激活 228 条遗留用例在任意目录、任意用户下的免修改运行能力。 |
+
+**整改落地状态（本节随后续提交更新）**：
+
+- **阶段一 ✅ 已完成**：`native.py`/`common_native.py`/`ha_native.py` 全部改用 `context.environment["local_host"]`（provider 注入，`FBCMAN_LOCAL_HOST` 兜底）；vendored 套件统一走 `fbasecman_ops.LOCAL_HOST`；`isolated.py` 的 `TMP_PREFIX` 改为 `_tmp_prefix(context)`——从 `environment["tmp_root"]`/`FBASE_REGRESS_TMP_ROOT` 派生，安全断言与默认值同源；`router.py` 部署默认值改 `FBCMAN_*` 环境变量可覆盖。
+- **阶段三 ✅ 已完成**：`CaseContext.expand()` 支持 `{env.<key>}`/`{node.<name>.<field>}` 占位符；`cases.json` 的 228 条用例中 `127.0.0.1`、`/usr/local/fbase15.15`、`/home/postgres/license/license.dat`、`/tmp/fbase_regress_*`、`-U postgres` 已全部参数化（`env.user`/`env.local_host`/`env.db_bin_dir`/`env.license_file`/`env.tmp_root`/`env.contrib_root`/`node.*`），环境值统一由 `regress.yaml` + provider 注入；`pg_hba`/`postgresql.conf` 生成串、`user` 字段校验同步适配。
+- **阶段二 ⏳ 待办**：`topology.py`/`replication_observations.py` 下沉产品层、JDBC jar 版本扫描仍为开放项。
+- **有意保留**：`pg_hba` 信任规则中的 `127.0.0.1/32`（写入被测实例配置的语义值）、`process.py` 的上游配置 needle（改写目标的出厂默认值）、端口探测 `bind(("127.0.0.1", 0))`、用例自建测试账号（`fbase_regress_*`/`sao`/`sso`）、SQL 断言内容。
 
 #### 3.6.6 新增原生用例迁移中的反模式与隐蔽硬编码审查（以最新 outstanding 迁移为例）
 在 review 最新签入的 `products/fbasecman/native.py`（新增的 11 条 `outstanding.*` 缓存一致性用例）时，识别出以下典型的反模式与隐蔽硬编码，后续在迁移新用例时应注意规避：

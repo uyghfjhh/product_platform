@@ -5,6 +5,7 @@ not read the legacy regression framework or its test_context file.
 """
 
 from __future__ import annotations
+import os
 
 import json
 import re
@@ -117,7 +118,7 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse",
 def _console_query(context: CaseContext, psql: str, port: int, sql: str):
     """console 管理面 psql：admin/console，合并 stderr（对齐 run_logged_command）。"""
     return context.command(
-        [psql, "-h", "127.0.0.1", "-p", str(port), "-U", "admin",
+        [psql, "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port), "-U", "admin",
          "-d", "console", "-c", sql],
         cwd=context.output_dir, timeout_seconds=15, merge_stderr=True)
 
@@ -126,7 +127,7 @@ def _business_query(context: CaseContext, psql: str, port: int, sql: str,
                     group: str = "mmr_group"):
     """业务面 psql：postgres/<group>，走代理业务路由。"""
     return context.command(
-        [psql, "-h", "127.0.0.1", "-p", str(port), "-U", "postgres",
+        [psql, "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port), "-U", "postgres",
          "-d", group, "-c", sql],
         cwd=context.output_dir, timeout_seconds=15, merge_stderr=True)
 
@@ -180,7 +181,7 @@ def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
     native 入口必须显式等待同一收敛状态再断言。
     """
     deadline = time.monotonic() + timeout_seconds
-    query = [psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+    query = [psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
              "-U", "admin", "-d", "console", "-c", "SHOW GROUP_ROUTING mmr_group;"]
     last = ""
     while time.monotonic() < deadline:
@@ -248,7 +249,7 @@ def _first_column(payload):
 
 
 def _protocol_connect(port):
-    sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+    sock = socket.create_connection((os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), port), timeout=10)
     sock.settimeout(10)
     body = struct.pack("!I", 196608) + b"user\0postgres\0database\0mmr_group\0\0"
     sock.sendall(struct.pack("!I", len(body) + 4) + body)
@@ -351,7 +352,7 @@ class HeartbeatBindCase:
         if not all(item in text for item in required):
             raise AssertionError("SQL_PARSE heartbeat 配置不完整")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         _wait_mmr_routing(context, port,
                           context.environment.get("psql_bin", "/usr/bin/psql"))
         parse_messages, messages = _heartbeat_probe(port, self.mode)
@@ -366,7 +367,7 @@ class HeartbeatBindCase:
         if not passed:
             raise AssertionError(f"heartbeat {self.mode} 响应不符合旧用例预期")
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
-        backend_check = context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
+        backend_check = context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"),
                                          "-p", str(port), "-U", "admin", "-d", "console",
                                          "-c", "SHOW SERVER_PREP_STMTS;"], timeout_seconds=15)
         rendered = backend_check.stdout
@@ -397,7 +398,7 @@ class SqlParseExtendedProtocolCase:
         if not all(item in text for item in required):
             raise AssertionError("sql_parse JDBC 配置不完整")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         _wait_mmr_routing(context, port,
                           context.environment.get("psql_bin", "/usr/bin/psql"))
         asset = Path(context.environment.get("sql_parse_java_asset", ""))
@@ -407,7 +408,7 @@ class SqlParseExtendedProtocolCase:
         context.command(jdbc_client.javac_argv(jar, asset, dest_dir=context.output_dir),
                         cwd=context.output_dir, timeout_seconds=60)
         url = jdbc_client.build_url(
-            "127.0.0.1", port, "mmr_group",
+            context.environment.get("local_host", "127.0.0.1"), port, "mmr_group",
             {"prepareThreshold": 1, "preferQueryMode": "extended"})
         result = context.command(
             jdbc_client.java_argv(jdbc_client.classpath(context.output_dir, jar),
@@ -435,7 +436,7 @@ class JdbcConsoleHaCommandsCase:
         if not asset.is_file() or not jar.is_file():
             raise Blocked("缺少 JDBC HA 控制台资产或驱动")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
         context.command(jdbc_client.javac_argv(jar, asset, dest_dir=context.output_dir),
@@ -447,7 +448,7 @@ class JdbcConsoleHaCommandsCase:
         if len(ports) < 3:
             raise Blocked("HA JDBC 用例缺少 MMR 主节点或备节点")
         snapshots = context.output_dir / "jdbc-config-snapshots"
-        urls = [jdbc_client.build_url("127.0.0.1", port, db,
+        urls = [jdbc_client.build_url(context.environment.get("local_host", "127.0.0.1"), port, db,
                                       {"preferQueryMode": "simple"})
                 for db in ("console", "mmr_group", "single_group")]
         args = jdbc_client.java_argv(
@@ -476,11 +477,11 @@ class SetNodeWriteIdempotentCase:
         port = render_config(context, config, mode="none")
         before = config.read_bytes()
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
         def query(sql):
-            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1",
+            return context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"),
                                     "-p", str(port), "-U", "admin", "-d", "console",
                                     "-c", sql], timeout_seconds=30)
         initial = query("SHOW GROUP_ROUTING mmr_group;")
@@ -517,11 +518,11 @@ class IdempotentHaCommandCase:
         port = render_config(context, config, mode="none")
         before = config.read_bytes()
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
         def q(sql):
-            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+            return context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
         initial = q(self.initial_query)
         command = q(self.command)
@@ -550,11 +551,11 @@ class SetNodeWeightIdempotentCase:
         port = render_config(context, config, mode="none")
         before = config.read_bytes()
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port, timeout_seconds=30)
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port, timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
         def q(sql):
-            return context.command([psql, "-X", "-A", "-t", "-h", "127.0.0.1", "-p", str(port),
+            return context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
         initial, command, final = q("SHOW NODES;"), q("SET NODE WEIGHT pg_3=10;"), q("SHOW NODES;")
         unchanged = config.read_bytes() == before
@@ -581,7 +582,7 @@ class SavepointRecoveryCase:
         config = context.output_dir / "fbasecman.conf"
         port = render_config(context, config)
         binary = context.environment["fbasecman_bin"]
-        context.start_process([binary, str(config)], ready_host="127.0.0.1", ready_port=port,
+        context.start_process([binary, str(config)], ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         _wait_mmr_routing(context, port,
                           context.environment.get("psql_bin", "/usr/bin/psql"))
@@ -656,7 +657,7 @@ class ReloadDisableMonitorRouteLossCase:
         port = render_config(context, config, mode="none")
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port,
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         _wait_mmr_routing(context, port, psql)
 
@@ -810,7 +811,7 @@ class OutstandingConsistencyCase:
             'global_prepared_statements_limit 10000' % backend_limit)
         config.write_text(text, encoding="utf-8")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port,
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
@@ -932,7 +933,7 @@ def _rw_group_rows(output, group):
 def _free_port(exclude=()):
     while True:
         sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), 0))
         port = sock.getsockname()[1]
         sock.close()
         if port not in exclude:
@@ -996,7 +997,7 @@ class RwToggleCase:
             text = text.replace(marker, marker + '    write_port %s\n' % port, 1)
         config.write_text(text, encoding="utf-8")
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port,
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         if self.topology == "mmr":
@@ -1095,10 +1096,10 @@ class RwToggleCase:
         shutil.copyfile(str(asset), str(target))
         context.command(jdbc_client.javac_argv(jar, target, dest_dir=driver_dir),
                         cwd=driver_dir, timeout_seconds=60)
-        url = jdbc_client.build_url("127.0.0.1", port, group,
+        url = jdbc_client.build_url(context.environment.get("local_host", "127.0.0.1"), port, group,
                                     {"preferQueryMode": "simple"})
         if self.route_mode == "port":
-            read_url = jdbc_client.build_url("127.0.0.1", read_port, group,
+            read_url = jdbc_client.build_url(context.environment.get("local_host", "127.0.0.1"), read_port, group,
                                              {"preferQueryMode": "simple"})
             args = jdbc_client.java_argv(
                 jdbc_client.classpath(driver_dir, jar),
@@ -1297,7 +1298,7 @@ class GucSessionCase:
         if missing:
             raise AssertionError("GUC 配置字段未生效: %s" % missing)
         context.start_process([context.environment["fbasecman_bin"], str(config)],
-                              ready_host="127.0.0.1", ready_port=port,
+                              ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         _wait_mmr_routing(context, port, psql)
         for index, (title, expected, sql, predicate) in enumerate(self.actions, 1):

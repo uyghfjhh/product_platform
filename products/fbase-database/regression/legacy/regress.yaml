@@ -3,6 +3,13 @@ postgres:
   home: ${PGHOME}
   # setup 会将 license 复制到每个数据库目录下。
   license_file: /home/postgres/license/license.dat
+  # fdd_mmr 转测文档 SQL 资源根（contrib 源码目录），可用 FBASE_CONTRIB_ROOT 覆盖。
+  contrib_root: /home/postgres/fly_dev/postgresql_for_fbase_dev/contrib
+
+# 隔离实例数据目录前缀（可用 FBASE_REGRESS_TMP_ROOT 覆盖）。
+tmp_root: /tmp/fbase_regress
+# 本机回环地址（可用 FBASE_LOCAL_HOST 覆盖）。
+local_host: 127.0.0.1
 
 clusters:
   mac:

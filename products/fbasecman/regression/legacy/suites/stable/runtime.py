@@ -24,6 +24,7 @@ from suites.stable.config import StableConfig, render_fbasecman_config
 from suites.stable.manifest import WORKLOADS, find_workload
 from suites.stable.state import StateStore
 from suites.stable.lifecycle import transition_status
+import fbasecman_ops as ops
 
 
 class StableFailure(RuntimeError):
@@ -34,7 +35,7 @@ def _port_free(port):
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("127.0.0.1", int(port)))
+        sock.bind((ops.LOCAL_HOST, int(port)))
         return True
     except OSError:
         return False
@@ -296,8 +297,8 @@ def pg_log_window_script(postgres_dir, port, user, since, label):
     """
     return """set -eu
 PG={pg}/bin/psql
-data_dir=$($PG -h 127.0.0.1 -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h 127.0.0.1 -p {port} -U {user} -d postgres -At -c 'show log_directory')
+data_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show data_directory')
+log_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show log_directory')
 case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
 run_start=$(date -d '@{since}' '+%Y-%m-%d %H:%M:%S')
 printf 'NODE={label} PORT={port} DATA_DIR=%s LOG_DIR=%s RUN_START=%s\\n' \"$data_dir\" \"$log_dir\" \"$run_start\"
@@ -326,8 +327,8 @@ def pg_log_archive_script(postgres_dir, port, user, since, label):
     """Build a remote archive command that never moves PostgreSQL's open log."""
     return """set -eu
 PG={pg}/bin/psql
-data_dir=$($PG -h 127.0.0.1 -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h 127.0.0.1 -p {port} -U {user} -d postgres -At -c 'show log_directory')
+data_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show data_directory')
+log_dir=$($PG -h ops.LOCAL_HOST -p {port} -U {user} -d postgres -At -c 'show log_directory')
 case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
 archive_dir=\"$log_dir/stable_archive\"
 mkdir -p \"$archive_dir\"
@@ -513,7 +514,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
 
     def _console_reload(self):
         command = build_psql_command(
-            self.cfg.runtime_config.config["local"]["postgres_dir"], "127.0.0.1", self.main_port,
+            self.cfg.runtime_config.config["local"]["postgres_dir"], ops.LOCAL_HOST, self.main_port,
             "admin", "console", "RELOAD;", footer=False)
         result = run_logged_command(
             command, self.logs / "fbasecman.reload.log", cwd=self.run_dir,
@@ -558,7 +559,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
             for attempt in range(attempts):
                 marker = "stable_route_%s_%d" % (workload.name.replace(".", "_"), attempt + 1)
                 command = build_psql_command(
-                    postgres_dir, "127.0.0.1", port, user, database,
+                    postgres_dir, ops.LOCAL_HOST, port, user, database,
                     sql, footer=False)
                 env = os.environ.copy()
                 env["PGAPPNAME"] = marker
@@ -629,7 +630,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
         port = self.write_port if workload.port_kind == "write" else self.main_port
         sql_path = self._render_pgbench_sql(workload)
         command = [str(postgres / "bin" / "pgbench"), "-n", "-P", "5",
-                   "-h", "127.0.0.1", "-p", str(port), "-U", workload.user,
+                   "-h", ops.LOCAL_HOST, "-p", str(port), "-U", workload.user,
                    "-d", workload.database, "-f", str(sql_path),
                    "-c", str(workload.clients), "-j", str(workload.jobs)]
         if workload.connect_per_transaction:
@@ -642,7 +643,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
                             "pgbench" / "run_reload_stress.sh"),
                 str(self.cfg.duration("pgbench")), str(values["interval_seconds"]),
                 str(self.conf), str(values["datasource"]),
-                str(postgres / "bin" / "psql"), "127.0.0.1", str(self.main_port),
+                str(postgres / "bin" / "psql"), ops.LOCAL_HOST, str(self.main_port),
             ] + command
         if workload.name.startswith("pgbench.ha_"):
             command.extend(("-t", "1"))
@@ -701,7 +702,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
         command = self._jdbc_command() if workload.kind == "jdbc" else self._pgbench_command(workload)
         env = os.environ.copy()
         if workload.kind == "jdbc":
-            env.update({"JDBC_URL": "jdbc:postgresql://127.0.0.1:%s/mmrhint" % self.main_port,
+            env.update({"JDBC_URL": "jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/mmrhint" % self.main_port,
                         "JDBC_USER": "mmrhint", "JDBC_PASSWORD": "", "JDBC_PREPARE_THRESHOLD": "1",
                         "JDBC_DIR": str(self.root / self.cfg.runtime_config.config["local"]["jdbc_lib_dir"])})
         process = start_background(command, cwd=self.run_dir, env=env, output_path=log)
@@ -1105,7 +1106,8 @@ def scan_logs(run_dir, product_log=None):
 
 def core_files(root, since=0):
     result = []
-    for directory in (Path(root), Path("/home/postgres/corefile")):
+    for directory in (Path(root),
+                      Path(os.environ.get("FBCMAN_CORE_DIR", "/home/postgres/corefile"))):
         if directory.exists():
             for pattern in ("core*", "*.core"):
                 result.extend(path for path in directory.glob(pattern) if path.is_file() and path.stat().st_mtime >= since)

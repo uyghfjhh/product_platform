@@ -5,6 +5,8 @@ Shared environment persistence, topology validation, and task execution remain
 platform services; this module owns product-specific request shapes and URLs.
 """
 
+import os
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -22,8 +24,12 @@ from products.fbasecman.reports.artifacts import (
 class ProfileInput(BaseModel):
     mmr1_port: int = Field(default=15011, ge=1024, le=65500)
     # This is a path on the target database host, never the platform checkout.
-    data_root: str = Field(default="/home/postgres/fbasecman_regress_v2_mmr")
-    license_file: str = Field(default="/home/postgres/license/license.dat")
+    data_root: str = Field(
+        default_factory=lambda: os.environ.get(
+            "FBCMAN_DATA_ROOT", "/home/postgres/fbasecman_regress_v2_mmr"))
+    license_file: str = Field(
+        default_factory=lambda: os.environ.get(
+            "FBCMAN_LICENSE_FILE", "/home/postgres/license/license.dat"))
 
 
 def create_router(settings, store) -> APIRouter:

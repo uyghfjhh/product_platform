@@ -19,6 +19,9 @@ import yaml
 
 def _find_psql_bin() -> str:
     """定位系统中可用的 psql 可执行程序。"""
+    override = os.environ.get("FBCMAN_PSQL_BIN")
+    if override and os.path.isfile(override):
+        return override
     bin_path = shutil.which("psql")
     if bin_path:
         return bin_path

@@ -70,9 +70,9 @@ product_platform/
 │   ├── components/                 #   TaskDrawer/LogViewer/ThreeTopologyView 等
 │   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
 ├── products/                       # 每个产品一个代码目录
-│   ├── fbase-database/             # FBase 适配、CLI、用例和 regression/legacy
+│   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
 │   └── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/legacy
-├── tests/                          # 平台自身测试(228 项 pytest)
+├── tests/                          # 平台自身测试(249 项 pytest)
 ├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
 │   ├── platform/                   # SQLite、队列、锁、操作/Web 日志
 │   ├── environments/               # profile、fixture 上下文、回归证据
@@ -86,11 +86,10 @@ product_platform/
 
 ```bash
 .venv/bin/python -m pytest tests/
-(cd products/fbase-database/regression/legacy && ../../../../.venv/bin/python -m unittest discover -s unit_tests -t .)
 (cd frontend && npm run build)
 ```
 
-全量验证 = 平台测试 + 两套回归框架单测 + 前端构建 + `git diff --check`。
+全量验证 = 平台测试 + 前端构建 + `git diff --check`。
 
 - 脚本向下兼容探测虚拟环境与 python3.12→3.8;业务夹具用系统 `psql` 管道,避免驱动冲突。
 - 前端改动需在 `frontend/` 执行 `npm run build`,产物输出 `frontend/dist/` 由 FastAPI 静态托管。

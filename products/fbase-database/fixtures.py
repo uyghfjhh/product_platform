@@ -10,6 +10,7 @@ setup failures, and cleanup callbacks keep the legacy priority ordering
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -36,7 +37,15 @@ class OperationError(RuntimeError):
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _GUC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
-TMP_PREFIX = "/tmp/fbase_regress_"
+TMP_PREFIX = os.environ.get("FBASE_REGRESS_TMP_PREFIX", "/tmp/fbase_regress_")
+
+def _env(context, key, default):
+    """Read an environment-overridable literal injected by the provider."""
+    env = getattr(context, "environment", None) or {}
+    value = env.get(key)
+    return value if value not in (None, "") else default
+
+
 
 
 def _identifier(value):
@@ -158,7 +167,7 @@ def query_value(context, node, database, sql, timeout=5):
     completed = runner_run(context, [
         binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1", "-A", "-t",
         "-h", str(endpoint["host"]), "-p", str(endpoint["port"]),
-        "-U", "postgres", "-d", database, "-c", sql,
+        "-U", _env(context, "user", "postgres"), "-d", database, "-c", sql,
     ], check=True, timeout=timeout)
     lines = completed.stdout.strip().splitlines()
     return lines[-1].strip() if lines else ""
@@ -168,7 +177,7 @@ def session_psql(context, port, statement, timeout=60):
     """Execute SQL against a disposable session node without node selectors."""
     return runner_run(context, [
         binary(context, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
-        "-h", "127.0.0.1", "-p", str(port), "-U", "postgres",
+        "-h", _env(context, "local_host", "127.0.0.1"), "-p", str(port), "-U", _env(context, "user", "postgres"),
         "-d", "postgres", "-c", statement], timeout=timeout)
 
 
@@ -202,7 +211,7 @@ def inspect_setting_configuration(context, node, name):
         "format('%%s = %%L', name, setting) AS configuration, "
         "applied, COALESCE(error, '') AS error "
         "FROM pg_file_settings WHERE name = '%s' ORDER BY seqno" % name)
-    result = postgres_execute(context, node, "postgres", "postgres", sql,
+    result = postgres_execute(context, node, _env(context, "user", "postgres"), "postgres", sql,
                               structured=True)
     return {
         "sql": sql,
@@ -219,7 +228,7 @@ def check_setting(context, node, spec):
         raise OperationError("非法 PostgreSQL 参数名: %s" % name)
     configuration = inspect_setting_configuration(context, node, name)
     sql = "SHOW %s" % name
-    result = postgres_execute(context, node, "postgres", "postgres", sql,
+    result = postgres_execute(context, node, _env(context, "user", "postgres"), "postgres", sql,
                               structured=True)
     actual = (result.rows[0][0] if result.returncode == 0 and
               len(result.rows) == 1 and len(result.rows[0]) == 1
@@ -349,7 +358,7 @@ def node_status_row(context, name):
     else:
         completed = runner_run(context, [
             binary(context, "pg_isready"), "-h", host, "-p", str(port),
-            "-d", "postgres", "-U", "postgres", "-t", "2",
+            "-d", "postgres", "-U", _env(context, "user", "postgres"), "-t", "2",
         ], check=False)
         process_state = "running" if completed.returncode == 0 else "stopped"
         if process_state == "running":
@@ -626,7 +635,7 @@ def _node_running_guard(context, definition, options):
         endpoint = context.node_endpoint(node)
         ready = runner_run(
             context, [binary(context, "pg_isready"), "-h", str(endpoint["host"]),
-                      "-p", str(endpoint["port"]), "-d", "postgres", "-U", "postgres"],
+                      "-p", str(endpoint["port"]), "-d", "postgres", "-U", _env(context, "user", "postgres")],
             check=False, timeout=10)
         if ready.returncode != 0:
             pg_ctl(context, node, "stop_immediate", check=False)
@@ -678,7 +687,7 @@ def _mmr_node_source_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "UPDATE fdd.mmr_node SET source_node_id=%s WHERE node_id=%s" %
             (original, node_id))
 
@@ -709,7 +718,7 @@ def _mmr_node_state_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "UPDATE fdd.mmr_node SET node_state = %s::fdd.mmr_node_state "
             "WHERE node_id = %s" % (_literal(state), node_id))
 
@@ -741,7 +750,7 @@ def _mmr_check_node_conf_empty(context, definition, options):
         for node in nodes:
             try:
                 postgres_checked(
-                    context, node, "postgres", database,
+                    context, node, _env(context, "user", "postgres"), database,
                     "TRUNCATE TABLE fdd.mmr_check_node_conf")
             except Exception as exc:
                 errors.append("%s: %s" % (node, exc))
@@ -772,7 +781,7 @@ def _mmr_node_failover_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "SELECT fdd.alter_node_failover(%s, %s, false)" %
             (_literal(node_name), state))
 
@@ -810,7 +819,7 @@ def _mmr_global_failover_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, controller, "postgres", database,
+            context, controller, _env(context, "user", "postgres"), database,
             "SELECT fdd.alter_node_failover(%s, %s, true)" %
             (_literal(node_name), expected_state))
 
@@ -846,12 +855,12 @@ def _mmr_streaming_parallel_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, controller, "postgres", database,
+            context, controller, _env(context, "user", "postgres"), database,
             "SELECT fdd.alter_node_info('streaming', %s, 'parallel', true)" %
             _literal(node_name))
         for node in nodes:
             postgres_checked(
-                context, node, "postgres", database,
+                context, node, _env(context, "user", "postgres"), database,
                 "DO $$ DECLARE item record; BEGIN "
                 "FOR item IN SELECT subname FROM pg_subscription "
                 "WHERE subname LIKE 'fmmr_%%' LOOP "
@@ -893,13 +902,13 @@ def _mmr_streaming_mode(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, controller, "postgres", database,
+            context, controller, _env(context, "user", "postgres"), database,
             "SELECT fdd.alter_node_info('streaming', %s, %s, true)" %
             (_literal(node_name), _literal(original)))
 
     defer(context, "恢复 MMR streaming=%s" % original, cleanup, priority=150)
     postgres_checked(
-        context, controller, "postgres", database,
+        context, controller, _env(context, "user", "postgres"), database,
         "SELECT fdd.alter_node_info('streaming', %s, %s, true)" %
         (_literal(node_name), _literal(mode)))
 
@@ -926,7 +935,7 @@ def _mmr_subscriptions_enabled_guard(context, definition, options):
             (node, metadata, runtime, expected))
 
     def cleanup():
-        postgres_checked(context, node, "postgres", database,
+        postgres_checked(context, node, _env(context, "user", "postgres"), database,
                          "SELECT fdd.alter_subscription_enable()")
 
     defer(context, "恢复本节点全部 MMR 订阅为 enabled", cleanup, priority=150)
@@ -957,7 +966,7 @@ def _mmr_replication_sets_empty(context, definition, options):
                     % _literal(name))
                 if exists != "0":
                     postgres_checked(
-                        context, controller, "postgres", database,
+                        context, controller, _env(context, "user", "postgres"), database,
                         "SELECT fdd.drop_replication_set(%s)" % _literal(name))
             except Exception as exc:
                 errors.append("%s: %s" % (name, exc))
@@ -996,7 +1005,7 @@ def _mmr_replication_set_table_bindings(context, definition, options):
                     "SELECT (to_regclass('public.%s') IS NOT NULL)::text" % table)
                 if set_exists == "true" and table_exists == "true":
                     postgres_checked(
-                        context, node, "postgres", database,
+                        context, node, _env(context, "user", "postgres"), database,
                         "SELECT fdd.replication_set_remove_table('public.%s'::regclass,%s,true)"
                         % (_identifier(table), _literal(set_name)))
             except Exception as exc:
@@ -1019,10 +1028,10 @@ def _mmr_sub_repsets_guard(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "SELECT fdd.alter_node_replication_sets(%s::text[])" % original)
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "SELECT fdd.check_and_adjust_sub_repsets(%s::text[])" % original)
 
     defer(context, "恢复本节点订阅复制集", cleanup, priority=200)
@@ -1058,7 +1067,7 @@ def _mmr_async_set_mode_recovery(context, definition, options):
         for node in nodes:
             try:
                 postgres_checked(
-                    context, node, "postgres", database,
+                    context, node, _env(context, "user", "postgres"), database,
                     "SELECT fdd.check_async_record()")
             except Exception as exc:
                 errors.append("%s: %s" % (node, exc))
@@ -1099,7 +1108,7 @@ def _mmr_remote_sql_tables(context, definition, options):
             for name, quoted_name in tables:
                 try:
                     postgres_checked(
-                        context, node, "postgres", database,
+                        context, node, _env(context, "user", "postgres"), database,
                         "DROP TABLE IF EXISTS public.%s" % quoted_name)
                 except Exception as exc:
                     errors.append("%s.%s: %s" % (node, name, exc))
@@ -1150,23 +1159,23 @@ def _mmr_global_sequence_probe(context, definition, options):
                     "WHERE seq_name = %s::regclass)::text" % _literal(regclass_name))
                 if metadata_exists == "true":
                     postgres_checked(
-                        context, controller, "postgres", database,
+                        context, controller, _env(context, "user", "postgres"), database,
                         "SELECT fdd.delete_global_seq(%s::regclass, true, true)" %
                         _literal(regclass_name))
             else:
                 for node in nodes:
                     postgres_checked(
-                        context, node, "postgres", database,
+                        context, node, _env(context, "user", "postgres"), database,
                         "DROP SEQUENCE IF EXISTS %s.%s" % (quoted_schema, quoted_name))
                     postgres_checked(
-                        context, node, "postgres", database,
+                        context, node, _env(context, "user", "postgres"), database,
                         "SELECT fdd.clean_invalid_global_seq()")
         except Exception as exc:
             errors.append("删除全局序列元数据: %s" % exc)
         for node in nodes:
             try:
                 postgres_checked(
-                    context, node, "postgres", database,
+                    context, node, _env(context, "user", "postgres"), database,
                     "DROP SEQUENCE IF EXISTS %s.%s" % (quoted_schema, quoted_name))
             except Exception as exc:
                 errors.append("%s.%s: %s" % (node, name, exc))
@@ -1224,7 +1233,7 @@ def _mmr_schemas_empty(context, definition, options):
             for schema, quoted_schema in quoted_schemas:
                 try:
                     postgres_checked(
-                        context, node, "postgres", database,
+                        context, node, _env(context, "user", "postgres"), database,
                         "DROP SCHEMA IF EXISTS %s CASCADE" % quoted_schema)
                 except Exception as exc:
                     errors.append("%s.%s: %s" % (node, schema, exc))
@@ -1258,7 +1267,7 @@ def _system_clock(context, definition, options):
 
 def _shared_mmr_conflict_topology(context, definition, options):
     """Create one reusable non-2PC streaming-conflict MMR topology per run."""
-    root = Path(options.get("data_dir", "/tmp/fbase_regress_mmr_conflict_session"))
+    root = Path(options.get("data_dir", TMP_PREFIX + "mmr_conflict_session"))
     source_port = str(options.get("source_port", "15651"))
     target_port = str(options.get("target_port", "15652"))
     if not str(root).startswith(TMP_PREFIX):
@@ -1272,9 +1281,9 @@ def _shared_mmr_conflict_topology(context, definition, options):
 
     def init_node(data_dir, port, debug_mode):
         runner_run(context, [
-            binary(context, "initdb"), "-D", str(data_dir), "-U", "postgres",
+            binary(context, "initdb"), "-D", str(data_dir), "-U", _env(context, "user", "postgres"),
             "--auth-local=trust", "--auth-host=trust"], timeout=40)
-        license_file = Path("/home/postgres/license/license.dat")
+        license_file = Path(_env(context, "license_file", "/home/postgres/license/license.dat"))
         if not license_file.is_file():
             raise SafetyError("缺少共享 MMR 会话 license 文件: %s" % license_file)
         shutil.copy2(str(license_file), str(data_dir / "license.dat"))
@@ -1286,7 +1295,7 @@ def _shared_mmr_conflict_topology(context, definition, options):
             stream.write("max_replication_slots = 10\nmax_wal_senders = 10\n")
             stream.write("debug_logical_replication_streaming = '%s'\n" % debug_mode)
             stream.write("logical_decoding_work_mem = '64kB'\n")
-            stream.write("listen_addresses = '127.0.0.1'\nport = %s\n" % port)
+            stream.write("listen_addresses = '" + _env(context, "local_host", "127.0.0.1") + "'\nport = %s\n" % port)
         isolated._release_port(context, port)
         runner_run(context, [
             binary(context, "pg_ctl"), "-D", str(data_dir), "-l",
@@ -1304,13 +1313,13 @@ def _shared_mmr_conflict_topology(context, definition, options):
                      "CREATE TABLE public.streaming_join_probe(id int PRIMARY KEY)")
         session_psql(context, source_port,
                      "SELECT fdd.create_node('node134', "
-                     "'host=127.0.0.1 port=%s user=postgres dbname=postgres',true,'parallel',false)" % source_port)
+                     "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',false)" % source_port)
         session_psql(context, source_port, "SELECT fdd.create_group('g1')")
         session_psql(context, target_port,
                      "SELECT fdd.create_node('node135', "
-                     "'host=127.0.0.1 port=%s user=postgres dbname=postgres',true,'parallel',true)" % target_port)
+                     "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',true)" % target_port)
         session_psql(context, target_port,
-                     "SELECT fdd.join_group('g1','host=127.0.0.1 port=%s user=postgres dbname=postgres',true,'all','table_exist_error')" % source_port,
+                     "SELECT fdd.join_group('g1','host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'all','table_exist_error')" % source_port,
                      timeout=90)
     except Exception:
         for data_dir in (target, source):
@@ -1400,7 +1409,7 @@ def _mmr_forwarding_objects(context, definition, options):
     table = options.get("table")
     subscription = options.get("subscription")
     all_nodes = bool(options.get("all_nodes", False))
-    data_dir = Path(options.get("data_dir", "/tmp/fbase_regress_mmr_forward"))
+    data_dir = Path(options.get("data_dir", TMP_PREFIX + "mmr_forward"))
     for label, value in (("table", table), ("subscription", subscription)):
         if not _IDENTIFIER.match(value or ""):
             raise ConfigError("mmr_forwarding_objects 的 %s 非法: %s" % (label, value))
@@ -1417,21 +1426,21 @@ def _mmr_forwarding_objects(context, definition, options):
         errors = []
         try:
             postgres_checked(
-                context, source, "postgres", "postgres",
+                context, source, _env(context, "user", "postgres"), "postgres",
                 "SELECT fdd.alter_forward_subs((SELECT sub_id FROM fdd.mmr_subscription "
                 "WHERE origin_node_id=2 AND target_node_id=1), NULL)")
         except Exception as exc:
             errors.append("清空 MMR 普通订阅转发配置: %s" % exc)
         try:
             postgres_checked(
-                context, target, "postgres", "postgres",
+                context, target, _env(context, "user", "postgres"), "postgres",
                 "DROP SUBSCRIPTION IF EXISTS %s" % _identifier(subscription))
         except Exception as exc:
             errors.append("删除普通订阅: %s" % exc)
         if all_nodes:
             try:
                 postgres_checked(
-                    context, source, "postgres", "postgres",
+                    context, source, _env(context, "user", "postgres"), "postgres",
                     "SELECT fdd.run_on_all_nodes(%s)" % _literal(
                         "DROP TABLE IF EXISTS public.%s" % _identifier(table)))
             except Exception as exc:
@@ -1440,7 +1449,7 @@ def _mmr_forwarding_objects(context, definition, options):
             for node in (source, target):
                 try:
                     postgres_checked(
-                        context, node, "postgres", "postgres",
+                        context, node, _env(context, "user", "postgres"), "postgres",
                         "DROP TABLE IF EXISTS public.%s" % _identifier(table))
                 except Exception as exc:
                     errors.append("删除 %s 上测试表: %s" % (node, exc))
@@ -1478,7 +1487,7 @@ def _logical_slot(context, definition, options):
             _literal(name))
         if exists != "0":
             postgres_checked(
-                context, node, "postgres", "postgres",
+                context, node, _env(context, "user", "postgres"), "postgres",
                 "SELECT pg_drop_replication_slot(%s)" % _literal(name))
 
     defer(context, "删除逻辑复制槽 %s" % name, cleanup, priority=80)
@@ -1504,16 +1513,16 @@ def _logical_replication_objects(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, target, "postgres", database,
+            context, target, _env(context, "user", "postgres"), database,
             "DROP SUBSCRIPTION IF EXISTS %s" % _identifier(values["subscription"]))
         postgres_checked(
-            context, source, "postgres", database,
+            context, source, _env(context, "user", "postgres"), database,
             "DROP PUBLICATION IF EXISTS %s" % _identifier(values["publication"]))
         postgres_checked(
-            context, target, "postgres", database,
+            context, target, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % target_ref)
         postgres_checked(
-            context, source, "postgres", database,
+            context, source, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % source_ref)
 
     defer(context, "删除专属普通逻辑复制对象", cleanup, priority=200)
@@ -1542,24 +1551,24 @@ def _failover_delay_objects(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, subscriber, "postgres", database,
+            context, subscriber, _env(context, "user", "postgres"), database,
             "DROP SUBSCRIPTION IF EXISTS %s" % _identifier(subscription))
         exists = postgres_scalar(
             context, primary, database,
             "SELECT count(*) FROM pg_replication_slots WHERE slot_name = %s" %
-            _literal(slot), user="postgres")
+            _literal(slot), user=_env(context, "user", "postgres"))
         if exists != "0":
             postgres_checked(
-                context, primary, "postgres", database,
+                context, primary, _env(context, "user", "postgres"), database,
                 "SELECT pg_drop_replication_slot(%s)" % _literal(slot))
         postgres_checked(
-            context, primary, "postgres", database,
+            context, primary, _env(context, "user", "postgres"), database,
             "DROP PUBLICATION IF EXISTS %s" % _identifier(publication))
         postgres_checked(
-            context, subscriber, "postgres", database,
+            context, subscriber, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % target_ref)
         postgres_checked(
-            context, primary, "postgres", database,
+            context, primary, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % source_ref)
 
     defer(context, "删除故障转移槽延迟提交测试对象", cleanup, priority=200)
@@ -1577,11 +1586,11 @@ def _hba_password_auth(context, definition, options):
     path = Path(str(endpoint["data_dir"])) / "pg_hba.conf"
     original = path.read_text(encoding="utf-8")
     rule = ("# fbase_regress temporary password-auth rule for %s\n"
-            "host all %s 127.0.0.1/32 password\n"
+            "host all %s " + _env(context, "local_host", "127.0.0.1") + "/32 password\n"
             "host all %s ::1/128 password\n") % (role, role, role)
 
     def reload_hba():
-        postgres_checked(context, node, "postgres", "postgres",
+        postgres_checked(context, node, _env(context, "user", "postgres"), "postgres",
                          "SELECT pg_reload_conf()")
 
     def cleanup():
@@ -1615,7 +1624,7 @@ def _roles(context, definition, options):
 
         def cleanup(role_name=name, node_name=node, db=database):
             postgres_checked(
-                context, node_name, "postgres", db,
+                context, node_name, _env(context, "user", "postgres"), db,
                 "DROP ROLE IF EXISTS %s" % _identifier(role_name))
         defer(context, "删除角色 %s" % name, cleanup, priority=cleanup_priority)
         if setup:
@@ -1625,7 +1634,7 @@ def _roles(context, definition, options):
                 sql = "CREATE ROLE %s %s" % (_identifier(name), attributes)
             if password is not None:
                 sql += " PASSWORD %s" % _literal(password)
-            postgres_checked(context, node, "postgres", database, sql)
+            postgres_checked(context, node, _env(context, "user", "postgres"), database, sql)
 
 
 def _database(context, definition, options):
@@ -1641,11 +1650,11 @@ def _database(context, definition, options):
             sql += " ENCODING %s" % _literal(options["encoding"])
         if options.get("locale"):
             sql += " LOCALE %s" % _literal(options["locale"])
-        postgres_checked(context, node, "postgres", "postgres", sql)
+        postgres_checked(context, node, _env(context, "user", "postgres"), "postgres", sql)
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", "postgres",
+            context, node, _env(context, "user", "postgres"), "postgres",
             "DROP DATABASE IF EXISTS %s WITH (FORCE)" % _identifier(name))
     defer(context, "删除数据库 %s" % name, cleanup)
 
@@ -1662,7 +1671,7 @@ def _table(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % table_ref)
     defer(context, "删除测试表 %s" % name, cleanup,
           priority=options.get("cleanup_priority", 0))
@@ -1670,7 +1679,7 @@ def _table(context, definition, options):
     if options.get("setup", True):
         columns = options.get("columns", "id integer PRIMARY KEY")
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "CREATE TABLE %s (%s)" % (table_ref, columns))
 
 
@@ -1686,14 +1695,14 @@ def _sequence(context, definition, options):
 
     def cleanup():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "DROP SEQUENCE IF EXISTS %s" % sequence_ref)
     defer(context, "删除测试序列 %s" % name, cleanup,
           priority=options.get("cleanup_priority", 0))
 
     if options.get("setup", True):
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "CREATE SEQUENCE %s" % sequence_ref)
 
 
@@ -1708,7 +1717,7 @@ def _table_grants(context, definition, options):
     table_ref = "%s.%s" % (_identifier(schema), _identifier(table))
     for role, privileges in (options.get("grants") or {}).items():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "GRANT %s ON %s TO %s" % (privileges, table_ref, _identifier(role)))
 
 
@@ -1757,7 +1766,7 @@ def _mac_policy(context, definition, options):
 
     def drop_table():
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "DROP TABLE IF EXISTS %s" % table_ref)
 
     def drop_policy():
@@ -1792,7 +1801,7 @@ def _mac_policy(context, definition, options):
         return
     if create_table:
         postgres_checked(
-            context, node, "postgres", database,
+            context, node, _env(context, "user", "postgres"), database,
             "CREATE TABLE %s (%s)" % (table_ref, table_columns))
     postgres_checked(
         context, node, "sso", database,
@@ -1825,7 +1834,7 @@ def _settings(context, definition, options):
     selectors = options.get("nodes") or [options.get("node", "primary")]
     values = options.get("values") or {}
     action = options.get("apply", "reload")
-    user = options.get("user", "postgres")
+    user = options.get("user") or _env(context, "user", "postgres")
     setup = options.get("setup", True)
     restore_runtime_value = options.get("restore_runtime_value", False)
     if action not in ("reload", "restart"):
@@ -1854,7 +1863,7 @@ def _settings(context, definition, options):
             if old == "__FBASE_REGRESS_EMPTY_SETTING__":
                 old = ""
             auto_result = postgres_execute(
-                context, node, "postgres", "postgres",
+                context, node, _env(context, "user", "postgres"), "postgres",
                 "SELECT setting FROM pg_file_settings "
                 "WHERE name = %s AND sourcefile LIKE '%%/postgresql.auto.conf' "
                 "ORDER BY seqno DESC LIMIT 1" % _literal(name), structured=True)

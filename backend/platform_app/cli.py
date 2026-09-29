@@ -41,7 +41,7 @@ def main() -> int:
         for product_id in sorted(discover_products(settings.products_root)):
             checks.append(
                 ("%s regress" % product_id,
-                 settings.product_regress_root(product_id), "run.sh")
+                 settings.product_regress_root(product_id), "regress.yaml")
             )
         for name, root, script in checks:
             print("%s: %s" % (name, "可用" if (root / script).is_file() else "未找到"))

@@ -8,6 +8,12 @@
 不再直接持有 runtime 实例。
 """
 
+import os
+
+# fbasecman 由平台在本机拉起，console/psql 一律连接本机回环；
+# 如需改绑（容器/远程调试）用环境变量覆盖。
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
+
 _current_runtime = None
 
 
