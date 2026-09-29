@@ -29,18 +29,6 @@ def runtime():
     return _current_runtime
 
 
-def ensure_bound(candidate):
-    """若当前无绑定则把 ``candidate`` 绑为运行时（诊断入口兼容）。
-
-    平台路径下 RuntimeBinding 在 executor 调用前已 bind 运行时；legacy
-    诊断入口（``suite.py`` 等）直接以 runtime 为实参调 executor 时，
-    首行调用本函数即可让 ``ops.*`` 转发落到该 runtime。
-    """
-    global _current_runtime
-    if _current_runtime is None:
-        _current_runtime = candidate
-
-
 def __getattr__(name):
     rt = _current_runtime
     if rt is None:

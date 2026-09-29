@@ -11,7 +11,7 @@
 | fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 161 PASS + 2 FAIL + 2 BLOCKED | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
 | fbasecman | 212（144 平台宿主 executor + 68 native） | 平台引擎 + 平台 SDK 原生用例；144 条经 `RuntimeExecutorCase`/`_GlobalCachePlatformCase` 宿主，`LegacySuiteCase`/`SuiteNativeCase` 已删除 | 见 §4.3 分套件 | **144 条 executor 已完成 `rt.*`→`ops.*`/`context` 形态改写**（`def case_x(context)` + `fbasecman_ops` PEP 562 转发 facade，`context_executor` 钩子）；runtime 构造注入 resolver `env`/`context_data`，不再自行 legacy 加载；四套件真机批跑 137 PASS / 1 flaky（core_19 复跑 PASS）；native 覆盖 common 4、sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18 |
 
-**唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。`run.py`/`run.sh`/`tools/cli.py` 保留为 vendored 人工诊断入口（env/doctor/show/test），不在平台运行路径上。
+**唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。vendored 诊断入口已物理删除：`run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`run_case`、`suites/registry.py`、vendored `unit_tests/` 与 legacy 树内重复的 `products/fbasecman/` 副本全部移除；`products/fbasecman/cli/run.sh` 收敛为 `platform_case.py` 薄壳；`products/fbasecman/regression/run.py` 保留 `--check-profile`（target 存在性改查 `catalog.json`，不再依赖 registry）。
 
 ## 2. 平台已具备的回归能力（`backend/platform_regress/`）
 
@@ -114,17 +114,17 @@
 ### C. 环境事项
 
 - cman-lab MMR 环境已归位（复制家族全绿）；`qa_case.orders` 等套件自建表在套件生命周期内管理，不算环境基线。
-- `regress.local.yaml` 符号链接到 cman-lab override——独立 `run.sh` 用；平台路径由 `_EXTRA_CONFIGS` 注入，不依赖该链接。
+- `regress.local.yaml` 符号链接到 cman-lab override——vendored `run.sh` 已删除，该链接仅为历史兼容残留；平台路径由 `_EXTRA_CONFIGS` 注入，不依赖该链接。
 - ~~fbasecman 二进制版本固定问题~~（2026-09-28 完成）——`deployment/fixture.py` 生成 `test_context.yaml` 时写入 `binaries` 段：fbasecman 本地二进制与远端 PostgreSQL 二进制各记录 `path`/`sha256`/`size`/`mtime`（远端经 SSH `stat`+`sha256sum` 采集），与 `group_uuid`/`role_passwords`/`system_identifiers`/`ciphertexts` 并存。验证见 `tests/test_fixture_fingerprint.py`（4 项）。
 
 ### D. 收尾（design.md §12 P2 未完成项）
 
 - **迁移完成口径以 design.md §5.0.1 为准**：平台 SDK 缺能力时直接补平台公共契约；产品只保留配置、协议、专属 fixture 与业务断言；行为保真但不保留旧结构。`SuiteNativeCase`、`LegacySuiteCase`、suite `run_case`、旧 Runtime/runner 依赖全部删除前，不得宣称 SDK 原生迁移完成。
 - cman 用例逐步从 `run_case` 壳迁到声明式/半声明式：已完成 common 4 条的平台 SDK 原生宿主，步骤、列清单、并发规模、错误注入、quantiles 与 worker 生命周期判定按参考工程保留；`CaseContext.stop_processes()` 支持同一用例切换配置前停止旧实例。本轮自动验证通过，因环境切换后缺少 CLI 所需部署配置，尚待在真实 cman 环境逐条复跑。
-- 剩余 144 条状态（本轮推进）：平台执行路径已**不再经过** suite `run_case`/`run_cases`/`run_runtime_case`——判定、teardown 顺序、锁与证据桥接全部由 `RuntimeExecutorCase`（ha_commands 60、high_availability 10、handover 56）和 `_GlobalCachePlatformCase`（global_cache 18，复刻 `_run_case` 两段式判定含 core 检测）承载；套件失败类型基类上收为平台 `CaseFailure`→FAIL，verdict 与 legacy 逐条等价；handover 套件锁改为逐用例 `__enter__/__exit__`；runtime 初始化失败保留 legacy init `report.txt`；`run_root` 继续落在 `env.output_dir`（Web UI 契约不变），`_finalize_run` 把 report/summary/steps/日志镜像进平台证据面。修复一处真实缺陷：`set_legacy_config_loader` 此前绑定未包装 loader，runtime `__init__` 内部 env 加载不吃环境 override。**本轮续推（dispatch 去耦）**：三套件的 `EXECUTORS` 注册表与 global_cache 的组合执行层（`_execute_started_case`/`_case_phase`/`_collect_phase_checks`/`_execute_*` 场景编排/`STARTED_CASE_EXECUTORS`/`SPECIAL_CASE_EXECUTORS`/`_execute_case`）迁入各套件独立 `dispatch.py`；`runtime_cases.py` resolver 改为直读 `suites.X.manifest`/`dispatch`/`executors`/`runtime` 模块，`cases.py` catalog 构建绕过 registry/plugin——平台路径（`platform_regress.cli` + `products.fbasecman.cases` + resolver）经子进程 sys.modules 守卫测试证明不加载 `suites.*.suite`、`platform_regress.suites.runner`、`suites.registry`、`suites.*.plugin`。vendored `suite.py`/`run_case`/`run()` 仅保留为 `run.sh` 人工诊断入口与 vendored 单测 patch 面（design §5.0.1 允许历史入口保留）。**executor 形态改写已完成（2026-09-29 收尾）**：144 个 executor 已从 `def case_x(rt)` 批量改写为 `def case_x(context)` + `ops.*` 调用（`fbasecman_ops` PEP 562 转发 facade），`RuntimeBinding.context_executor` 钩子承载 `(context, runtime)` 分发，runtime 构造注入 resolver `env`/`context_data` 不再自行 legacy 加载；vendored runtime 方法库（record_step/write_report/journal/进程编排的产品语义）按 §5.0.1.3 属产品知识原地保留，其内部通用原语已全部走平台件。四套件真机批跑 137 PASS / 1 flaky FAIL（core_19 收敛竞争，单跑 PASS）。
-- `run.py`/`tools/cli.py`/`run.sh` 退役进展（2026-09-28）：
-  - `products/fbasecman/regression/run.py` 收缩为纯 `--check-profile` 校验工具，case 执行循环已删（平台 `platform_regress.cli` 是唯一执行入口）。
-  - `products/fbasecman/regression/legacy/tools/cli.py` `do_run` 增加 deprecation 警告；`legacy/run.sh` 头注标明仅保留 env/doctor/show/test 人工诊断入口。
+- 剩余 144 条状态（本轮推进）：平台执行路径已**不再经过** suite `run_case`/`run_cases`/`run_runtime_case`——判定、teardown 顺序、锁与证据桥接全部由 `RuntimeExecutorCase`（ha_commands 60、high_availability 10、handover 56）和 `_GlobalCachePlatformCase`（global_cache 18，复刻 `_run_case` 两段式判定含 core 检测）承载；套件失败类型基类上收为平台 `CaseFailure`→FAIL，verdict 与 legacy 逐条等价；handover 套件锁改为逐用例 `__enter__/__exit__`；runtime 初始化失败保留 legacy init `report.txt`；`run_root` 继续落在 `env.output_dir`（Web UI 契约不变），`_finalize_run` 把 report/summary/steps/日志镜像进平台证据面。修复一处真实缺陷：`set_legacy_config_loader` 此前绑定未包装 loader，runtime `__init__` 内部 env 加载不吃环境 override。**本轮续推（dispatch 去耦）**：三套件的 `EXECUTORS` 注册表与 global_cache 的组合执行层（`_execute_started_case`/`_case_phase`/`_collect_phase_checks`/`_execute_*` 场景编排/`STARTED_CASE_EXECUTORS`/`SPECIAL_CASE_EXECUTORS`/`_execute_case`）迁入各套件独立 `dispatch.py`；`runtime_cases.py` resolver 改为直读 `suites.X.manifest`/`dispatch`/`executors`/`runtime` 模块，`cases.py` catalog 构建绕过 registry/plugin——平台路径（`platform_regress.cli` + `products.fbasecman.cases` + resolver）经子进程 sys.modules 守卫测试证明不加载 `suites.*.suite`、`platform_regress.suites.runner`、`suites.registry`、`suites.*.plugin`。vendored `suite.py`/`run_case`/`run()`/`plugin.py`/`registry.py` 已随诊断入口退役物理删除（2026-09-29 清理批次）。**executor 形态改写已完成（2026-09-29 收尾）**：144 个 executor 已从 `def case_x(rt)` 批量改写为 `def case_x(context)` + `ops.*` 调用（`fbasecman_ops` PEP 562 转发 facade），`RuntimeBinding.context_executor` 钩子承载 `(context, runtime)` 分发，runtime 构造注入 resolver `env`/`context_data` 不再自行 legacy 加载；vendored runtime 方法库（record_step/write_report/journal/进程编排的产品语义）按 §5.0.1.3 属产品知识原地保留，其内部通用原语已全部走平台件。四套件真机批跑 137 PASS / 1 flaky FAIL（core_19 收敛竞争，单跑 PASS）。
+- `run.py`/`tools/cli.py`/`run.sh` 退役进展（2026-09-28 收缩，2026-09-29 物理删除）：
+  - `products/fbasecman/regression/run.py` 保留 `--check-profile` 校验（target 存在性改查 `catalog.json`，不再 import `suites.registry`）。
+  - `legacy/run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`case.py`、`suites/registry.py`、vendored `unit_tests/`（259 项）、legacy 树内重复 `products/fbasecman/` 包（2713 行）、零引用的 `env/`（1204 行，依赖早已不存在的 `framework.*`）、`tests/`、`output/`、一次性迁移脚本 `export_legacy_catalog.py` 全部删除；`tools/` 仅留 `web_reports.py`（平台报告解析仍经它）与 stable 工具链；`cli/run.sh` 收敛为 `platform_case.py` 薄壳。
   - `products/fbase-database/provider.py` 的 `all`/子 suite 前缀 target 改走 `platform_regress.cli --suite`，平台链路不再直接调用 `run.sh`。
   - **`LegacyFbaseCase` 已删除**（D1，228 条 CASES 全为原生类型，兜底差集为空，提交 45f08f9）——`fbase-database/regression/legacy/run.sh` 失去最后一个平台运行时调用方，现为 vendored `unit_tests/test_cli.py` 的 patch 目标与人工入口，随单测迁移一并退役。
   - **fbasecman `framework/` shim 已物理删除**（提交 772e9b3）：全部 `framework.*` import retarget 到 `platform_regress.*`；产品私有胶水并入 `legacy/cmanconf.py`；平台 `runtime.py` 改用 `set_legacy_config_loader()` 注入契约；`tools/architecture.py` 改守 cmanconf 边界。
@@ -136,7 +136,7 @@
 2. 不得把 FAIL/BLOCKED/ERROR 改成 PASS 来凑绿；不得删步骤、松断言、跳过 setup/teardown。
 3. 平台核心不出现产品名分支；产品专属 evaluator/探针/schema 走注册挂点。
 4. 每个结论有证据：result.json + artifacts + events.jsonl 必须能回溯判定依据。
-5. 全量验证门：`pytest tests/`（当前 229）+ fbasecman vendored `unit_tests/`（当前 259）+ FBase vendored `unit_tests/`（当前 149）+ 前端 build + 真实套件抽测。
+5. 全量验证门：`pytest tests/`（当前 249）+ FBase vendored `unit_tests/`（当前 149）+ 前端 build + 真实套件抽测。fbasecman vendored `unit_tests/` 已随诊断入口一并删除（其 patch 面针对已删编排层）。
 6. “已注册到 RegressionEngine”不等于“SDK 原生迁移完成”；覆盖测试必须同时证明无 `SuiteNativeCase`、`LegacySuiteCase`、suite `run_case` 和旧 runner 运行依赖。
 7. 平台缺少通用能力时必须补平台契约，不得为赶进度把通用生命周期、并发、配置、证据或报告逻辑继续堆入产品临时宿主。
 
@@ -145,8 +145,6 @@
 ```bash
 # 平台测试
 .venv/bin/python -m pytest tests/
-# vendored fbasecman 单测
-(cd products/fbasecman/regression/legacy && PYTHONPATH=<repo>:<repo>/backend:. ../../../../.venv/bin/python -m pytest unit_tests/)
 # 平台 cli 单用例/套件/failed
 PYTHONPATH=<repo>:<repo>/backend .venv/bin/python -m platform_regress.cli \
   --product-dir products/fbasecman --output-dir <out> \

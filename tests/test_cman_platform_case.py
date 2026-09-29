@@ -141,8 +141,9 @@ def test_platform_case_path_never_loads_suite_runner_or_run_case():
     """§5.0.1 architecture guard: the modules the platform engine reaches for
     resolving fbasecman cases must not import the legacy suite runner, the
     per-suite ``suite.py`` orchestration modules, the plugin registry, or
-    ``run_case`` — those remain only as manual ``run.sh``/vendored-test entry
-    points.  Run in a subprocess so ``sys.modules`` is pristine."""
+    ``run_case``.  Those entry points were physically deleted; this guard keeps
+    the platform path honest if any of them ever reappears.  Run in a
+    subprocess so ``sys.modules`` is pristine."""
     import subprocess
 
     repo = Path(__file__).parents[1]

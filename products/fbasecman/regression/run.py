@@ -1,12 +1,13 @@
-"""Validate a platform-generated regression override against the legacy catalog.
+"""Validate a platform-generated regression override against the case catalog.
 
 This module is kept solely for ``--check-profile`` verification: it loads the
-product's vendored suite context in an isolated ``sys.path`` and checks
+product's vendored config context in an isolated ``sys.path`` and checks
 that a generated override resolves to a valid configuration and known target.
 Case execution was migrated to ``platform_regress.cli``; this entry point no
 longer runs any test targets.
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -21,11 +22,15 @@ def main() -> int:
     args = parser.parse_args()
     source = args.source.resolve()
     override = args.override.resolve()
-    if not (source / "suites" / "registry.py").is_file() or not override.is_file():
-        parser.error("用例来源或测试配置不存在")
+    catalog_path = Path(__file__).resolve().parent / "catalog.json"
+    if not catalog_path.is_file() or not override.is_file():
+        parser.error("用例目录或测试配置不存在")
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    targets = {item["target"] for item in catalog["cases"]}
+    suite_ids = {item["suite"] for item in catalog["cases"]}
 
-    # The legacy suite still imports product-private modules (cmanconf,
-    # suites.*). Isolate its import path so the platform process stays clean.
+    # cmanconf lives in the vendored tree; isolate its import path so the
+    # platform process stays clean.
     repo_root = Path(__file__).resolve().parents[3]
     for path in (repo_root, repo_root / "backend", source):
         value = str(path)
@@ -43,11 +48,9 @@ def main() -> int:
     cmanconf.load_regression_config = load_with_profile
 
     from cmanconf import validate_profile_isolation
-    from suites.registry import get_default_registry
 
     validate_profile_isolation(load_with_profile(source))
-    registry = get_default_registry()
-    if args.target not in registry.suite_ids() and not registry.selected_targets(args.target):
+    if args.target not in suite_ids and args.target not in targets:
         print("未知测试目标: %s" % args.target, file=sys.stderr)
         return 2
     print("测试配置有效: %s" % args.target)

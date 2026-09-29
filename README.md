@@ -15,7 +15,7 @@
 
 1. **多环境图形化编排(pgcluster 引擎)**:自动规划主从端口、数据目录与复制关系;一键创建/启动/停止/重启/状态/清理/体检/恢复集群;自动初始化角色认证、库表视图、MMR 拓扑与 `test_context.yaml`。
 2. **自动化测试与多环境绑定**:全局切换"当前产品"与"绑定环境";支持单用例、整套件、失败项快速重跑;导出标准 JUnit XML 与 HTML 报告。
-3. **Web 任务链主入口**:`web.sh` Web 控制台默认 8080,后台守护运行;回归目标(单用例/套件/`failed`/`all`)统一经平台 `RegressionEngine` 执行,产物与判定由平台落库。产品 `cli/run.sh` 仅保留人工诊断用途(已标 deprecated)。
+3. **Web 任务链主入口**:`web.sh` Web 控制台默认 8080,后台守护运行;回归目标(单用例/套件/`failed`/`all`)统一经平台 `RegressionEngine` 执行,产物与判定由平台落库。产品 `cli/run.sh` 为平台用例执行的薄壳(等价 `platform_regress.cli`,自动注入环境上下文)。
 4. **License 签发**:Python 重写的生成/下载/密钥管理,兼容既有产品格式,无后台申请队列。
 5. **AI 失败诊断**:证据溯源式诊断,引用不存在的证据即拒绝;AI 不修改确定性判定。
 
@@ -36,9 +36,9 @@
   --product-dir products/fbasecman --output-dir <输出目录> \
   --context-json '<环境上下文 JSON>' [target|--suite <套件>|failed]
 
-# fbasecman 旧 CLI(仅人工诊断,已标 deprecated,不走平台证据链)
+# fbasecman 单用例薄壳(注入环境上下文后调平台引擎)
 cd products/fbasecman
-./cli/run.sh doctor | show | env status        # 环境诊断
+./cli/run.sh --environment cman-mmr ha_commands.set_node_write_in_groups_roundtrip
 ./cli/stable.sh show                           # 常稳命令
 ```
 
@@ -86,7 +86,6 @@ product_platform/
 
 ```bash
 .venv/bin/python -m pytest tests/
-(cd products/fbasecman/regression/legacy && ../../../../.venv/bin/python -m pytest unit_tests/)
 (cd products/fbase-database/regression/legacy && ../../../../.venv/bin/python -m unittest discover -s unit_tests -t .)
 (cd frontend && npm run build)
 ```

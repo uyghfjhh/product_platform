@@ -4,6 +4,8 @@
 - 状态：评审通过 · 最终实施基准
 - 适用范围：`backend/`、`frontend/`、`products/`、CLI 工具链与配置体系
 
+> **变更附注（2026-09-29）**：文中 `./cli/run.sh run|show|doctor|clean|pack|reset|new-case|replay|ab-test|matrix` 等示例描述的是 fbasecman vendored 独立 CLI 的目标形态；该 CLI（`legacy/run.sh` + `tools/cli.py`）已随平台化迁移**物理删除**。当前真实执行面为：`python -m platform_regress.cli --product-dir products/fbasecman`（回归执行）、`products/fbasecman/cli/run.sh --environment <env> <suite.case>`（单用例薄壳）、`./cli/stable.sh`（常稳工具）、Web `/api/v1/operations`（任务入口）。`doctor`/`env`/`show`/`pack`/`reset` 等能力已由平台 deployment.health、report bundle 与 Web 操作覆盖。文中 CLI 交互示例仅作交互设计参考保留。
+
 ---
 
 ## 1. 核心设计原则与哲学转型

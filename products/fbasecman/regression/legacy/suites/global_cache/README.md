@@ -182,17 +182,12 @@ global entry 的引用，但不等于立即删除 global entry。
 | `heartbeat_rule_precedence_over_global` | 用户级 heartbeat 覆盖全局 heartbeat |
 | `same_sql_different_users_isolation` | 同 SQL 在不同用户之间不污染分类和响应 |
 
-查看 manifest：
+用例清单见 `manifest.py`；经平台引擎运行全部或单条：
 
 ```bash
-./run.sh show global_cache
-```
-
-运行全部或单条：
-
-```bash
-./run.sh run global_cache
-./run.sh run global_cache.<case_name>
+python3 -m platform_regress.cli --product-dir products/fbasecman \
+    --output-dir <输出目录> --context-json '<环境 context>' \
+    global_cache[.<case_name>]
 ```
 
 ## 用例实现流程
@@ -273,9 +268,9 @@ heartbeat 优先级以及 `GC_prepared_sql_sequence` 均在关键 SQL 后暂停�
 ### 6. 测试和验收
 
 ```bash
-python3 -m unittest discover -s unit_tests -t . -p 'test_*.py'
-./run.sh run global_cache.<case_name>
-./run.sh run global_cache
+python3 -m platform_regress.cli --product-dir products/fbasecman \
+    --output-dir <输出目录> --context-json '<环境 context>' \
+    global_cache[.<case_name>]
 ```
 
 验收要求：

@@ -268,7 +268,6 @@ SPECIAL_CASE_EXECUTORS = {
 
 
 def _execute_case(context):
-    ops.ensure_bound(context)
     name = ops.case.name
     if name in STARTED_CASE_EXECUTORS:
         runner, assertion = STARTED_CASE_EXECUTORS[name]

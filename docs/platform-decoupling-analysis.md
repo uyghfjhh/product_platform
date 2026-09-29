@@ -72,19 +72,18 @@ fbasecman 144 条 executor 用例已完成 `rt.*`→`ops.*`/`context` 形态迁�
 （`fbasecman_ops` PEP 562 转发 facade + `RuntimeBinding.context_executor`，
 runtime 构造注入 resolver `env`/`context_data`）；产品侧 executor 与 runtime
 方法库按 §5.0.1.3 属产品知识，物理位置保留在 `products/fbasecman/`
-产品包内（`regression/legacy/` 子路径为 vendored 迁移素材与 `run.sh`
-人工诊断入口，非平台运行路径依赖）。当前代码距离“理想终态”只剩下以下
-4 个局部的收尾工作：
+产品包内（`regression/legacy/` 子路径现为纯 vendored 产品知识与资产——
+`run.sh`/`tools/cli.py`/`suite.py`/`plugin.py`/`registry.py`/vendored
+`unit_tests/`/内层重复 `products/` 包/零引用 `env/` 已于 2026-09-29 物理
+删除，非平台运行路径依赖）。当前代码距离“理想终态”只剩下以下
+收尾工作：
 
 ### 3.1 `fbase-database` 的 `framework/` 遗留目录
 - **现状**：`products/fbase-database/regression/legacy/framework/` 仍存在。
 - **原因**：这是因为其同目录下的 vendored `unit_tests/`（149 项单测，如 `test_cli.py`）仍在测试该 framework 的部分类和帮助输出。
 - **待办**：将这部分单测中的 patch 点重定向到平台原生测试后，该目录即可物理删除。
 
-### 3.2 `test_junit.py` 的环境孤儿断言
-- **现状**：`products/fbasecman/regression/legacy/unit_tests/test_junit.py:86` 在运行 `run.sh test` 时报 `AssertionError: 0 not greater than 0`。
-- **原因**：该测试假定了当前本地必须留存历史测试报告产物（`ROOT_DIR / "output" / "runs"`），在干净工作区或清理输出后会误报。
-- **待办**：该单测应改为创建临时 Mock runs 目录进行断言，消除对外部遗留文件的脏依赖。
+### 3.2 ~~`test_junit.py` 的环境孤儿断言~~（已随 vendored `unit_tests/` 删除关闭）
 
 ### 3.3 缺少金标“第三产品”插拔验收测试
 - **现状**：目前只有 `fbasecman` 与 `fbase-database` 两个真实产品。

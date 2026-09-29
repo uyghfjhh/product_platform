@@ -62,7 +62,7 @@ def _environment(context):
     if not override_value or not report_value:
         raise Blocked("缺少当前环境的 fbasecman 测试配置或报告目录")
     override = Path(override_value).resolve()
-    if not (source / "suites" / "registry.py").is_file() or not override.is_file():
+    if not (source / "cmanconf.py").is_file() or not override.is_file():
         raise Blocked("fbasecman 用例来源或环境覆盖配置不存在")
     _EXTRA_CONFIGS[:] = [override]
     _ensure_imports(source)

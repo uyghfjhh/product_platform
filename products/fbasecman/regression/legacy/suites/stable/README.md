@@ -131,7 +131,7 @@ run 的端口重渲染配置后仅执行一次 console `RELOAD;`，不会重启 
 `running/finalizing/completed/failed/degraded/stopping/stopped`；`report` 根据当前 state 生成报告。
 `stop` 仅停止 state 中命令指纹与本次 stable 目录匹配的进程，不停止 PostgreSQL。
 PostgreSQL 的启停和清理使用 `./stable.sh env start|stop|clean`；这些命令只作用于
-stable 的 PGDATA 和 `output/stable/env/`，不调用 `./run.sh env ...`。
+stable 的 PGDATA 和 `output/stable/env/`。
 
 `top` 是无依赖的文本仪表盘，展示运行状态、workload PID/状态、资源采样和 fbasecman
 日志尾部；`--files` 改为展示 fbasecman 打开的常规文件。`tui` 是可选的 Textual 全屏
@@ -233,5 +233,4 @@ tools/stable_cli.py               stable 命令编排
 tools/stable_top.py               实时终端仪表盘
 tools/stable_top_textual.py       Textual 全屏 TUI
 install_stable_top_deps.sh        TUI 可选依赖安装脚本
-unit_tests/suites/stable/         stable 单元与脚本行为测试
 ```

@@ -149,68 +149,6 @@ def case_status_meta(root_dir, suite_name, case_name, target, current_target=Non
     }
 
 
-def discover_suites(root_dir, current_target=None):
-    """通过统一的 SuiteRegistry 发现全部套件与用例，并附带最近一次执行状态。"""
-    from suites.registry import get_default_registry
-
-    suite_definitions = get_default_registry().to_web_definitions()
-
-    result = []
-    for suite in suite_definitions:
-        suite_id = suite["id"]
-        cases = []
-        pass_count = 0
-        fail_count = 0
-        untested_count = 0
-        running_count = 0
-
-        for item in suite["items"]:
-            case_name = getattr(item, "name", str(item))
-            target = getattr(item, "target", f"{suite_id}.{case_name}")
-            core_id = getattr(item, "core_id", None) or ""
-            summary = getattr(item, "summary", "") or getattr(item, "notes", [""])[0] if isinstance(getattr(item, "notes", None), (list, tuple)) and item.notes else ""
-            if not summary:
-                summary = case_name
-
-            status_meta = case_status_meta(root_dir, suite_id, case_name, target, current_target)
-            st = status_meta["status"]
-            if st == "PASS":
-                pass_count += 1
-            elif st == "FAIL":
-                fail_count += 1
-            elif st == "RUNNING":
-                running_count += 1
-            else:
-                untested_count += 1
-
-            cases.append({
-                "id": case_name,
-                "name": case_name,
-                "target": target,
-                "suite": suite_id,
-                "core_id": core_id,
-                "summary": summary,
-                "status": st,
-                "duration": status_meta["duration"],
-                "has_report": status_meta["has_report"],
-                "timestamp": status_meta["timestamp"],
-            })
-
-        result.append({
-            "id": suite_id,
-            "title": suite["title"],
-            "description": suite["description"],
-            "total_cases": len(cases),
-            "pass_count": pass_count,
-            "fail_count": fail_count,
-            "untested_count": untested_count,
-            "running_count": running_count,
-            "cases": cases,
-        })
-
-    return result
-
-
 def build_step_topology_snapshots(
     raw_text: str,
     base_clusters: List[Dict[str, Any]],
