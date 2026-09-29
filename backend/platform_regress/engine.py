@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -175,6 +176,8 @@ class CaseContext:
         self._processes: list[subprocess.Popen] = []
         self._process_handles: dict[int, Any] = {}
         self._process_logs: list[Path] = []
+        self._cancel_suppressed = 0
+        self._ledger: Any = None
         output_dir.mkdir(parents=True, exist_ok=True)
         # The directory contains only the current result. A rerun starts a new
         # event sequence; previous attachments remain unreferenced until pruned.
@@ -185,8 +188,44 @@ class CaseContext:
         return tuple(self._evidence)
 
     def check_cancel(self) -> None:
+        if self._cancel_suppressed:
+            return
         if self._cancelled():
             raise Cancelled("用例已取消")
+
+    @contextlib.contextmanager
+    def suppress_cancellation(self):
+        """Allow restoration commands to run while a run is being cancelled.
+
+        Deferred cleanups and product teardown still need ``context.command``
+        (e.g. ``pg_ctl stop``) after cancellation; without suppression every
+        restoration attempt would raise ``Cancelled`` at its first command and
+        leak the very resources cleanup exists to release.
+        """
+        self._cancel_suppressed += 1
+        try:
+            yield
+        finally:
+            self._cancel_suppressed -= 1
+
+    @property
+    def ledger(self):
+        """Persistent registry of engine-owned external resources.
+
+        Entries outlive the process so a force-killed run's postmasters,
+        listeners and shared memory can be reclaimed by the next run on the
+        same environment.  The ledger root is per-environment:
+        ``<output_dir>/../ledgers``.
+        """
+        if self._ledger is None:
+            from .ledger import ResourceLedger
+            # Prefer the environment-level root recorded by the CLI so suite
+            # runs and single-case runs share one ledger; fall back to the
+            # case output directory's parent when it is not injected.
+            root = (self.environment.get("history_root")
+                    or Path(self.output_dir).resolve().parent)
+            self._ledger = ResourceLedger(Path(root) / "ledgers")
+        return self._ledger
 
     def defer_cleanup(self, action: Callable[[], None], *, priority: int = 0) -> None:
         """Register an idempotent product fixture cleanup action.
@@ -213,7 +252,8 @@ class CaseContext:
         while pending:
             _, _, action = pending.pop()
             try:
-                action()
+                with self.suppress_cancellation():
+                    action()
             except Exception as exc:
                 errors.append(str(exc))
         for index, path in enumerate(self._process_logs, 1):
@@ -810,7 +850,8 @@ class RegressionEngine:
             try:
                 if callable(teardown):
                     context.emit("phase.started", {"phase": "cleanup"})
-                    teardown(context)
+                    with context.suppress_cancellation():
+                        teardown(context)
                     context.emit("phase.finished", {"phase": "cleanup"})
             finally:
                 # Product fixture cleanup must run even if product teardown

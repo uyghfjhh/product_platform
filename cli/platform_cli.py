@@ -296,6 +296,18 @@ def cmd_reset(args) -> int:
     target = args.node or environment.get("deployment_target")
     if not target:
         raise SystemExit("环境未声明 deployment_target，请用 --node 指定")
+    # Postmasters killed without cleanup leave SysV segments behind; a new
+    # postmaster on the same data dir then refuses to start ("pre-existing
+    # shared memory block ... is still in use").  Only creator-dead segments
+    # are removed, so live clusters are never touched.
+    try:
+        from platform_regress.ledger import sweep_orphaned_sysv_shm
+        removed = sweep_orphaned_sysv_shm()
+        if removed:
+            print("[reset] 清除孤儿共享内存段: %s"
+                  % ", ".join(str(item["shmid"]) for item in removed), flush=True)
+    except Exception as exc:
+        print(f"[reset] 共享内存清扫跳过: {exc}", flush=True)
     spec = command_for(settings, environment, "deployment.reset", target, {})
     print(f"[reset] env={environment['id']} target={target}", flush=True)
     return subprocess.run(list(spec.command), cwd=spec.cwd).returncode

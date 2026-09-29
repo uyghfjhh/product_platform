@@ -61,6 +61,9 @@ SUPPORTED_FIXTURES = frozenset(
 
 def setup_fixture(context, definition, name, options):
     """Apply one isolated fixture exactly as the legacy registry did."""
+    # Orderly exits restore everything via deferred cleanups; a force-killed
+    # run cannot, so reclaim resources a dead engine owned before allocating.
+    _sweep_dead_owners(context, definition)
     if name == "isolated_mmr_node_creation":
         _isolated_mmr_node_creation(context, definition, options)
     elif name == "isolated_mmr_daemon":
@@ -140,6 +143,74 @@ def _instances(context, definition):
 def _register_instance(context, port, data_dir):
     instances = context.values.setdefault("isolated_mmr_port_data_dirs", {})
     instances[str(port)] = str(data_dir)
+
+
+def _track_cluster(context, data_dir, port=None):
+    """Ledger-register a disposable cluster so a dead run can be reclaimed."""
+    try:
+        return context.ledger.register(
+            "isolated_cluster", data_dir=str(data_dir), port=port)
+    except Exception:
+        return None
+
+
+def _untrack_cluster(context, entry_id):
+    try:
+        context.ledger.release(entry_id)
+    except Exception:
+        pass
+
+
+def _sweep_dead_owners(context, definition):
+    """Reclaim framework clusters whose owning engine process is gone.
+
+    A run killed with SIGKILL leaves postmasters listening and directories
+    behind.  Any later isolated fixture on this environment sweeps the
+    ledger: stop the postmaster under the framework tmp prefix only, remove
+    the directory, then drop the entry.  Orphaned SysV segments left by dead
+    postmasters are released the same way.
+    """
+    from platform_regress.ledger import sweep_orphaned_sysv_shm
+    try:
+        entries = context.ledger.sweep("isolated_cluster")
+    except Exception:
+        entries = []
+    for entry in entries:
+        data_dir = Path(str(entry.get("data_dir") or ""))
+        if not str(data_dir).startswith(_tmp_prefix(context)):
+            continue
+        clusters = []
+        if (data_dir / "PG_VERSION").is_file():
+            clusters.append(data_dir)
+        for child in data_dir.iterdir() if data_dir.is_dir() else []:
+            if child.is_dir() and (child / "PG_VERSION").is_file():
+                clusters.append(child)
+        if clusters:
+            try:
+                pg_ctl = _binary(context, definition, "pg_ctl")
+            except Exception:
+                pg_ctl = None
+            for cluster in clusters:
+                if pg_ctl:
+                    _run(context, [pg_ctl, "-D", str(cluster),
+                                   "stop", "-m", "immediate"], timeout=30)
+                # A postmaster that ignores pg_ctl still holds its port;
+                # SIGTERM by pid is the bounded fallback for dead-owner dirs.
+                for pid in _cluster_pids(cluster):
+                    try:
+                        os.kill(pid, 15)
+                    except OSError:
+                        pass
+        shutil.rmtree(str(data_dir), ignore_errors=True)
+        try:
+            context.ledger.drop(entry)
+        except Exception:
+            pass
+    try:
+        import pwd
+        sweep_orphaned_sysv_shm(owner=pwd.getpwuid(os.geteuid()).pw_name)
+    except Exception:
+        pass
 
 
 def _declared_ports(context, definition):
@@ -225,6 +296,15 @@ def release_port_for_command(context, definition, argv):
             listener.close()
 
 
+def _cluster_pids(data_dir):
+    """Postmaster pid from postmaster.pid, if the file survives."""
+    try:
+        lines = (Path(data_dir) / "postmaster.pid").read_text().splitlines()
+        return [int(lines[0].strip())] if lines and lines[0].strip().isdigit() else []
+    except (OSError, ValueError):
+        return []
+
+
 def _postgres_data_dir(pid):
     """Read the postmaster data directory without trusting lsof process names."""
     try:
@@ -249,12 +329,28 @@ def _wait_ports_free(context, definition, timeout=10):
     if not ports:
         return
     deadline = time.monotonic() + timeout
+    escalated = False
     while True:
         occupied = {port: _listener_pids(context, port) for port in ports}
         occupied = {port: pids for port, pids in occupied.items() if pids}
         if not occupied:
             return
         if time.monotonic() >= deadline:
+            if not escalated:
+                # pg_ctl -m immediate can return before the postmaster lets go;
+                # SIGTERM framework-owned stragglers once, then re-wait.
+                for pids in occupied.values():
+                    for pid in pids:
+                        data_dir = _postgres_data_dir(pid)
+                        if (data_dir is not None and
+                                str(data_dir).startswith(_tmp_prefix(context))):
+                            try:
+                                os.kill(int(pid), 15)
+                            except OSError:
+                                pass
+                escalated = True
+                deadline = time.monotonic() + 5
+                continue
             details = ", ".join("%s(pid=%s)" % (port, ",".join(pids))
                                 for port, pids in sorted(occupied.items()))
             raise RuntimeError("隔离实例端口在停止后 %ss 仍被监听: %s" % (timeout, details))
@@ -316,6 +412,7 @@ def _isolated_cluster_root(context, definition, options, fixture_name,
     if not str(data_dir).startswith(_tmp_prefix(context)):
         raise ValueError("%s data_dir 必须位于 %s 下" % (fixture_name, _tmp_prefix(context)))
     _remove_stale_cluster_root(context, definition, data_dir)
+    ledger_entries = [_track_cluster(context, data_dir)]
 
     def cleanup():
         clusters = set()
@@ -345,6 +442,8 @@ def _isolated_cluster_root(context, definition, options, fixture_name,
         for cluster in clusters:
             shutil.rmtree(str(cluster), ignore_errors=True)
         shutil.rmtree(str(data_dir), ignore_errors=True)
+        for entry_id in ledger_entries:
+            _untrack_cluster(context, entry_id)
 
     context.defer_cleanup(cleanup, priority=90)
 
@@ -369,11 +468,13 @@ def _isolated_mmr_daemon(context, definition, options):
     _reserve_ports(context, definition, [declared_port])
     allocated_port = context.values["isolated_mmr_port_mapping"][declared_port]
     _register_instance(context, allocated_port, data_dir)
+    entry_id = _track_cluster(context, data_dir, allocated_port)
 
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
                        "stop", "-m", "immediate"], timeout=30)
         shutil.rmtree(str(data_dir), ignore_errors=True)
+        _untrack_cluster(context, entry_id)
 
     context.defer_cleanup(cleanup, priority=300)
 
@@ -384,6 +485,8 @@ def _isolated_password_log(context, definition, options):
     if not str(data_dir).startswith(_tmp_prefix(context)):
         raise ValueError("isolated_password_log data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
+    entry_id = _track_cluster(context, data_dir)
+
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
                        "stop", "-m", "immediate"], timeout=30)
@@ -392,6 +495,7 @@ def _isolated_password_log(context, definition, options):
             if source.is_file():
                 context.attach_file(name, source)
         shutil.rmtree(str(data_dir), ignore_errors=True)
+        _untrack_cluster(context, entry_id)
 
     context.defer_cleanup(cleanup, priority=90)
 
@@ -402,10 +506,13 @@ def _isolated_password_expiry(context, definition, options):
     if not str(data_dir).startswith(_tmp_prefix(context)):
         raise ValueError("isolated_password_expiry data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
+    entry_id = _track_cluster(context, data_dir)
+
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
                        "stop", "-m", "immediate"], timeout=30)
         shutil.rmtree(str(data_dir), ignore_errors=True)
+        _untrack_cluster(context, entry_id)
 
     # Stop the server before system_clock restores host time.
     context.defer_cleanup(cleanup, priority=300)
@@ -418,10 +525,13 @@ def _isolated_tde(context, definition, options):
     if not str(data_dir).startswith(_tmp_prefix(context)):
         raise ValueError("isolated_tde data_dir 必须位于 %s 下" % _tmp_prefix(context))
 
+    entry_id = _track_cluster(context, data_dir)
+
     def cleanup():
         _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
                        "stop", "-m", "immediate"], timeout=30)
         shutil.rmtree(str(data_dir), ignore_errors=True)
+        _untrack_cluster(context, entry_id)
         try:
             key_file.unlink()
         except OSError:

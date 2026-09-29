@@ -1267,6 +1267,7 @@ def _system_clock(context, definition, options):
 
 def _shared_mmr_conflict_topology(context, definition, options):
     """Create one reusable non-2PC streaming-conflict MMR topology per run."""
+    isolated._sweep_dead_owners(context, definition)
     root = Path(options.get("data_dir", TMP_PREFIX + "mmr_conflict_session"))
     source_port = str(options.get("source_port", "15651"))
     target_port = str(options.get("target_port", "15652"))
@@ -1278,6 +1279,8 @@ def _shared_mmr_conflict_topology(context, definition, options):
     isolated._reserve_ports(context, definition, [source_port, target_port])
     mapping = context.values["isolated_mmr_port_mapping"]
     source_port, target_port = mapping[source_port], mapping[target_port]
+    ledger_entries = [isolated._track_cluster(context, source, source_port),
+                      isolated._track_cluster(context, target, target_port)]
 
     def init_node(data_dir, port, debug_mode):
         runner_run(context, [
@@ -1312,14 +1315,14 @@ def _shared_mmr_conflict_topology(context, definition, options):
         session_psql(context, target_port,
                      "CREATE TABLE public.streaming_join_probe(id int PRIMARY KEY)")
         session_psql(context, source_port,
-                     "SELECT fdd.create_node('node134', "
-                     "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',false)" % source_port)
+                     ("SELECT fdd.create_node('node134', "
+                      "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',false)") % source_port)
         session_psql(context, source_port, "SELECT fdd.create_group('g1')")
         session_psql(context, target_port,
-                     "SELECT fdd.create_node('node135', "
-                     "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',true)" % target_port)
+                     ("SELECT fdd.create_node('node135', "
+                      "'host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'parallel',true)") % target_port)
         session_psql(context, target_port,
-                     "SELECT fdd.join_group('g1','host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'all','table_exist_error')" % source_port,
+                     ("SELECT fdd.join_group('g1','host=" + _env(context, "local_host", "127.0.0.1") + " port=%s user=" + _env(context, "user", "postgres") + " dbname=postgres',true,'all','table_exist_error')") % source_port,
                      timeout=90)
     except Exception:
         for data_dir in (target, source):
@@ -1327,6 +1330,8 @@ def _shared_mmr_conflict_topology(context, definition, options):
                 binary(context, "pg_ctl"), "-D", str(data_dir),
                 "stop", "-m", "immediate"], check=False, timeout=30)
         shutil.rmtree(str(root), ignore_errors=True)
+        for entry_id in ledger_entries:
+            isolated._untrack_cluster(context, entry_id)
         raise
 
     def cleanup():
@@ -1335,6 +1340,8 @@ def _shared_mmr_conflict_topology(context, definition, options):
                 binary(context, "pg_ctl"), "-D", str(data_dir),
                 "stop", "-m", "immediate"], check=False, timeout=30)
         shutil.rmtree(str(root), ignore_errors=True)
+        for entry_id in ledger_entries:
+            isolated._untrack_cluster(context, entry_id)
 
     defer(context, "删除共享 streaming 冲突隔离集群", cleanup, priority=300)
 
