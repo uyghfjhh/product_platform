@@ -136,7 +136,7 @@
 2. 不得把 FAIL/BLOCKED/ERROR 改成 PASS 来凑绿；不得删步骤、松断言、跳过 setup/teardown。
 3. 平台核心不出现产品名分支；产品专属 evaluator/探针/schema 走注册挂点。
 4. 每个结论有证据：result.json + artifacts + events.jsonl 必须能回溯判定依据。
-5. 全量验证门：`pytest tests/`（当前 249）+ 前端 build + 真实套件抽测。两套 vendored `unit_tests/` 均已删除（patch 面针对已删编排层/导出后失修）。
+5. 全量验证门：`pytest tests/`（当前 254）+ 前端 build + 真实套件抽测。两套 vendored `unit_tests/` 均已删除（patch 面针对已删编排层/导出后失修）。
 6. “已注册到 RegressionEngine”不等于“SDK 原生迁移完成”；覆盖测试必须同时证明无 `SuiteNativeCase`、`LegacySuiteCase`、suite `run_case` 和旧 runner 运行依赖。
 7. 平台缺少通用能力时必须补平台契约，不得为赶进度把通用生命周期、并发、配置、证据或报告逻辑继续堆入产品临时宿主。
 
