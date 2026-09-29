@@ -67,7 +67,8 @@ def build_bug_bundle(settings, store, environment_id: str,
         }
         archive.writestr("bundle.json",
                          json.dumps(manifest, ensure_ascii=False, indent=2))
-        environment_file = settings.environment_dir / (environment_id + ".yaml")
+        environment_file = (settings.data_dir / "environments"
+                            / (environment_id + ".yaml"))
         if environment_file.is_file():
             archive.write(environment_file, "environment.yaml")
         _add_tree(archive, profile_root, "profile", state)
