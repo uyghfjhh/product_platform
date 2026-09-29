@@ -60,16 +60,17 @@ from suites.global_cache.domains.heartbeat_scenarios import (
     _assert_guc_reset_all_bypass,
     _run_heartbeat_reclassify_case,
 )
+import fbasecman_ops as ops
 
 
-def _execute_started_case(rt, runner, assertion):
-    rt.start_fbasecman()
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    runner(rt)
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
-    assertion(rt, before_state, after_state)
+def _execute_started_case(context, runner, assertion):
+    ops.start_fbasecman()
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    runner(context)
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
+    assertion(context, before_state, after_state)
 
 
 COMPOSITE_PHASE_NAMES = {
@@ -83,155 +84,155 @@ COMPOSITE_PHASE_NAMES = {
 
 
 @contextmanager
-def _case_phase(rt, name, **overrides):
+def _case_phase(context, name, **overrides):
     """Run a sub-scenario with its own asset/config identity inside one report case."""
     if name not in COMPOSITE_PHASE_NAMES:
         raise GlobalCacheFailure("unknown composite phase: %s" % name)
-    original = rt.case
+    original = ops.case
     phase = copy(original)
     phase.name = name
     for key, value in overrides.items():
         setattr(phase, key, value)
-    rt.case = phase
+    ops.case = phase
     try:
         yield
     finally:
-        rt.case = original
+        ops.case = original
 
 
-def _collect_phase_checks(rt, phase_title, action, collected):
-    rt.summary.pop("verification_checks", None)
-    first_step = len(rt.step_records)
+def _collect_phase_checks(context, phase_title, action, collected):
+    ops.summary.pop("verification_checks", None)
+    first_step = len(ops.step_records)
     action()
-    for step in rt.step_records[first_step:]:
+    for step in ops.step_records[first_step:]:
         step["title"] = "%s: %s" % (phase_title, step.get("title", "未命名测试步骤"))
-    for check in rt.summary.pop("verification_checks", []):
+    for check in ops.summary.pop("verification_checks", []):
         item = dict(check)
         item["title"] = "%s: %s" % (phase_title, item.get("title", "未命名检测项"))
         collected.append(item)
 
 
-def _execute_reuse_scenarios(rt):
-    rt.start_fbasecman()
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
+def _execute_reuse_scenarios(context):
+    ops.start_fbasecman()
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
     checks = []
 
     def run_single_connection():
-        _run_jdbc_case(rt)
-        after = rt.capture_console_state("after_single_connection")
-        _assert_basic_reuse(rt, before_state, after)
+        _run_jdbc_case(context)
+        after = ops.capture_console_state("after_single_connection")
+        _assert_basic_reuse(context, before_state, after)
 
     with _case_phase(
-        rt,
+        context,
         "basic_reuse",
         sql={
             "tag": "gc_basic_reuse",
             "statement": "select name from test where id = ? /* gc_basic_reuse */",
         },
     ):
-        _collect_phase_checks(rt, "单连接复用", run_single_connection, checks)
+        _collect_phase_checks(context, "单连接复用", run_single_connection, checks)
 
-    cross_before = rt.capture_console_state("before_cross_client")
+    cross_before = ops.capture_console_state("before_cross_client")
 
     def run_cross_client():
-        _run_jdbc_case(rt)
-        after = rt.capture_console_state("after")
-        rt.summary["after_stats"] = after["stats"]
-        _assert_cross_client_reuse(rt, cross_before, after)
+        _run_jdbc_case(context)
+        after = ops.capture_console_state("after")
+        ops.summary["after_stats"] = after["stats"]
+        _assert_cross_client_reuse(context, cross_before, after)
 
     with _case_phase(
-        rt,
+        context,
         "cross_client_reuse",
         sql={
             "tag": "gc_cross_client_reuse",
             "statement": "select name from test where id = ? /* gc_cross_client_reuse */",
         },
     ):
-        _collect_phase_checks(rt, "跨客户端复用", run_cross_client, checks)
-    rt.summary["verification_checks"] = checks
+        _collect_phase_checks(context, "跨客户端复用", run_cross_client, checks)
+    ops.summary["verification_checks"] = checks
 
 
-def _execute_statement_lifecycle_scenarios(rt):
-    rt.start_fbasecman()
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
+def _execute_statement_lifecycle_scenarios(context):
+    ops.start_fbasecman()
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
     checks = []
 
-    with _case_phase(rt, "unnamed_statement_overwrite_unref"):
+    with _case_phase(context, "unnamed_statement_overwrite_unref"):
         _collect_phase_checks(
-            rt,
+            context,
             "unnamed statement 覆盖",
-            lambda: _run_unnamed_overwrite_case(rt, before_state),
+            lambda: _run_unnamed_overwrite_case(context, before_state),
             checks,
         )
 
-    named_before = rt.capture_console_state("before_named_conflict")
+    named_before = ops.capture_console_state("before_named_conflict")
 
     def run_named_conflict():
-        _run_libpq_case(rt)
-        after = rt.capture_console_state("after_named_conflict")
-        _assert_named_conflict_keeps_old(rt, named_before, after)
+        _run_libpq_case(context)
+        after = ops.capture_console_state("after_named_conflict")
+        _assert_named_conflict_keeps_old(context, named_before, after)
 
-    with _case_phase(rt, "named_conflict_after_global_hit_keeps_old_entry"):
-        _collect_phase_checks(rt, "named statement 冲突", run_named_conflict, checks)
+    with _case_phase(context, "named_conflict_after_global_hit_keeps_old_entry"):
+        _collect_phase_checks(context, "named statement 冲突", run_named_conflict, checks)
 
-    rt.summary["verification_checks"] = checks
+    ops.summary["verification_checks"] = checks
 
 
-def _execute_guc_bypass_scenarios(rt):
-    rt.start_fbasecman()
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
+def _execute_guc_bypass_scenarios(context):
+    ops.start_fbasecman()
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
     checks = []
 
     def run_set_report():
-        _run_guc_set_report_case(rt)
-        after = rt.capture_console_state("after_guc_set")
-        _assert_guc_set_report_bypass(rt, before_state, after)
+        _run_guc_set_report_case(context)
+        after = ops.capture_console_state("after_guc_set")
+        _assert_guc_set_report_bypass(context, before_state, after)
 
-    with _case_phase(rt, "guc_set_report_bypass_response_stable"):
-        _collect_phase_checks(rt, "GUC SET report bypass", run_set_report, checks)
+    with _case_phase(context, "guc_set_report_bypass_response_stable"):
+        _collect_phase_checks(context, "GUC SET report bypass", run_set_report, checks)
 
-    reset_before = rt.capture_console_state("before_guc_reset_all")
+    reset_before = ops.capture_console_state("before_guc_reset_all")
 
     def run_reset_all():
-        _run_guc_reset_all_bypass_case(rt)
-        after = rt.capture_console_state("after")
-        rt.summary["after_stats"] = after["stats"]
-        _assert_guc_reset_all_bypass(rt, reset_before, after)
+        _run_guc_reset_all_bypass_case(context)
+        after = ops.capture_console_state("after")
+        ops.summary["after_stats"] = after["stats"]
+        _assert_guc_reset_all_bypass(context, reset_before, after)
 
-    with _case_phase(rt, "guc_reset_all_bypass"):
-        _collect_phase_checks(rt, "GUC RESET ALL bypass", run_reset_all, checks)
-    rt.summary["verification_checks"] = checks
+    with _case_phase(context, "guc_reset_all_bypass"):
+        _collect_phase_checks(context, "GUC RESET ALL bypass", run_reset_all, checks)
+    ops.summary["verification_checks"] = checks
 
 
-def _execute_global_capacity_reload(rt):
-    _run_capacity_reload_shrink_case(rt)
+def _execute_global_capacity_reload(context):
+    _run_capacity_reload_shrink_case(context)
     try:
-        after_state = rt.capture_console_state("after", include_server=False)
+        after_state = ops.capture_console_state("after", include_server=False)
     except Exception:
-        _collect_capacity_shrink_failure_context(rt)
+        _collect_capacity_shrink_failure_context(context)
         raise
-    rt.summary["after_stats"] = after_state["stats"]
-    before_state = {"global": [], "server": [], "stats": rt.summary.get("before_stats", {})}
-    _assert_capacity_reload_shrink(rt, before_state, after_state)
+    ops.summary["after_stats"] = after_state["stats"]
+    before_state = {"global": [], "server": [], "stats": ops.summary.get("before_stats", {})}
+    _assert_capacity_reload_shrink(context, before_state, after_state)
 
 
-def _execute_close_unref(rt):
-    after_state = _run_close_unref_case(rt)
-    rt.summary["after_stats"] = after_state["stats"]
+def _execute_close_unref(context):
+    after_state = _run_close_unref_case(context)
+    ops.summary["after_stats"] = after_state["stats"]
 
 
-def _execute_shared_disconnect_reuse(rt):
-    after_state = _run_shared_global_entry_disconnect_one_client_reuse_case(rt)
-    rt.summary["after_stats"] = after_state["stats"]
+def _execute_shared_disconnect_reuse(context):
+    after_state = _run_shared_global_entry_disconnect_one_client_reuse_case(context)
+    ops.summary["after_stats"] = after_state["stats"]
 
 
-def _execute_guc_reload(rt):
-    before_reload_state, after_state = _run_guc_reload_toggle_case(rt)
-    rt.summary["after_stats"] = after_state["stats"]
-    _assert_guc_reload_toggle(rt, before_reload_state, after_state)
+def _execute_guc_reload(context):
+    before_reload_state, after_state = _run_guc_reload_toggle_case(context)
+    ops.summary["after_stats"] = after_state["stats"]
+    _assert_guc_reload_toggle(context, before_reload_state, after_state)
 
 
 STARTED_CASE_EXECUTORS = {
@@ -266,16 +267,17 @@ SPECIAL_CASE_EXECUTORS = {
 }
 
 
-def _execute_case(rt):
-    name = rt.case.name
+def _execute_case(context):
+    ops.ensure_bound(context)
+    name = ops.case.name
     if name in STARTED_CASE_EXECUTORS:
         runner, assertion = STARTED_CASE_EXECUTORS[name]
-        _execute_started_case(rt, runner, assertion)
+        _execute_started_case(context, runner, assertion)
     else:
         try:
             executor = SPECIAL_CASE_EXECUTORS[name]
         except KeyError:
-            raise GlobalCacheFailure("%s is not registered in CASE_EXECUTORS" % rt.case.target)
-        executor(rt)
-    _assert_verification_checks_clean(rt)
-    _assert_fbasecman_no_warning_or_error(rt)
+            raise GlobalCacheFailure("%s is not registered in CASE_EXECUTORS" % ops.case.target)
+        executor(context)
+    _assert_verification_checks_clean(context)
+    _assert_fbasecman_no_warning_or_error(context)

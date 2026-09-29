@@ -3,11 +3,12 @@
 from platform_regress.execution.polling import PollTimeout, poll_until
 from suites.global_cache.errors import GlobalCacheFailure
 from suites.global_cache.state import capture_global_cache_state
+import fbasecman_ops as ops
 
 
-def _capture_without_report_steps(rt, prefix):
+def _capture_without_report_steps(context, prefix):
     def query(sql, stem):
-        return rt.console_query(sql, stem, record=False)
+        return ops.console_query(sql, stem, record=False)
     return capture_global_cache_state(query, prefix, include_server=False)
 
 
@@ -18,9 +19,9 @@ def _matching_entries(state, marker):
     ]
 
 
-def wait_target_entries_unref(rt, marker, expected_count, timeout, interval=1.0):
+def wait_target_entries_unref(context, marker, expected_count, timeout, interval=1.0):
     def probe():
-        state = _capture_without_report_steps(rt, "wait_unref")
+        state = _capture_without_report_steps(context, "wait_unref")
         return state, _matching_entries(state, marker)
 
     def accepted(observation):
@@ -40,10 +41,10 @@ def wait_target_entries_unref(rt, marker, expected_count, timeout, interval=1.0)
         )
 
 
-def wait_target_entries_released(rt, marker, timeout, interval=1.0):
+def wait_target_entries_released(context, marker, timeout, interval=1.0):
     """Wait until every surviving target entry is zero-ref or has been evicted."""
     def probe():
-        state = _capture_without_report_steps(rt, "wait_released")
+        state = _capture_without_report_steps(context, "wait_released")
         return state, _matching_entries(state, marker)
 
     def accepted(observation):
@@ -61,18 +62,18 @@ def wait_target_entries_released(rt, marker, timeout, interval=1.0):
         )
 
 
-def wait_capacity_entries_unref(rt, prefix, expected_count, timeout, interval=1.0):
+def wait_capacity_entries_unref(context, prefix, expected_count, timeout, interval=1.0):
     state, matched = wait_target_entries_unref(
-        rt, "%s_" % prefix, expected_count, timeout, interval=interval
+        context, "%s_" % prefix, expected_count, timeout, interval=interval
     )
-    rt.summary["capacity_unref_state"] = state
-    rt.summary["capacity_unref_entries"] = ["|".join(row) for row in matched]
+    ops.summary["capacity_unref_state"] = state
+    ops.summary["capacity_unref_entries"] = ["|".join(row) for row in matched]
     return state
 
 
-def wait_target_entry_absent(rt, marker, timeout, interval=1.0):
+def wait_target_entry_absent(context, marker, timeout, interval=1.0):
     def probe():
-        state = _capture_without_report_steps(rt, "wait_absent")
+        state = _capture_without_report_steps(context, "wait_absent")
         return state, _matching_entries(state, marker)
 
     try:

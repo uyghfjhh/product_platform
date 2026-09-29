@@ -4,11 +4,12 @@ from platform_regress.evidence.assertions import stats_delta as _stats_delta
 from lib.report_utils import render_psql_expanded_from_pipe_text
 from suites.global_cache.result import set_report_blocks as _summary_set_report_blocks
 from suites.global_cache.errors import GlobalCacheFailure
+import fbasecman_ops as ops
 
 
-def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_state, trigger_a_state, trigger_b_state, after_state):
-    capacity_limit = int(rt.case.reload.get("capacity_limit", 3))
-    server_lifetime = int(rt.case.reload.get("server_lifetime", 10))
+def assert_capacity_eviction_zero_ref(context, before_state, active_state, zero_ref_state, trigger_a_state, trigger_b_state, after_state):
+    capacity_limit = int(ops.case.reload.get("capacity_limit", 3))
+    server_lifetime = int(ops.case.reload.get("server_lifetime", 10))
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     active_rows = [
         "|".join(row) for row in active_state["global"]
@@ -38,7 +39,7 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
         "|".join(row) for row in after_state["global"]
         if len(row) >= 2 and "gc_capacity_zero_ref_" in row[1]
     ]
-    log_text = rt.fbasecman_log.read_text(encoding="utf-8", errors="replace")
+    log_text = ops.fbasecman_log.read_text(encoding="utf-8", errors="replace")
     capacity_exceed_lines = [line.strip() for line in log_text.splitlines() if "global ps cache exceeds capacity:" in line]
     eviction_lines = [line.strip() for line in log_text.splitlines() if "evict global prepared statement" in line]
     hold_after_rows = [row for row in matched if "gc_capacity_zero_ref_hold_01" in row]
@@ -46,10 +47,10 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
     trigger_b_after_rows = [row for row in matched if "gc_capacity_zero_ref_trigger_b" in row]
     zero_ref_after_rows = [row for row in matched if "gc_capacity_zero_ref_" in row and "trigger_" not in row and "hold" not in row]
     if not active_rows:
-        rt.record_step("capacity zero-ref 检查失败", output="after_hold 快照里没有看到长连接 SQL `gc_capacity_zero_ref_hold_01`。")
+        ops.record_step("capacity zero-ref 检查失败", output="after_hold 快照里没有看到长连接 SQL `gc_capacity_zero_ref_hold_01`。")
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects active long-connection entry after step 1")
     if len(zero_ref_rows) < max(1, capacity_limit - 1):
-        rt.record_step(
+        ops.record_step(
             "capacity zero-ref 检查失败",
             output="zero_ref_ready 快照里的 zero-ref 普通条目不足：expected>=%s actual=%s\nzero_ref_ready global:\n%s"
             % (
@@ -63,10 +64,10 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
         )
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects at least %s zero-ref ready entries before later trigger pressure, got %s" % (max(1, capacity_limit - 1), len(zero_ref_rows)))
     if after_capacity != capacity_limit:
-        rt.record_step("capacity zero-ref 检查失败", output="after 快照里的 capacity 不符合预期：expected=%s actual=%s" % (capacity_limit, after_capacity))
+        ops.record_step("capacity zero-ref 检查失败", output="after 快照里的 capacity 不符合预期：expected=%s actual=%s" % (capacity_limit, after_capacity))
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects capacity=%s, got %s" % (capacity_limit, after_capacity))
     if after_total > capacity_limit + 1:
-        rt.record_step(
+        ops.record_step(
             "capacity zero-ref 检查失败",
             output="after 快照 total_entries 异常增长：capacity=%s total=%s\nafter global:\n%s"
             % (
@@ -80,10 +81,10 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
         )
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects total_entries not to grow unbounded, got %s" % after_total)
     if len(matched) > capacity_limit + 1:
-        rt.record_step("capacity zero-ref 检查失败", output="after 快照 survivor 数量异常：capacity=%s survivors=%s\nmatched=%s" % (capacity_limit, len(matched), "\n".join(matched)))
+        ops.record_step("capacity zero-ref 检查失败", output="after 快照 survivor 数量异常：capacity=%s survivors=%s\nmatched=%s" % (capacity_limit, len(matched), "\n".join(matched)))
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects limited survivors set, got %s" % len(matched))
     if after_evictions <= before_evictions:
-        rt.record_step("capacity zero-ref 检查失败", output="evictions 没有增长：before=%s after=%s" % (before_evictions, after_evictions))
+        ops.record_step("capacity zero-ref 检查失败", output="evictions 没有增长：before=%s after=%s" % (before_evictions, after_evictions))
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects evictions to increase, before=%s after=%s" % (before_evictions, after_evictions))
     if trigger_a_total > capacity_limit and trigger_a_unref > 0:
         raise GlobalCacheFailure(
@@ -96,15 +97,15 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
             % (trigger_b_total, capacity_limit, trigger_b_unref)
         )
     if not hold_after_rows:
-        rt.record_step("capacity zero-ref 检查失败", output="after 快照里长连接 SQL `gc_capacity_zero_ref_hold_01` 消失了，说明 active entry 被错误淘汰。")
+        ops.record_step("capacity zero-ref 检查失败", output="after 快照里长连接 SQL `gc_capacity_zero_ref_hold_01` 消失了，说明 active entry 被错误淘汰。")
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects long-connection entry to survive trigger pressure")
     if not trigger_a_rows:
-        rt.record_step("capacity zero-ref 检查失败", output="after_trigger_a 快照缺失，无法证明第一次 trigger 后的容量收敛行为。")
+        ops.record_step("capacity zero-ref 检查失败", output="after_trigger_a 快照缺失，无法证明第一次 trigger 后的容量收敛行为。")
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects trigger_a stage snapshot to be captured")
     if not trigger_b_rows:
-        rt.record_step("capacity zero-ref 检查失败", output="after_trigger_b 快照缺失，无法证明第二次 trigger 后的容量收敛行为。")
+        ops.record_step("capacity zero-ref 检查失败", output="after_trigger_b 快照缺失，无法证明第二次 trigger 后的容量收敛行为。")
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects trigger_b stage snapshot to be captured")
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "active_rows": list(active_rows),
         "zero_ref_rows": list(zero_ref_rows),
         "trigger_a_rows": list(trigger_a_rows),
@@ -119,10 +120,10 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
         "eviction_lines": list(eviction_lines),
         "server_lifetime": server_lifetime,
     }
-    rt.summary["stats_delta"] = delta
-    rt.summary["matched_global"] = matched
+    ops.summary["stats_delta"] = delta
+    ops.summary["matched_global"] = matched
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "长连接持续保留；未被提前淘汰的短连接 entries 进入 zero-ref 候选池",
@@ -157,7 +158,7 @@ def assert_capacity_eviction_zero_ref(rt, before_state, active_state, zero_ref_s
     )
 
 
-def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(rt, before_state, heartbeat_state, guc_report_state, discard_state, zero_ref_ready_state, after_state):
+def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(context, before_state, heartbeat_state, guc_report_state, discard_state, zero_ref_ready_state, after_state):
     heartbeat_rows = ["|".join(row) for row in heartbeat_state["global"] if len(row) >= 2 and "SELECT 124" in row[1]]
     report_rows = ["|".join(row) for row in guc_report_state["global"] if len(row) >= 2 and "gc_capacity_fused_report" in row[1]]
     discard_rows = ["|".join(row) for row in discard_state["global"] if len(row) >= 2 and row[1].strip().upper() == "DISCARD ALL"]
@@ -178,28 +179,28 @@ def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(rt, before_state
     unreferenced = int(after_state["stats"].get("unreferenced_entries", "0") or "0")
 
     if not heartbeat_rows or not report_rows or not discard_rows:
-        rt.record_step(
+        ops.record_step(
             "fused 容量检查失败",
             output="保护条目初始化不完整：heartbeat=%s report=%s discard=%s" % (bool(heartbeat_rows), bool(report_rows), bool(discard_rows)),
         )
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects heartbeat/report/discard entries before pressure")
     if not heartbeat_after:
-        rt.record_step("fused 容量检查失败", output="after 快照里 HEARTBEAT entry 消失了，说明错误淘汰了 has_bypass_response=1 的 heartbeat 条目。")
+        ops.record_step("fused 容量检查失败", output="after 快照里 HEARTBEAT entry 消失了，说明错误淘汰了 has_bypass_response=1 的 heartbeat 条目。")
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects HEARTBEAT to remain after pressure")
     if not report_after:
-        rt.record_step("fused 容量检查失败", output="after 快照里 GUC_SET_REPORT entry 消失了，说明错误淘汰了 has_bypass_response=1 的 report 条目。")
+        ops.record_step("fused 容量检查失败", output="after 快照里 GUC_SET_REPORT entry 消失了，说明错误淘汰了 has_bypass_response=1 的 report 条目。")
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects GUC_SET_REPORT to remain after pressure")
     if discard_after:
-        rt.record_step("fused 容量检查失败", output="after 快照里仍保留 DISCARD ALL：\n%s" % "\n".join(discard_after))
+        ops.record_step("fused 容量检查失败", output="after 快照里仍保留 DISCARD ALL：\n%s" % "\n".join(discard_after))
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects DISCARD ALL to be evicted after pressure")
     if zero_ref_after:
-        rt.record_step("fused 容量检查失败", output="after 快照里仍保留普通 zero-ref SQL：\n%s" % "\n".join(zero_ref_after))
+        ops.record_step("fused 容量检查失败", output="after 快照里仍保留普通 zero-ref SQL：\n%s" % "\n".join(zero_ref_after))
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects ordinary zero-ref rows to be evicted after pressure")
     if not trigger_after:
-        rt.record_step("fused 容量检查失败", output="after 快照里没有 active trigger row，说明最后留下来的不是预期的 active trigger 条目。")
+        ops.record_step("fused 容量检查失败", output="after 快照里没有 active trigger row，说明最后留下来的不是预期的 active trigger 条目。")
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects active trigger row to remain after pressure")
     if total_entries > capacity + 1:
-        rt.record_step(
+        ops.record_step(
             "fused 容量检查失败",
             output=(
                 "after 总数超出允许范围：expected_total<=capacity+1=%s actual_total=%s capacity=%s\n"
@@ -216,10 +217,10 @@ def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(rt, before_state
         )
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage expects total_entries not to exceed capacity+1, got total=%s capacity=%s" % (total_entries, capacity))
     if unreferenced < 0:
-        rt.record_step("fused 容量检查失败", output="after 仍残留 unreferenced_entries=%s，说明候选池没有被消耗干净。" % unreferenced)
+        ops.record_step("fused 容量检查失败", output="after 仍残留 unreferenced_entries=%s，说明候选池没有被消耗干净。" % unreferenced)
         raise GlobalCacheFailure("capacity_mixed_bypass_response_and_zero_ref_shortage got invalid unreferenced_entries=%s" % unreferenced)
 
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "heartbeat_row": heartbeat_rows[0],
         "report_row": report_rows[0],
         "discard_row": discard_rows[0],
@@ -230,7 +231,7 @@ def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(rt, before_state
         "unreferenced": unreferenced,
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "保护条目与可淘汰条目都已进入容量场景",
@@ -280,9 +281,9 @@ def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(rt, before_state
     )
 
 
-def assert_ref_count_protects_active_entries(rt, before_state, after_state):
-    capacity_limit = int(rt.case.reload.get("capacity_limit", 2))
-    active_count = int(rt.case.reload.get("active_count", 4))
+def assert_ref_count_protects_active_entries(context, before_state, after_state):
+    capacity_limit = int(ops.case.reload.get("capacity_limit", 2))
+    active_count = int(ops.case.reload.get("active_count", 4))
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     total_entries = int(after_state["stats"].get("total_entries", "0") or "0")
     referenced_entries = int(after_state["stats"].get("referenced_entries", "0") or "0")
@@ -299,7 +300,7 @@ def assert_ref_count_protects_active_entries(rt, before_state, after_state):
         raise GlobalCacheFailure("ref_count_protects_active_entries expects total_entries>=%s, got %s" % (active_count, total_entries))
     if len(matched) < active_count:
         raise GlobalCacheFailure("ref_count_protects_active_entries expects %s active matched entries, got %s" % (active_count, len(matched)))
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "capacity": capacity,
         "total_entries": total_entries,
         "referenced_entries": referenced_entries,
@@ -307,10 +308,10 @@ def assert_ref_count_protects_active_entries(rt, before_state, after_state):
         "matched_entries": list(matched),
         "matched_count": len(matched),
     }
-    rt.summary["stats_delta"] = delta
-    rt.summary["matched_global"] = matched
+    ops.summary["stats_delta"] = delta
+    ops.summary["matched_global"] = matched
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "4 条 active prepared statement 都成功执行",

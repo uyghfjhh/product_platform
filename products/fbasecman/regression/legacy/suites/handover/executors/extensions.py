@@ -6,38 +6,39 @@ from pathlib import Path
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess
 from suites.handover.runtime import HandoverFailure
+import fbasecman_ops as ops
 
 
-def execute_heartbeat_interception(rt):
+def execute_heartbeat_interception(context):
     """11.1、探活功能：探活 SQL 拦截且绝对不发送至 PostgreSQL"""
     # 配置文件中已设置 heartbeat_request "select 12"
-    rt.start(heartbeat_request="select 12")
+    ops.start(heartbeat_request="select 12")
 
     # 1. 发送精确探活 SQL
-    rc, out_hb, proxy_log, pg_log = rt.psql(
+    rc, out_hb, proxy_log, pg_log = ops.psql(
         "select 12;",
         title="11.1: 发送精确匹配的探活语句 'select 12;'",
         collect_logs=True,
     )
     # 验证客户端收到返回 1
-    rt.check("探活请求直接返回成功", "输出包含 1", out_hb.strip(), "1" in out_hb)
+    ops.check("探活请求直接返回成功", "输出包含 1", out_hb.strip(), "1" in out_hb)
     # 验证代理日志中记录了拦截
-    rt.assert_proxy_log_pattern(r"(heartbeat|intercepted)", title="验证代理日志捕获心跳拦截记录")
+    ops.assert_proxy_log_pattern(r"(heartbeat|intercepted)", title="验证代理日志捕获心跳拦截记录")
     # 强校验：PostgreSQL 日志中绝对没有 select 12
-    rt.assert_pg_log_pattern_absent(r"statement:\s*select\s+12\b", title="强校验：PostgreSQL 日志绝对无探活语句执行记录")
+    ops.assert_pg_log_pattern_absent(r"statement:\s*select\s+12\b", title="强校验：PostgreSQL 日志绝对无探活语句执行记录")
 
     # 2. 发送普通业务 SQL "select 22;"
-    rc, out_normal, _, _ = rt.psql(
+    rc, out_normal, _, _ = ops.psql(
         "select 22;",
         title="11.1: 发送普通业务语句 'select 22;' (不应被拦截)",
         collect_logs=True,
     )
-    rt.check("普通业务语句正常返回", "输出包含 22", out_normal.strip(), "22" in out_normal)
+    ops.check("普通业务语句正常返回", "输出包含 22", out_normal.strip(), "22" in out_normal)
 
 
-def execute_guc_sync(rt):
+def execute_guc_sync(context):
     """11.2、GUC 参数感知和动态同步功能"""
-    rt.start()
+    ops.start()
 
     # 1. 设置会话 GUC 参数并验证生效
     statements = [
@@ -57,23 +58,23 @@ def execute_guc_sync(rt):
         "SHOW timezone",
         "DISCARD ALL",
     ]
-    rc, output, proxy_log, _ = rt.psql_script(
+    rc, output, proxy_log, _ = ops.psql_script(
         statements,
         title="11.2: GUC 设置、跨读写连接同步、RESET 与 DISCARD 全流程",
         collect_logs=True,
     )
-    rt.check("GUC 同步保持正确", "SHOW timezone 保持 Asia/Shanghai", output, "Asia/Shanghai" in output)
-    rt.check("GUC search_path 保持正确", "SHOW search_path 保持 public", output, "public" in output)
-    rt.assert_proxy_log_pattern(r"(guc|sync|deploy)", title="验证代理日志记录 GUC 同步动作")
+    ops.check("GUC 同步保持正确", "SHOW timezone 保持 Asia/Shanghai", output, "Asia/Shanghai" in output)
+    ops.check("GUC search_path 保持正确", "SHOW search_path 保持 public", output, "public" in output)
+    ops.assert_proxy_log_pattern(r"(guc|sync|deploy)", title="验证代理日志记录 GUC 同步动作")
 
 
-def execute_attach_optimization(rt):
+def execute_attach_optimization(context):
     """11.3、attach 流程优化：读写切换标签、探活和 GUC 不产生多余后端连接"""
-    rt.start()
+    ops.start()
 
     # 初始连接并记录连接数
-    rt.psql("SELECT 1;", title="建立初始客户端连接")
-    _, out_pools_before, _, _ = rt.console("SHOW POOLS;", "查看初始连接池 sv_active 数量")
+    ops.psql("SELECT 1;", title="建立初始客户端连接")
+    _, out_pools_before, _, _ = ops.console("SHOW POOLS;", "查看初始连接池 sv_active 数量")
     
     # 连续执行读写切换标签、探活和 GUC
     statements = [
@@ -82,16 +83,16 @@ def execute_attach_optimization(rt):
         "SET search_path = public",  # GUC
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
     ]
-    rt.psql_script(statements, title="11.3: 执行读写切换、探活与 GUC 操作", collect_logs=True)
+    ops.psql_script(statements, title="11.3: 执行读写切换、探活与 GUC 操作", collect_logs=True)
 
     # 再次检查连接池数量
-    _, out_pools_after, _, _ = rt.console("SHOW POOLS;", "查看操作后连接池 sv_active 数量")
-    rt.check("连接池连接未异常增加", "连接复用优化生效", out_pools_after, "sv_active" in out_pools_after)
+    _, out_pools_after, _, _ = ops.console("SHOW POOLS;", "查看操作后连接池 sv_active 数量")
+    ops.check("连接池连接未异常增加", "连接复用优化生效", out_pools_after, "sv_active" in out_pools_after)
 
 
-def execute_parse_error_single(rt):
+def execute_parse_error_single(context):
     """11.4.3.1 单 Parse 执行失败后后端缓存清理与连接复用"""
-    rt.start()
+    ops.start()
 
     # 故意构造语法错误的 Prepare/Parse，然后紧跟正确的 Prepare
     statements = [
@@ -100,18 +101,18 @@ def execute_parse_error_single(rt):
         "EXECUTE valid_stmt",
         "DEALLOCATE valid_stmt",
     ]
-    rc, output, proxy_log, _ = rt.psql_script(
+    rc, output, proxy_log, _ = ops.psql_script(
         statements,
         title="11.4.3.1: 单 Parse 失败后继续执行后续 PreparedStatement",
         check_rc=False,
         collect_logs=True,
     )
-    rt.check("后续合法 PreparedStatement 执行成功", "输出包含 1", output, "1" in output)
+    ops.check("后续合法 PreparedStatement 执行成功", "输出包含 1", output, "1" in output)
 
 
-def execute_parse_error_multiple(rt):
+def execute_parse_error_multiple(context):
     """11.4.3.2 多 Parse 序列中某个失败后恢复"""
-    rt.start()
+    ops.start()
 
     statements = [
         "PREPARE stmt_ok1 AS SELECT 10",
@@ -122,22 +123,22 @@ def execute_parse_error_multiple(rt):
         "DEALLOCATE stmt_ok1",
         "DEALLOCATE stmt_ok2",
     ]
-    rc, output, proxy_log, _ = rt.psql_script(
+    rc, output, proxy_log, _ = ops.psql_script(
         statements,
         title="11.4.3.2: 多 Parse 序列中间失败后合法语句正常执行",
         check_rc=False,
         collect_logs=True,
     )
-    rt.check("合法语句 ok1 与 ok2 均成功执行", "包含 10 和 20", output, "10" in output and "20" in output)
+    ops.check("合法语句 ok1 与 ok2 均成功执行", "包含 10 和 20", output, "10" in output and "20" in output)
 
 
-def execute_global_prepared_statements(rt):
+def execute_global_prepared_statements(context):
     """11.5.2 & 11.5.3 PreparedStatements 全局缓存基本功能与读写切换"""
-    rt.start()
+    ops.start()
 
     # 1. 准备初始数据表
-    db = rt.env.config["database"]
-    postgres_dir = Path(rt.env.config["local"]["postgres_dir"])
+    db = ops.env.config["database"]
+    postgres_dir = Path(ops.env.config["local"]["postgres_dir"])
     sql = (
         "DROP TABLE IF EXISTS handover_global_ps; "
         "CREATE TABLE handover_global_ps(id int primary key, note text); "
@@ -146,27 +147,27 @@ def execute_global_prepared_statements(rt):
     for node, port in (("mmr1", db["ports"]["mmr1"]), ("mmr2", db["ports"]["mmr2"])):
         cmd = [str(postgres_dir / "bin" / "psql"), "-h", db["mmr_host"], "-p", str(port),
                "-U", db["mmr_pg_user"], "-d", "postgres", "-c", sql]
-        res = run_logged_command(cmd, rt.logs_dir / ("global_ps_prepare_%s.log" % node), cwd=rt.workdir)
-        rt.record_step("在 %s 准备全局 PreparedStatement 初始数据" % node, command=res.command,
+        res = run_logged_command(cmd, ops.logs_dir / ("global_ps_prepare_%s.log" % node), cwd=ops.workdir)
+        ops.record_step("在 %s 准备全局 PreparedStatement 初始数据" % node, command=res.command,
                        expected="handover_global_ps 含三条初始数据", actual=res.output,
                        result="PASS" if res.returncode == 0 else "FAIL")
         if res.returncode != 0:
             raise HandoverFailure("failed to seed handover_global_ps on %s: %s" % (node, res.output))
 
     # 2. 编译并运行 HandoverGlobalPrepared.java
-    source = rt.root / "suites" / "handover" / "assets" / "jdbc" / "HandoverGlobalPrepared.java"
-    jar = rt.root / rt.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
-    build = rt.workdir / "global_ps_first"
+    source = ops.root / "suites" / "handover" / "assets" / "jdbc" / "HandoverGlobalPrepared.java"
+    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    build = ops.workdir / "global_ps_first"
     build.mkdir(parents=True, exist_ok=True)
     compile_res = run_logged_command(["javac", "-cp", str(jar), "-d", str(build), str(source)],
-                                     rt.logs_dir / "global_ps_first_compile.log", cwd=build)
+                                     ops.logs_dir / "global_ps_first_compile.log", cwd=build)
     if compile_res.returncode != 0:
         raise HandoverFailure("HandoverGlobalPrepared JDBC compile failed: %s" % compile_res.output)
 
-    url = "jdbc:postgresql://127.0.0.1:%s/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended" % rt.listen_port
+    url = "jdbc:postgresql://127.0.0.1:%s/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended" % ops.listen_port
     process = PhasedProcess(
         ["java", "-cp", "%s:%s" % (jar, build), "HandoverGlobalPrepared", url],
-        rt.logs_dir / "global_ps_first_run.log", cwd=build,
+        ops.logs_dir / "global_ps_first_run.log", cwd=build,
     )
 
     phases = ("PREPARED_ROWS", "DEFAULT", "READ_ONLY_ONE", "READ_WRITE_ONE",
@@ -196,12 +197,12 @@ def execute_global_prepared_statements(rt):
     validator = _global_ps_phase_validator(first_run=True, write_port=write_port)
     def observe(phase, marker):
         queries = ("SHOW GLOBAL_PREPARED_STATEMENTS;", "SHOW GLOBAL_PREPARED_STATEMENTS_STATS;")
-        obs = _phase_console_observation(rt, phase, queries, "global_ps_first")
+        obs = _phase_console_observation(context, phase, queries, "global_ps_first")
         obs["jdbc_output"] = without_phase_markers(process.output)
         obs.update(validator(phase, obs))
         return obs
 
-    _, rc, output, _ = rt.observe_jdbc_phases(
+    _, rc, output, _ = ops.observe_jdbc_phases(
         process, source, url, actions, observe, timeout=30, finish_timeout=60,
         collect_logs=False,
     )
@@ -214,33 +215,33 @@ def execute_global_prepared_statements(rt):
                         "READ_WRITE_ONE id=1 note=name1", "READ_ONLY_TWO id=3 note=name3",
                         "READ_WRITE_TWO id=2 note=name2", "BEGIN_READ_ONLY id=3 note=name3",
                         "GLOBAL_PS_SWITCH_OK")
-    rt.check("JDBC PreparedStatement 读写切换结果", "六段查询均返回文档初始数据",
+    ops.check("JDBC PreparedStatement 读写切换结果", "六段查询均返回文档初始数据",
              output, all(marker in output for marker in expected_markers))
 
     read_ports = re.findall(r"(?:READ_ONLY|BEGIN_READ_ONLY)[^\n]*backend_port=(\d+)", output)
     write_ports = re.findall(r"(?:DEFAULT|READ_WRITE)[^\n]*backend_port=(\d+)", output)
-    rt.check("全局缓存读写切换路由正确", "READ ONLY 非写主，READ WRITE 为 %s" % write_port,
+    ops.check("全局缓存读写切换路由正确", "READ ONLY 非写主，READ WRITE 为 %s" % write_port,
              output, bool(read_ports) and all(p != write_port for p in read_ports) and
              bool(write_ports) and all(p == write_port for p in write_ports))
 
     # 4. 控制台全局缓存条目与统计核对
-    _, out_cache, _, _ = rt.console("SHOW GLOBAL_PREPARED_STATEMENTS;", "首次执行后的全局缓存条目", collect_logs=False)
+    _, out_cache, _, _ = ops.console("SHOW GLOBAL_PREPARED_STATEMENTS;", "首次执行后的全局缓存条目", collect_logs=False)
     entries_passed, entries_actual = _validate_global_ps_rows(out_cache, 7, check_final_ref_counts=True)
-    rt.check("首次全局缓存条目符合文档", _global_ps_final_entries_expected(), entries_actual, entries_passed)
+    ops.check("首次全局缓存条目符合文档", _global_ps_final_entries_expected(), entries_actual, entries_passed)
 
-    _, stats_before, _, _ = rt.console("SHOW GLOBAL_PREPARED_STATEMENTS_STATS;", "首次执行后的全局缓存统计", collect_logs=False)
+    _, stats_before, _, _ = ops.console("SHOW GLOBAL_PREPARED_STATEMENTS_STATS;", "首次执行后的全局缓存统计", collect_logs=False)
     stats = _stats_values(stats_before)
     stats_ok = all(stats.get(key) == val for key, val in {
         "total_entries": 7, "referenced_entries": 5, "unreferenced_entries": 2,
         "bypass_entries": 0, "capacity": 10000, "hits": 0, "misses": 7, "evictions": 0,
     }.items())
-    rt.check("首次全局缓存统计符合文档", "total_entries=7, referenced=5, unreferenced=2, misses=7",
+    ops.check("首次全局缓存统计符合文档", "total_entries=7, referenced=5, unreferenced=2, misses=7",
              stats_before.strip(), stats_ok)
 
 
-def execute_global_prepared_special_sql(rt):
+def execute_global_prepared_special_sql(context):
     """11.5.3.2 全局缓存的心跳、GUC 和特殊事务标签"""
-    rt.start()
+    ops.start()
 
     statements = [
         "PREPARE p_guc AS SET search_path = public",
@@ -248,13 +249,13 @@ def execute_global_prepared_special_sql(rt):
         "SHOW search_path",
         "DEALLOCATE p_guc",
     ]
-    rc, output, _, _ = rt.psql_script(statements, title="11.5.3.2: 特殊 SQL 类型全局缓存测试", collect_logs=True)
-    rt.check("特殊 SQL GUC 生效", "包含 public", output, "public" in output)
+    rc, output, _, _ = ops.psql_script(statements, title="11.5.3.2: 特殊 SQL 类型全局缓存测试", collect_logs=True)
+    ops.check("特殊 SQL GUC 生效", "包含 public", output, "public" in output)
 
 
-def execute_global_prepared_eviction(rt):
+def execute_global_prepared_eviction(context):
     """11.5.3.3.1 全局和后端 PreparedStatement 缓存容量超限淘汰"""
-    rt.start()
+    ops.start()
 
     # 准备若干不同的 Prepared Statement
     statements = []
@@ -263,18 +264,18 @@ def execute_global_prepared_eviction(rt):
         statements.append("EXECUTE stmt_%d" % i)
         statements.append("DEALLOCATE stmt_%d" % i)
 
-    rc, output, _, _ = rt.psql_script(statements, title="11.5.3.3.1: 批量执行 PS 触发淘汰机制", collect_logs=True)
-    rt.check("PS 批量执行完成", "执行成功", output, rc == 0)
+    rc, output, _, _ = ops.psql_script(statements, title="11.5.3.3.1: 批量执行 PS 触发淘汰机制", collect_logs=True)
+    ops.check("PS 批量执行完成", "执行成功", output, rc == 0)
 
 
-def execute_global_prepared_bypass_retention(rt):
+def execute_global_prepared_bypass_retention(context):
     """11.5.3.3.2 持有 bypass 响应的全局缓存条目不淘汰"""
-    rt.start()
+    ops.start()
 
     statements = [
         "PREPARE p_bypass AS SELECT 999",
         "EXECUTE p_bypass",
         "DEALLOCATE p_bypass",
     ]
-    rc, output, _, _ = rt.psql_script(statements, title="11.5.3.3.2: bypass 响应条目测试", collect_logs=True)
-    rt.check("bypass 语句执行成功", "包含 999", output, "999" in output)
+    rc, output, _, _ = ops.psql_script(statements, title="11.5.3.3.2: bypass 响应条目测试", collect_logs=True)
+    ops.check("bypass 语句执行成功", "包含 999", output, "999" in output)

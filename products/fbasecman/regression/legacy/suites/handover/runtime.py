@@ -115,13 +115,15 @@ def _relevant_pg_lines(text, sql=None, limit=36):
 
 
 class HandoverRuntime(object):
-    def __init__(self, root, case):
+    def __init__(self, root, case, env=None, context_data=None):
         self.root = Path(root)
         self.case = case
-        self.env = load_regression_config(self.root)
+        self.env = env if env is not None else load_regression_config(self.root)
         if not self.env.test_context_file.exists():
             raise HandoverFailure("missing %s, run ./run.sh env setup first" % self.env.test_context_file)
-        self.context = yaml.safe_load(self.env.test_context_file.read_text(encoding="utf-8")) or {}
+        self.context = (context_data if context_data is not None
+                        else yaml.safe_load(
+                            self.env.test_context_file.read_text(encoding="utf-8")) or {})
         self.run_root = self.env.output_dir / "runs" / "handover" / case.name
         self.workdir = self.run_root / "workdir"
         self.logs_dir = self.run_root / "logs"

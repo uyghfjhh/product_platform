@@ -4,6 +4,7 @@ import re
 import time
 from platform_regress.clients.psql import parse_psql_table, build_psql_command
 from platform_regress.execution.shell import quote_arguments
+import fbasecman_ops as ops
 
 
 def _pgbench_transactions(output):
@@ -123,10 +124,10 @@ def _thread_ratio_actual(records):
     ) or "<无 worker 统计行>"
 
 
-def _wait_for_thread_statistics_profile(rt, timeout_seconds):
+def _wait_for_thread_statistics_profile(context, timeout_seconds):
     """Wait for all clients and the document's 3:2 workload ratio to settle."""
     command = build_psql_command(
-        rt.env.config["local"]["postgres_dir"], "127.0.0.1", rt.listen_port,
+        ops.env.config["local"]["postgres_dir"], "127.0.0.1", ops.listen_port,
         "admin", "console", "SHOW THREAD_STATUS;",
     )
     deadline = time.time() + timeout_seconds
@@ -134,8 +135,8 @@ def _wait_for_thread_statistics_profile(rt, timeout_seconds):
     last_output = ""
     while time.time() < deadline:
         attempt += 1
-        rc, output = rt.run_command(
-            command, rt.logs_dir / ("thread_stats_warmup_%02d.log" % attempt),
+        rc, output = ops.run_command(
+            command, ops.logs_dir / ("thread_stats_warmup_%02d.log" % attempt),
             check=False, record=False,
         )
         last_output = output
@@ -431,18 +432,18 @@ def _global_ps_phase_validator(first_run, write_port):
     return validate
 
 
-def _phase_console_observation(rt, phase, queries, log_prefix):
+def _phase_console_observation(context, phase, queries, log_prefix):
     """Run console queries while a JDBC driver is paused at a phase marker."""
     observations = []
     query_results = {}
     passed = True
     for index, sql in enumerate(queries, 1):
         command = build_psql_command(
-            rt.env.config["local"]["postgres_dir"], "127.0.0.1", rt.listen_port,
+            ops.env.config["local"]["postgres_dir"], "127.0.0.1", ops.listen_port,
             "admin", "console", sql,
         )
-        logfile = rt.logs_dir / ("%s_%s_%02d.log" % (log_prefix, phase.lower(), index))
-        rc, output = rt.run_command(command, logfile, check=False, record=False)
+        logfile = ops.logs_dir / ("%s_%s_%02d.log" % (log_prefix, phase.lower(), index))
+        rc, output = ops.run_command(command, logfile, check=False, record=False)
         query_results[sql] = output
         observations.append(
             "$ %s\n%s" % (quote_arguments(command), output.rstrip() or "<empty>")

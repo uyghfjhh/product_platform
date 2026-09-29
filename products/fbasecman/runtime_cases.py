@@ -187,15 +187,28 @@ def resolve_runtime_binding(context, suite_id, name):
         runtime_type = importlib.import_module(
             "suites.ha_commands.runtime").HaCommandRuntime
         failure_class = runtime_type.failure_class
+        ops = importlib.import_module("fbasecman_ops")
 
-        def executor(runtime):
+        def context_executor(ctx, runtime):
+            ops.bind(runtime)
             try:
-                function = executors[spec.executor]
-            except KeyError:
-                raise failure_class("missing executor %s" % spec.executor)
-            return function(runtime)
+                try:
+                    function = executors[spec.executor]
+                except KeyError:
+                    raise failure_class("missing executor %s" % spec.executor)
+                return function(ctx)
+            finally:
+                ops.unbind()
 
         reason = "命令输入输出及用例声明的配置、日志和运行态证据均符合预期。"
+        return RuntimeBinding(
+            spec,
+            _guarded_factory(env, suite_id, failure_class,
+                             lambda ctx, case: runtime_type(
+                                 source, case, env=env)),
+            None, reason,
+            context_executor=context_executor,
+            finalize=_finalize_run)
     elif suite_id == "high_availability":
         executors = importlib.import_module(
             "suites.high_availability.dispatch").EXECUTORS
@@ -203,20 +216,27 @@ def resolve_runtime_binding(context, suite_id, name):
             "suites.high_availability.runtime").HighAvailabilityRuntime
         failure_class = importlib.import_module(
             "suites.high_availability.runtime").HighAvailabilityFailure
+        ops = importlib.import_module("fbasecman_ops")
 
-        def executor(runtime):
-            function = executors.get(spec.name)
-            if function is None:
-                raise failure_class("Executor for %s not implemented" % spec.name)
-            return function(runtime)
+        def context_executor(ctx, runtime):
+            ops.bind(runtime)
+            try:
+                function = executors.get(spec.name)
+                if function is None:
+                    raise failure_class("Executor for %s not implemented" % spec.name)
+                return function(ctx)
+            finally:
+                ops.unbind()
 
         reason = "%s；报告所列操作均执行成功，全部检测项符合预期。" % spec.summary
         return RuntimeBinding(
             spec,
             _guarded_factory(env, suite_id, failure_class,
-                             lambda ctx, case: runtime_type(source, case)),
-            executor, reason,
+                             lambda ctx, case: runtime_type(
+                                 source, case, env=env)),
+            None, reason,
             on_failure=lambda runtime, exc: runtime.add_failure_diagnostic(exc),
+            context_executor=context_executor,
             finalize=_finalize_run)
     elif suite_id == "handover":
         dispatch_executor = importlib.import_module(
@@ -230,13 +250,17 @@ def resolve_runtime_binding(context, suite_id, name):
         )
         failure_class = importlib.import_module(
             "suites.handover.runtime").HandoverFailure
+        ops = importlib.import_module("fbasecman_ops")
 
-        def executor(runtime):
+        def context_executor(ctx, runtime):
+            ops.bind(runtime)
             try:
-                return dispatch_executor(spec)(runtime)
+                return dispatch_executor(spec)(ctx)
             except KeyError as exc:
                 raise failure_class(
                     "missing executor for %s: %s" % (spec.name, exc)) from exc
+            finally:
+                ops.unbind()
 
         reason = "文档规定的 SQL/JDBC 结果、路由、console 状态和业务统计均满足预期。"
         # Legacy run_case writes the FAIL report while the suite lock is still
@@ -244,9 +268,11 @@ def resolve_runtime_binding(context, suite_id, name):
         return RuntimeBinding(
             spec,
             _guarded_factory(env, suite_id, failure_class,
-                             lambda ctx, case: runtime_type(source, case)),
-            executor, reason,
+                             lambda ctx, case: runtime_type(
+                                 source, case, env=env)),
+            None, reason,
             teardown_before_finish=False,
+            context_executor=context_executor,
             finalize=_finalize_run)
     else:
         raise Blocked("套件 %s 尚未定义平台 RuntimeBinding" % suite_id)
@@ -318,9 +344,11 @@ class _GlobalCachePlatformCase:
         if case.notes:
             rt.trace("notes: %s" % " | ".join(case.notes))
         failure = None
+        ops = importlib.import_module("fbasecman_ops")
+        ops.bind(rt)
         try:
-            self._execute_case(rt)
-            self._assert_negative_logs(rt)
+            self._execute_case(context)
+            self._assert_negative_logs(context)
             rt.summary["status"] = "PASS"
         except Exception as exc:
             failure = exc
@@ -366,6 +394,7 @@ class _GlobalCachePlatformCase:
             rt.write_summary()
             rt.write_report()
             rt.prune_artifacts()
+            ops.unbind()
         passed = rt.summary["status"] == "PASS"
         if passed:
             print("%-55s SUCCESS" % case.target, flush=True)

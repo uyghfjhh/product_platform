@@ -57,19 +57,20 @@ from suites.global_cache.drivers import (
     libpq_prepared_operations as _libpq_prepared_operations,
 )
 from suites.global_cache.paths import asset_path as _global_cache_asset_path
+import fbasecman_ops as ops
 
-def _assert_negative_logs(rt, report_check=False):
-    paths = sorted(rt.logs_dir.glob("*.log")) + [rt.fbasecman_log]
+def _assert_negative_logs(context, report_check=False):
+    paths = sorted(ops.logs_dir.glob("*.log")) + [ops.fbasecman_log]
     found = find_forbidden_log_patterns(paths, NEGATIVE_LOG_PATTERNS)
     if found:
         rendered = ", ".join("%s in %s" % (item["pattern"], item["path"]) for item in found)
         raise GlobalCacheFailure("negative log patterns found: %s" % rendered)
-    rt.summary.setdefault("framework_checks", {})["negative_logs"] = {
+    ops.summary.setdefault("framework_checks", {})["negative_logs"] = {
         "checked_patterns": list(NEGATIVE_LOG_PATTERNS),
         "status": "PASS",
     }
     if report_check:
-        rt.summary["verification_checks"] = [
+        ops.summary["verification_checks"] = [
             {
                 "title": "负向日志模式未出现",
                 "expected": "不出现已知 crash/stale/outstanding 等负向关键字",
@@ -79,22 +80,22 @@ def _assert_negative_logs(rt, report_check=False):
         ]
 
 
-def _assert_fbasecman_no_warning_or_error(rt):
-    if not rt.fbasecman_log.exists():
-        rt.summary["fbasecman_log_level_check"] = {
+def _assert_fbasecman_no_warning_or_error(context):
+    if not ops.fbasecman_log.exists():
+        ops.summary["fbasecman_log_level_check"] = {
             "status": "missing",
             "checked_levels": ["warning", "error"],
-            "log": str(rt.fbasecman_log),
+            "log": str(ops.fbasecman_log),
         }
         return
 
-    allowed = [pattern.lower() for pattern in rt.case.allowed_fbasecman_log_patterns]
+    allowed = [pattern.lower() for pattern in ops.case.allowed_fbasecman_log_patterns]
     matched = []
     level_pattern = re.compile(
         r"^\s*\d+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+(debug\d*|debug|info|warning|error)\b",
         re.IGNORECASE,
     )
-    for raw_line in rt.fbasecman_log.read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw_line in ops.fbasecman_log.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw_line.strip()
         if not line:
             continue
@@ -110,25 +111,25 @@ def _assert_fbasecman_no_warning_or_error(rt):
         matched.append(line)
 
     if matched:
-        rt.summary["fbasecman_log_level_check"] = {
+        ops.summary["fbasecman_log_level_check"] = {
             "status": "non_clean",
             "checked_levels": ["warning", "error"],
             "matched": matched[:20],
         }
         return
 
-    rt.summary["fbasecman_log_level_check"] = {
+    ops.summary["fbasecman_log_level_check"] = {
         "status": "clean",
         "checked_levels": ["warning", "error"],
     }
 
 
-def _assert_verification_checks_clean(rt):
-    checks = rt.summary.get("verification_checks", [])
+def _assert_verification_checks_clean(context):
+    checks = ops.summary.get("verification_checks", [])
     failed = [item for item in checks if str(item.get("result", "PASS")).upper() != "PASS"]
     if failed:
         check = failed[0]
-        rt.record_step(
+        ops.record_step(
             "验证: %s" % check.get("title", "<unknown>"),
             output=check.get("evidence") or check.get("actual", ""),
             expected=check.get("expected", "<missing>"),
@@ -136,8 +137,8 @@ def _assert_verification_checks_clean(rt):
             result="FAIL",
             phase=check.get("phase"),
         )
-        rt.summary["failed_step"] = dict(rt.step_records[-1])
-        rt.summary["failed_check"] = dict(check)
+        ops.summary["failed_step"] = dict(ops.step_records[-1])
+        ops.summary["failed_check"] = dict(check)
         raise VerificationFailure(check)
 
 

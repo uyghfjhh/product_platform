@@ -79,13 +79,26 @@ class CaseRuntime(object):
     failure_class = CaseRuntimeFailure
     lock_name = None
 
-    def __init__(self, root, case, platform_context: RegressionContext | None = None):
+    def __init__(self, root, case, platform_context: RegressionContext | None = None,
+                 *, env=None, context_data=None, output_root=None):
         self.root = Path(root)
         self.case = case
         self.platform_context = platform_context
         self.env = None
         self.context = {}
-        if platform_context is not None:
+        if env is not None:
+            # 宿主注入路径：环境由上游 resolver 按环境 overlay 解析后传入，
+            # runtime 不再自行触发 legacy 配置加载。
+            self.env = env
+            if context_data is not None:
+                self.context = context_data
+            else:
+                context_file = getattr(env, "test_context_file", None)
+                if context_file is not None and Path(context_file).exists():
+                    import yaml
+                    self.context = yaml.safe_load(
+                        Path(context_file).read_text(encoding="utf-8")) or {}
+        elif platform_context is not None:
             self.context = {
                 "environment_id": platform_context.environment.id,
                 "product_id": platform_context.environment.product_id,
@@ -111,8 +124,9 @@ class CaseRuntime(object):
         self.suite_id = (getattr(case, "suite_name", None)
                          or getattr(case, "suite_id", None) or "suite")
         # 每次用例运行重建目录，保证报告工件不混入上一次结果
-        output_root = (platform_context.output_dir if platform_context is not None
-                       else self.env.output_dir)
+        if output_root is None:
+            output_root = (self.env.output_dir if self.env is not None
+                           else platform_context.output_dir)
         self.run_root = output_root / "runs" / self.suite_id / case.name
         if self.run_root.exists():
             shutil.rmtree(str(self.run_root))

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cmanconf import load_regression_config
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
+import fbasecman_ops as ops
 
 __all__ = ['_add_30_cluster_datasources', '_add_34_mmr_groups', '_add_bulk_datasources', '_add_bulk_mmr_groups', '_add_groups_without_promoted', '_add_hash_inside_string', '_add_second_mmr_group', '_add_single_cluster_mmr_group', '_as_crlf', '_balance_read_only_transform', '_bulk_datasources_have_weight', '_bulk_groups_have', '_cluster_datasources_have_status', '_comprehensive_transform', '_datasource_block', '_group_fields_with_format', '_has_only_crlf', '_hint_transform', '_inject_after_start', '_mixed_topology_transform', '_node_has_weight', '_omit_group_defaults', '_pg3_as_single_line_block', '_port_transform', '_remove_test_path', '_rename_disk_datasource', '_route_user_scope', '_run_route_mode', '_run_sql_parse_heartbeat_bind_invalid', '_run_sql_parse_heartbeat_bind_normal', '_run_sql_parse_heartbeat_bind_unsupported', '_run_sql_parse_transactions', '_single_read_only', '_single_read_only_keep_scope', '_sql_parse_transform', '_status_with_format', '_wait_pg_cluster_ready', '_weight_with_format', '_without_final_newline', '_without_promoted']
 
@@ -35,9 +36,9 @@ def _add_second_mmr_group(content):
     )
 
 
-def _balance_read_only_transform(rt):
-    standby_port = rt.env.config["database"]["ports"]["mmr1_standby2"]
-    system_identifier = rt._query_scalar(
+def _balance_read_only_transform(context):
+    standby_port = ops.env.config["database"]["ports"]["mmr1_standby2"]
+    system_identifier = ops._query_scalar(
         standby_port, "SELECT system_identifier FROM pg_control_system();",
         "balance_read_only_pg_5_system_identifier.log")
 
@@ -62,7 +63,7 @@ datasources "pg_5" {
     system_identifier "%s"
     tls "disable"
 }
-''' % (rt.env.config["database"]["mmr_host"], standby_port, system_identifier)
+''' % (ops.env.config["database"]["mmr_host"], standby_port, system_identifier)
         user = '''
 user "balance_reader" {
     group_names "balance_read_only"
@@ -103,15 +104,15 @@ def _add_30_cluster_datasources(content):
     return content + '\n' + '\n'.join(blocks)
 
 
-def _port_transform(rt, group):
+def _port_transform(context, group):
     def transform(content):
         content = _route_user_scope(content, group)
-        content = content.replace('ports "%s"' % rt.listen_port,
+        content = content.replace('ports "%s"' % ops.listen_port,
                                   'ports "%s,%s"' %
-                                  (rt.listen_port, rt.read_port), 1)
+                                  (ops.listen_port, ops.read_port), 1)
         marker = 'group "%s" {\n' % group
         content = content.replace(marker, marker + '    write_port %s\n' %
-                                  rt.listen_port, 1)
+                                  ops.listen_port, 1)
         return content.replace('    rw_split_method "none"',
                                '    rw_split_method "port"', 1)
     return transform
@@ -134,24 +135,24 @@ def _hint_transform(group):
     return transform
 
 
-def _run_route_mode(rt, group, mode, sql, expected_text, predicate,
+def _run_route_mode(context, group, mode, sql, expected_text, predicate,
                     transform=None, port=None):
     title = "%s (%s)" % (group, mode)
-    rt.start(transform=transform)
-    rt.psql(
+    ops.start(transform=transform)
+    ops.psql(
         'SHOW GROUP_ROUTING %s;' % group,
         "%s：查看运行态路由" % title,
         "%s group_mode=%s 且存在可用路由候选" % (group, mode),
         lambda output: group in output and mode in output,
     )
-    rt.psql_business(sql, "%s：真实业务连接验证" % title,
+    ops.psql_business(sql, "%s：真实业务连接验证" % title,
                      expected_text, predicate, group=group, port=port)
 
 
-def _run_sql_parse_heartbeat_bind_invalid(rt):
-    conf = rt.start(transform=_sql_parse_transform("mmr_group"))
+def _run_sql_parse_heartbeat_bind_invalid(context):
+    conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
-    rt.check(
+    ops.check(
         "确认异常 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
         "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
@@ -160,18 +161,18 @@ def _run_sql_parse_heartbeat_bind_invalid(rt):
             'pool_reserve_prepared_statement yes',
             'heartbeat_request "select 1"',
         )))
-    probe = rt.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
+    probe = ops.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
     if not probe.exists():
         raise HaCommandFailure("missing heartbeat Bind probe: %s" % probe)
-    rc, output = rt.run_command(
-        [sys.executable, str(probe), str(rt.listen_port), "malformed"],
-        rt.logs_dir / "heartbeat_bind_invalid.log", cwd=rt.workdir,
+    rc, output = ops.run_command(
+        [sys.executable, str(probe), str(ops.listen_port), "malformed"],
+        ops.logs_dir / "heartbeat_bind_invalid.log", cwd=ops.workdir,
         step_title="执行 SQL_PARSE heartbeat 截断 Bind 流程", check=False)
-    rt.check(
+    ops.check(
         "验证 SQL_PARSE heartbeat 异常 Bind 被拒绝",
         "截断 Bind 返回 ErrorResponse(E) 和 ReadyForQuery(Z)，不返回 DataRow",
         output, "HEARTBEAT_INVALID_BIND_REJECTED=OK" in output)
-    rt.psql(
+    ops.psql(
         "SHOW SERVER_PREP_STMTS;",
         "核对异常 heartbeat Bind 未部署到 PostgreSQL 后端",
         "后端 PreparedStatement 部署列表不包含 SELECT 1",
@@ -209,10 +210,10 @@ def _datasource_block(text, name):
     return text[start:end]
 
 
-def _run_sql_parse_heartbeat_bind_normal(rt):
-    conf = rt.start(transform=_sql_parse_transform("mmr_group"))
+def _run_sql_parse_heartbeat_bind_normal(context):
+    conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
-    rt.check(
+    ops.check(
         "确认 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
         "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
@@ -221,27 +222,27 @@ def _run_sql_parse_heartbeat_bind_normal(rt):
             'pool_reserve_prepared_statement yes',
             'heartbeat_request "select 1"',
         )))
-    jar = rt.root / rt.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
-    source = rt.root / "suites" / "sql_parse" / "assets" / "HeartbeatBindNormal.java"
+    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    source = ops.root / "suites" / "sql_parse" / "assets" / "HeartbeatBindNormal.java"
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC heartbeat asset or jar: %s %s" % (source, jar))
-    rt.run_command(
-        ["javac", "-cp", str(jar), "-d", str(rt.workdir), str(source)],
-        rt.logs_dir / "HeartbeatBindNormal.javac.log", cwd=rt.workdir,
+    ops.run_command(
+        ["javac", "-cp", str(jar), "-d", str(ops.workdir), str(source)],
+        ops.logs_dir / "HeartbeatBindNormal.javac.log", cwd=ops.workdir,
         step_title="编译 SQL_PARSE heartbeat JDBC 测试")
     jdbc_url = ("jdbc:postgresql://127.0.0.1:%s/mmr_group?"
                 "prepareThreshold=1&preferQueryMode=extended&"
-                "binaryTransfer=false") % rt.listen_port
-    _, output = rt.run_command(
-        ["java", "-cp", "%s:%s" % (rt.workdir, jar),
+                "binaryTransfer=false") % ops.listen_port
+    _, output = ops.run_command(
+        ["java", "-cp", "%s:%s" % (ops.workdir, jar),
          "HeartbeatBindNormal", jdbc_url, "postgres", ""],
-        rt.logs_dir / "HeartbeatBindNormal.log", cwd=rt.workdir,
+        ops.logs_dir / "HeartbeatBindNormal.log", cwd=ops.workdir,
         step_title="执行 SQL_PARSE heartbeat JDBC Extended Bind 流程")
-    rt.check(
+    ops.check(
         "验证 SQL_PARSE heartbeat 本地 Bind 正常流程",
         "客户端发送 Parse、Bind、Execute、Sync；服务端返回 BindComplete(2)、DataRow(D)、CommandComplete(C)、ReadyForQuery(Z)",
         output, "HEARTBEAT_JDBC_EXTENDED=OK" in output)
-    rt.psql(
+    ops.psql(
         "SHOW SERVER_PREP_STMTS;",
         "核对 heartbeat 未部署到 PostgreSQL 后端",
         "当前 heartbeat statement 不出现在后端 PreparedStatement 部署列表",
@@ -326,10 +327,10 @@ def _add_bulk_mmr_groups(content):
         1)
 
 
-def _run_sql_parse_heartbeat_bind_unsupported(rt):
-    conf = rt.start(transform=_sql_parse_transform("mmr_group"))
+def _run_sql_parse_heartbeat_bind_unsupported(context):
+    conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
-    rt.check(
+    ops.check(
         "确认不支持格式 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
         "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
@@ -338,16 +339,16 @@ def _run_sql_parse_heartbeat_bind_unsupported(rt):
             'pool_reserve_prepared_statement yes',
             'heartbeat_request "select 1"',
         )))
-    probe = rt.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
-    _, output = rt.run_command(
-        [sys.executable, str(probe), str(rt.listen_port), "binary"],
-        rt.logs_dir / "heartbeat_bind_unsupported.log", cwd=rt.workdir,
+    probe = ops.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
+    _, output = ops.run_command(
+        [sys.executable, str(probe), str(ops.listen_port), "binary"],
+        ops.logs_dir / "heartbeat_bind_unsupported.log", cwd=ops.workdir,
         step_title="执行 SQL_PARSE heartbeat 二进制结果格式 Bind 回退流程")
-    rt.check(
+    ops.check(
         "验证不支持格式退出本地 heartbeat bypass 并回退后端",
         "完整二进制结果格式 Bind 返回后端结果，不使用本地文本缓存",
         output, "HEARTBEAT_UNSUPPORTED_FORMAT_FALLBACK=OK" in output)
-    rt.psql(
+    ops.psql(
         "SHOW SERVER_PREP_STMTS;",
         "核对不支持格式的 heartbeat 已部署到 PostgreSQL 后端",
         "后端 PreparedStatement 部署列表包含 SELECT 1",
@@ -363,10 +364,10 @@ def _without_final_newline(content):
     return content.rstrip("\n")
 
 
-def _comprehensive_transform(rt):
+def _comprehensive_transform(context):
     """Add production-style formatting and legal pool/method combinations."""
     def transform(content):
-        db = rt.env.config["database"]
+        db = ops.env.config["database"]
         ports = db["ports"]
         node_specs = (
             ("pg_1", "mmr1", "pg_cluster_1", ""),
@@ -397,23 +398,23 @@ def _comprehensive_transform(rt):
         for name, port_name, cluster, app_name in node_specs:
             host = db["mmr_host"]
             user = db["mmr_pg_user"]
-            identifier = rt._query_scalar(
+            identifier = ops._query_scalar(
                 configured_port(port_name), "SELECT system_identifier FROM pg_control_system();",
                 "comprehensive_%s_system_identifier.log" % name)
             metadata.append({"name": name, "host": host, "port": configured_port(port_name),
                              "cluster": cluster, "application_name": app_name or "(default)",
                              "system_identifier": identifier, "status": "active"})
-        rt.datasource_metadata = metadata
+        ops.datasource_metadata = metadata
         content = content.replace(
-            'ports "%s"' % rt.listen_port,
-            'ports "%s,%s"' % (rt.listen_port, rt.read_port), 1)
+            'ports "%s"' % ops.listen_port,
+            'ports "%s,%s"' % (ops.listen_port, ops.read_port), 1)
         content = content.replace(
             '    check "auto"',
-            '    write_port %s\n    check "auto"' % rt.listen_port, 1)
+            '    write_port %s\n    check "auto"' % ops.listen_port, 1)
         content = content.replace(
             'group "rep_group" {\n    group_mode "replication"\n    storage_db "postgres"\n    backend_clusters "pg_cluster_1"',
             'group "rep_group" {\n    group_mode "replication"\n    storage_db "postgres"\n'
-            '    write_port %s\n    backend_clusters "pg_cluster_1"' % rt.listen_port, 1)
+            '    write_port %s\n    backend_clusters "pg_cluster_1"' % ops.listen_port, 1)
         group_additions = '''
 # 线上共享物理节点的业务组；中文注释用于验证配置文件字符集
 group "mmr_group_b" {
@@ -629,8 +630,8 @@ user "ha_single_statement" {
             'mmr_group_e,mmr_group_f,mmr_group_g,mmr_group_h,rep_group,'
             'rep_group_b,rep_group_c,balance_group,balance_group_b,'
             'balance_group_c,single_group,single_group_b,single_group_c"', 1)
-        rt.comprehensive_group_lines = (
-            'group mmr_group: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_2 promoted_cluster=pg_cluster_1 write_port=%s check=auto' % rt.listen_port,
+        ops.comprehensive_group_lines = (
+            'group mmr_group: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_2 promoted_cluster=pg_cluster_1 write_port=%s check=auto' % ops.listen_port,
             'group mmr_group_b: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_1 promoted_cluster=pg_cluster_2 check=auto',
             'group mmr_group_c: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_2 promoted_cluster=pg_cluster_1 check=auto',
             'group mmr_group_d: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_1 promoted_cluster=pg_cluster_2 check=auto',
@@ -638,7 +639,7 @@ user "ha_single_statement" {
             'group mmr_group_f: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_1 promoted_cluster=pg_cluster_2 check=auto',
             'group mmr_group_g: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_2 promoted_cluster=pg_cluster_1 check=auto',
             'group mmr_group_h: mode=mmr backend_clusters=pg_cluster_1,pg_cluster_2 write_cluster=pg_cluster_1 promoted_cluster=pg_cluster_2 check=auto',
-            'group rep_group: mode=replication backend_clusters=pg_cluster_1 write_port=%s check=auto' % rt.listen_port,
+            'group rep_group: mode=replication backend_clusters=pg_cluster_1 write_port=%s check=auto' % ops.listen_port,
             'group rep_group_b: mode=replication backend_clusters=pg_cluster_1 check=auto',
             'group rep_group_c: mode=replication backend_clusters=pg_cluster_1 check=auto',
             'group balance_group: mode=balance backend_clusters=pg_cluster_1,pg_cluster_2 access_mode=read_write check=auto',
@@ -664,19 +665,19 @@ def _remove_test_path(path):
         path.rmdir()
 
 
-def _run_sql_parse_transactions(rt, group, mode, read_ports, write_port):
-    rt.start(transform=_sql_parse_transform(group))
-    rt.psql('SHOW GROUP_ROUTING %s;' % group,
+def _run_sql_parse_transactions(context, group, mode, read_ports, write_port):
+    ops.start(transform=_sql_parse_transform(group))
+    ops.psql('SHOW GROUP_ROUTING %s;' % group,
             "%s sql_parse：查看运行态路由" % group,
             "%s group_mode=%s 且存在可用路由" % (group, mode),
             lambda output: group in output and mode in output)
-    rt.psql_business(
+    ops.psql_business(
         'SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery();',
         "%s sql_parse：验证只读 SELECT 路由" % group,
         "SELECT 落到允许的读候选端口",
         lambda output: any(str(port) in output for port in read_ports),
         group=group)
-    rt.psql_business(
+    ops.psql_business(
         'BEGIN; CREATE TEMP TABLE ha_sql_parse_probe(id int); '
         'SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(); ROLLBACK;',
         "%s sql_parse：验证写事务路由" % group,
@@ -697,7 +698,7 @@ def _status_with_format(content):
     return content[:status] + replacement + content[status + len('    status "active"'):]
 
 
-def _wait_pg_cluster_ready(rt, cluster_name, primary, replicas=(), title=None):
+def _wait_pg_cluster_ready(context, cluster_name, primary, replicas=(), title=None):
     """等待 ACTIVE 触发的即时探测形成可信 cluster 路由投影。"""
     expected = {
         primary: {
@@ -712,19 +713,19 @@ def _wait_pg_cluster_ready(rt, cluster_name, primary, replicas=(), title=None):
             "connect_status": "ONLINE", "observed_role": "replica",
             "topology_state": "VALID", "effective_status": "READ_ONLY",
         }
-    return rt.wait_node_monitor(
+    return ops.wait_node_monitor(
         title or "等待 %s ACTIVE 后 monitor 路由投影收敛" % cluster_name,
         expected, retry_timeout=30)
 
 
-def _mixed_topology_transform(rt):
+def _mixed_topology_transform(context):
     def transform(content):
         content = content.replace(
             'user "postgres" {', groups + '\n' + users + '\nuser "postgres" {', 1)
-        content = content.replace('ports "%s"' % rt.listen_port,
-                                  'ports "%s,%s"' % (rt.listen_port, rt.read_port), 1)
-        content = content.replace('write_port  35101', 'write_port %s' % rt.listen_port, 1)
-        content = content.replace('write_port    35102', 'write_port %s' % rt.listen_port, 1)
+        content = content.replace('ports "%s"' % ops.listen_port,
+                                  'ports "%s,%s"' % (ops.listen_port, ops.read_port), 1)
+        content = content.replace('write_port  35101', 'write_port %s' % ops.listen_port, 1)
+        content = content.replace('write_port    35102', 'write_port %s' % ops.listen_port, 1)
         return content
 
     groups = '''

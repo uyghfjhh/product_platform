@@ -53,11 +53,11 @@ def _find_free_port(start=18000, max_port=25000):
 class HighAvailabilityRuntime(object):
     """Execution context and evidence harness for High Availability cases."""
 
-    def __init__(self, root, case):
+    def __init__(self, root, case, env=None, context_data=None):
         self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.root = Path(root)
         self.case = case
-        self.env = load_regression_config(self.root)
+        self.env = env if env is not None else load_regression_config(self.root)
         self.run_root = self.env.output_dir / "runs" / "high_availability" / case.name
         if self.run_root.exists():
             shutil.rmtree(str(self.run_root))

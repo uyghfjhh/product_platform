@@ -2,6 +2,7 @@
 
 from suites.global_cache.drivers import run_prepared_sequence
 from suites.global_cache.manifest import BACKEND_PS_LIMIT_KEY, GLOBAL_PS_LIMIT_KEY
+import fbasecman_ops as ops
 
 
 def ps_limit_replacements(global_limit, backend_limit=None):
@@ -38,7 +39,7 @@ def case_ps_limit(case_config, default):
     return int(default)
 
 
-def seed_capacity_entries(rt, count, prefix):
+def seed_capacity_entries(context, count, prefix):
     operations = []
     statements = []
     for index in range(1, count + 1):
@@ -46,5 +47,5 @@ def seed_capacity_entries(rt, count, prefix):
         sql = "select name from test where id = ? /* %s */" % tag
         operations.append(("seed_%02d" % index, "query_int:%d" % index, sql))
         statements.append(sql)
-    run_prepared_sequence(rt, operations, log_stem="GC_%s" % prefix)
-    rt.summary["seed_sql_tags"] = statements
+    run_prepared_sequence(context, operations, log_stem="GC_%s" % prefix)
+    ops.summary["seed_sql_tags"] = statements

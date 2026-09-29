@@ -66,9 +66,10 @@ from suites.global_cache.domains.driver_cases import (
 )
 from suites.global_cache.domains.capacity import ps_limit_replacements as _ps_limit_replacements
 from suites.global_cache.waits import wait_target_entries_unref as _wait_target_entries_unref
-def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_state):
-    global_limit = int(rt.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
-    backend_limit = int(rt.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
+import fbasecman_ops as ops
+def _assert_backend_global_split_eviction(context, before_state, mid_state, after_state):
+    global_limit = int(ops.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
+    backend_limit = int(ops.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     mid_descriptions = ["|".join(row) for row in mid_state["global"]]
     after_descriptions = ["|".join(row) for row in after_state["global"]]
@@ -83,8 +84,8 @@ def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_sta
     after_capacity = int(after_state["stats"].get("capacity", "0") or "0")
     before_evictions = int(before_state["stats"].get("evictions", "0") or "0")
     after_evictions = int(after_state["stats"].get("evictions", "0") or "0")
-    log_text = rt.fbasecman_log.read_text(encoding="utf-8", errors="replace") if rt.fbasecman_log.exists() else ""
-    libpq_text = rt.libpq_log.read_text(encoding="utf-8", errors="replace") if rt.libpq_log.exists() else ""
+    log_text = ops.fbasecman_log.read_text(encoding="utf-8", errors="replace") if ops.fbasecman_log.exists() else ""
+    libpq_text = ops.libpq_log.read_text(encoding="utf-8", errors="replace") if ops.libpq_log.exists() else ""
     backend_evict_lines = [
         line.strip() for line in log_text.splitlines()
         if "evict backend prepared statement" in line and "by LRU" in line
@@ -126,7 +127,7 @@ def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_sta
     if not trigger_after_rows:
         raise GlobalCacheFailure("backend_global_split_eviction expects trigger SQL to remain visible in global cache after eviction")
 
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         GLOBAL_PS_LIMIT_KEY: global_limit,
         BACKEND_PS_LIMIT_KEY: backend_limit,
         "seed_mid_rows": seed_mid_rows,
@@ -138,7 +139,7 @@ def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_sta
         "stats_delta": dict(delta),
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "同一 PostgreSQL 后端连接连续执行 5 条 SQL 后，淘汰该连接最久未使用的 prepared statement",
@@ -197,17 +198,17 @@ def _assert_backend_global_split_eviction(rt, before_state, mid_state, after_sta
     )
 
 
-def _run_backend_global_split_eviction_case(rt):
-    global_limit = int(rt.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
-    backend_limit = int(rt.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
-    start_conf = rt.render_runtime_conf(
+def _run_backend_global_split_eviction_case(context):
+    global_limit = int(ops.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
+    backend_limit = int(ops.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
+    start_conf = ops.render_runtime_conf(
         _ps_limit_replacements(global_limit, backend_limit),
         stem="backend_global_split_eviction.conf",
     )
     start_conf_text = start_conf.read_text(encoding="utf-8", errors="replace")
-    rt.summary["runtime_conf_path"] = str(start_conf)
-    rt.summary["runtime_conf_text"] = start_conf_text
-    rt.summary["runtime_conf_excerpt"] = _extract_conf_lines(
+    ops.summary["runtime_conf_path"] = str(start_conf)
+    ops.summary["runtime_conf_text"] = start_conf_text
+    ops.summary["runtime_conf_excerpt"] = _extract_conf_lines(
         start_conf_text,
         [
             GLOBAL_PS_LIMIT_KEY,
@@ -217,67 +218,67 @@ def _run_backend_global_split_eviction_case(rt):
             "heartbeat_request",
         ],
     )
-    rt.start_fbasecman(conf=start_conf)
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    rt.record_step(
+    ops.start_fbasecman(conf=start_conf)
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    ops.record_step(
         "启动运行配置: global limit %s / backend limit %s" % (global_limit, backend_limit),
-        output=rt.summary["runtime_conf_excerpt"],
+        output=ops.summary["runtime_conf_excerpt"],
     )
     _run_libpq_case(
-        rt,
+        context,
         extra_args=["seed"],
         step_title="建立首批缓存：同一事务连续执行 5 条 prepared SELECT",
     )
-    rt.step_records[-1].update({
+    ops.step_records[-1].update({
         "expected": "事务内 5 条 prepared SELECT 均执行成功，分别返回 1、2、3、4、5，并成功提交事务。",
         "actual": "事务已开始；5 条查询依次返回 1、2、3、4、5；事务已成功提交。",
         "result": "PASS",
     })
-    mid_state = rt.capture_console_state("after_seed")
+    mid_state = ops.capture_console_state("after_seed")
     _run_libpq_case(
-        rt,
+        context,
         extra_args=["trigger"],
         step_title="继续施加容量压力：新连接执行第 6 条 prepared SELECT",
     )
-    rt.step_records[-1].update({
+    ops.step_records[-1].update({
         "expected": "第 6 条 prepared SELECT 执行成功并返回 6。",
         "actual": "第 6 条查询返回 6，本次新增查询正常结束。",
         "result": "PASS",
     })
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
-    _assert_backend_global_split_eviction(rt, before_state, mid_state, after_state)
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
+    _assert_backend_global_split_eviction(context, before_state, mid_state, after_state)
 
 
-def _run_discard_all_clears_backend_cache_case(rt):
-    business_sql = rt.case.assertions.get("business_sql", "select name from test where id = ? /* gc_discard_all_redeploy */")
-    start_conf = rt.render_runtime_conf(
+def _run_discard_all_clears_backend_cache_case(context):
+    business_sql = ops.case.assertions.get("business_sql", "select name from test where id = ? /* gc_discard_all_redeploy */")
+    start_conf = ops.render_runtime_conf(
         [('server_lifetime  3600', 'server_lifetime  999')],
         stem="discard_all_clears_backend_cache.conf",
     )
-    rt.summary["runtime_conf_path"] = str(start_conf)
-    rt.summary["runtime_conf_text"] = start_conf.read_text(encoding="utf-8", errors="replace")
-    rt.start_fbasecman(conf=start_conf)
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    source = _global_cache_asset_path(rt.root, "jdbc", "GC_discard_all_redeploy.java")
-    target = rt.driver_dir / source.name
+    ops.summary["runtime_conf_path"] = str(start_conf)
+    ops.summary["runtime_conf_text"] = start_conf.read_text(encoding="utf-8", errors="replace")
+    ops.start_fbasecman(conf=start_conf)
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    source = _global_cache_asset_path(ops.root, "jdbc", "GC_discard_all_redeploy.java")
+    target = ops.driver_dir / source.name
     shutil.copyfile(str(source), str(target))
     jar = _compile_java(
-        rt, target, rt.logs_dir / "GC_discard_all_redeploy.javac.log",
+        context, target, ops.logs_dir / "GC_discard_all_redeploy.javac.log",
         "编译外置 discard-all redeploy JDBC driver",
     )
-    url = _jdbc_url(rt, {"prepareThreshold": 1, "preferQueryMode": "extended"})
+    url = _jdbc_url(context, {"prepareThreshold": 1, "preferQueryMode": "extended"})
     cmd = [
-        "java", "-cp", "%s:%s" % (rt.driver_dir, jar), "GC_discard_all_redeploy",
+        "java", "-cp", "%s:%s" % (ops.driver_dir, jar), "GC_discard_all_redeploy",
         url,
         "postgres", "", business_sql,
     ]
-    log_path = rt.logs_dir / "GC_discard_all_redeploy.java.log"
-    driver = rt.start_jdbc_phase_process(
+    log_path = ops.logs_dir / "GC_discard_all_redeploy.java.log"
+    driver = ops.start_jdbc_phase_process(
         cmd, target, url, log_path, "执行 DISCARD ALL 分阶段 JDBC driver",
-        cwd=rt.driver_dir,
+        cwd=ops.driver_dir,
         sql_operations=[{"sql": business_sql, "parameters": ["$1=<driver value>"]}],
     )
 
@@ -285,7 +286,7 @@ def _run_discard_all_clears_backend_cache_case(rt):
         sql = "SHOW SERVER_PREP_STMTS;"
         stem = ("discard_all_before_server" if phase == "before_discard"
                 else "discard_all_after_discard_server")
-        raw = rt.psql("console", sql, rt.logs_dir / (stem + ".raw.log"), record=False)
+        raw = ops.psql("console", sql, ops.logs_dir / (stem + ".raw.log"), record=False)
         rows = parse_pipe_rows(raw)[1:]
         matching_rows = [
             row for row in rows
@@ -298,13 +299,13 @@ def _run_discard_all_clears_backend_cache_case(rt):
             )
         return {
             "rows": rows,
-            "command": "$ " + " ".join(rt.psql_command("console", sql)),
+            "command": "$ " + " ".join(ops.psql_command("console", sql)),
             "output": render_psql_table_from_pipe_text(raw),
             "actual": "SHOW SERVER_PREP_STMTS 中找到 %d 条目标 PreparedStatement。" % len(matching_rows),
             "passed": True,
         }
 
-    observations, rc, output = rt.observe_jdbc_phases(
+    observations, rc, output = ops.observe_jdbc_phases(
         driver, source, url,
         [
             PhaseAction(
@@ -329,15 +330,15 @@ def _run_discard_all_clears_backend_cache_case(rt):
         raise GlobalCacheFailure("discard_all_clears_backend_cache JDBC driver failed with rc=%s" % rc)
     before_server = observations["before_discard"]["rows"]
     after_discard_server = observations["after_discard"]["rows"]
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
-    rt.summary["discard_all_before_server_rows"] = ["|".join(row) for row in before_server]
-    rt.summary["discard_all_after_discard_server_rows"] = ["|".join(row) for row in after_discard_server]
-    _assert_discard_all_clears_backend_cache(rt, before_state, after_state)
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
+    ops.summary["discard_all_before_server_rows"] = ["|".join(row) for row in before_server]
+    ops.summary["discard_all_after_discard_server_rows"] = ["|".join(row) for row in after_discard_server]
+    _assert_discard_all_clears_backend_cache(context, before_state, after_state)
 
 
-def _run_unnamed_overwrite_case(rt, before_state):
-    start_conf = rt.render_runtime_conf(
+def _run_unnamed_overwrite_case(context, before_state):
+    start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  10'),
             ('server_lifetime 3600', 'server_lifetime 10'),
@@ -345,9 +346,9 @@ def _run_unnamed_overwrite_case(rt, before_state):
         stem="unnamed_overwrite_live.conf",
     )
     start_conf_text = start_conf.read_text(encoding="utf-8", errors="replace")
-    rt.summary["runtime_conf_path"] = str(start_conf)
-    rt.summary["runtime_conf_text"] = start_conf_text
-    rt.summary["runtime_conf_excerpt"] = _extract_conf_lines(
+    ops.summary["runtime_conf_path"] = str(start_conf)
+    ops.summary["runtime_conf_text"] = start_conf_text
+    ops.summary["runtime_conf_excerpt"] = _extract_conf_lines(
         start_conf_text,
         [
             "server_lifetime",
@@ -357,40 +358,40 @@ def _run_unnamed_overwrite_case(rt, before_state):
             "heartbeat_request",
         ],
     )
-    rt.record_step(
+    ops.record_step(
         "启动运行配置: server_lifetime 10",
-        output=rt.summary["runtime_conf_excerpt"],
+        output=ops.summary["runtime_conf_excerpt"],
     )
-    rt.stop_fbasecman(best_effort=True, record=False)
-    rt.start_fbasecman(conf=start_conf)
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    binary = _build_libpq_asset(rt, rt.logs_dir / "GC_unnamed_overwrite.gcc.log")
+    ops.stop_fbasecman(best_effort=True, record=False)
+    ops.start_fbasecman(conf=start_conf)
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    binary = _build_libpq_asset(context, ops.logs_dir / "GC_unnamed_overwrite.gcc.log")
     _run_libpq_asset(
-        rt, "GC_unnamed_overwrite_stage1", extra_args=["one"], binary=binary,
+        context, "GC_unnamed_overwrite_stage1", extra_args=["one"], binary=binary,
         step_title="执行 libpq driver: unnamed 第 1 条 SQL gc_unnamed_one",
     )
-    first_state = rt.capture_console_state("after_first_unnamed")
+    first_state = ops.capture_console_state("after_first_unnamed")
     _run_libpq_asset(
-        rt, "GC_unnamed_overwrite_stage2", extra_args=["two"], binary=binary,
+        context, "GC_unnamed_overwrite_stage2", extra_args=["two"], binary=binary,
         step_title="执行 libpq driver: unnamed 第 2 条 SQL gc_unnamed_two",
     )
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
     after_release_state, _ = _wait_target_entries_unref(
-        rt, "gc_unnamed_", 2, 15
+        context, "gc_unnamed_", 2, 15
     )
-    rt.summary["unnamed_overwrite_snapshots"] = {
+    ops.summary["unnamed_overwrite_snapshots"] = {
         "after_first": ["|".join(row) for row in first_state["global"]],
         "after_second": ["|".join(row) for row in after_state["global"]],
         "after_release": ["|".join(row) for row in after_release_state["global"]],
     }
-    _assert_unnamed_overwrite(rt, before_state, after_state)
+    _assert_unnamed_overwrite(context, before_state, after_state)
 
 
-def _assert_discard_all_clears_backend_cache(rt, before_state, after_state):
-    log_text = (rt.logs_dir / "GC_discard_all_redeploy.java.log").read_text(encoding="utf-8", errors="replace")
-    before_rows = rt.summary.get("discard_all_before_server_rows", [])
+def _assert_discard_all_clears_backend_cache(context, before_state, after_state):
+    log_text = (ops.logs_dir / "GC_discard_all_redeploy.java.log").read_text(encoding="utf-8", errors="replace")
+    before_rows = ops.summary.get("discard_all_before_server_rows", [])
     after_redeploy_rows = [
         "|".join(row) for row in after_state["server"]
         if len(row) >= 6 and "gc_discard_all_redeploy" in row[4]
@@ -399,7 +400,7 @@ def _assert_discard_all_clears_backend_cache(rt, before_state, after_state):
         "|".join(row) for row in after_state["global"]
         if len(row) >= 5 and "gc_discard_all_redeploy" in row[1]
     ]
-    fbasecman_text = rt.fbasecman_log.read_text(encoding="utf-8", errors="replace")
+    fbasecman_text = ops.fbasecman_log.read_text(encoding="utf-8", errors="replace")
     discard_reply = "DISCARD ALL" in fbasecman_text
     discard_backend = ("parse deploy" in fbasecman_text and
                        "statement DISCARD ALL" in fbasecman_text)
@@ -426,7 +427,7 @@ def _assert_discard_all_clears_backend_cache(rt, before_state, after_state):
         raise GlobalCacheFailure("discard_all_clears_backend_cache expects target server row redeployed after re-execute")
     if not matched_global:
         raise GlobalCacheFailure("discard_all_clears_backend_cache expects global entry to remain observable")
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "before_server_rows": list(before_rows),
         "after_redeploy_rows": list(after_redeploy_rows),
         "matched_global": list(matched_global),
@@ -435,7 +436,7 @@ def _assert_discard_all_clears_backend_cache(rt, before_state, after_state):
         "redeploy_seen": redeploy_seen,
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "DISCARD ALL 之前目标 prepared SQL 已在后端 deploy",
@@ -469,16 +470,16 @@ def _assert_discard_all_clears_backend_cache(rt, before_state, after_state):
     )
 
 
-def _assert_parse_invalid_error_recovery(rt, before_state, after_state):
+def _assert_parse_invalid_error_recovery(context, before_state, after_state):
     delta = _stats_delta(before_state["stats"], after_state["stats"])
-    log_text = rt.jdbc_log.read_text(encoding="utf-8")
+    log_text = ops.jdbc_log.read_text(encoding="utf-8")
     if "符合预期,首次执行失败！" not in log_text:
         raise GlobalCacheFailure("parse_invalid_error case expects the first execution to fail")
     if "步骤4: 再次执行PreparedStatement,应执行成功" not in log_text:
         raise GlobalCacheFailure("parse_invalid_error case missing second-attempt marker")
     if "SUCCESS: 未触发Parse缓存清理问题" not in log_text:
         raise GlobalCacheFailure("parse_invalid_error case expects final recovery success marker")
-    negative = rt.fbasecman_log.read_text(encoding="utf-8").lower() if rt.fbasecman_log.exists() else ""
+    negative = ops.fbasecman_log.read_text(encoding="utf-8").lower() if ops.fbasecman_log.exists() else ""
     if "prepared statement not found in client cache" in negative:
         raise GlobalCacheFailure("parse_invalid_error case found stale client cache evidence")
     matched = [
@@ -487,13 +488,13 @@ def _assert_parse_invalid_error_recovery(rt, before_state, after_state):
     ]
     if not matched:
         raise GlobalCacheFailure("parse_invalid_error case expects recovered statement entry in global cache")
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "matched_entry": matched[0],
         "stats_delta": dict(delta),
     }
-    rt.summary["stats_delta"] = delta
-    rt.summary["matched_global"] = matched
-    rt.summary["verification_checks"] = [
+    ops.summary["stats_delta"] = delta
+    ops.summary["matched_global"] = matched
+    ops.summary["verification_checks"] = [
         {
             "title": "第 1 次执行 `select * from test_parse_error where id = ?` 失败，补建对象后同连接再次成功",
             "expected": "JDBC 日志出现首次失败标记和最终 SUCCESS 标记",
@@ -513,11 +514,11 @@ def _assert_parse_invalid_error_recovery(rt, before_state, after_state):
             "result": "PASS",
         },
     ]
-    rt.summary["business_summary_lines"] = [
+    ops.summary["business_summary_lines"] = [
         "第一次执行 `select * from test_parse_error where id = ?` 时，因目标表不存在而失败。",
         "补建对象后，同一连接上的同一 PreparedStatement 再次执行成功，说明 Parse 失败清理路径没有残留脏状态。",
     ]
-    rt.summary["key_evidence_lines"] = [
+    ops.summary["key_evidence_lines"] = [
         "JDBC 原始日志: 符合预期,首次执行失败！",
         "JDBC: SUCCESS: 未触发Parse缓存清理问题",
         "Console(global): %s" % matched[0],

@@ -21,11 +21,15 @@ class RuntimeBinding:
 
     spec: object
     runtime_factory: Callable[[CaseContext, object], object]
-    executor: Callable[[object], object]
+    executor: Callable[[object], object] | None
     pass_reason: str
     teardown_before_finish: bool = True
     on_failure: Callable[[object, BaseException], None] | None = None
     finalize: Callable[[CaseContext, object], None] | None = None
+    # Optional ``(context, runtime)`` executor form: product executors written
+    # against the platform ``context`` (plus the product ``ops`` facade) instead
+    # of a raw runtime positional argument.
+    context_executor: Callable[[CaseContext, object], object] | None = None
 
 
 class RuntimeExecutorCase:
@@ -56,7 +60,10 @@ class RuntimeExecutorCase:
     def run(self, context):
         failure = None
         try:
-            self._binding.executor(self._runtime)
+            if self._binding.context_executor is not None:
+                self._binding.context_executor(context, self._runtime)
+            else:
+                self._binding.executor(self._runtime)
         except BaseException as exc:  # noqa: BLE001 - teardown mirrors ``with``
             failure = exc
         if failure is None:

@@ -61,7 +61,8 @@ from suites.global_cache.drivers import (
 from suites.global_cache.paths import asset_path as _global_cache_asset_path
 
 from suites.global_cache.domains.common_assertions import _stats_change_text
-def _assert_basic_reuse(rt, before_state, after_state):
+import fbasecman_ops as ops
+def _assert_basic_reuse(context, before_state, after_state):
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     if delta.get("misses", 0) < 1:
         raise GlobalCacheFailure("basic_reuse expects misses delta >= 1, got %s" % delta.get("misses"))
@@ -71,10 +72,10 @@ def _assert_basic_reuse(rt, before_state, after_state):
     server_rows = ["|".join(row) for row in after_state["server"]]
     if not any("gc_basic_reuse" in row and row.endswith("|3") for row in server_rows):
         raise GlobalCacheFailure("basic_reuse expects one server prepared statement with refcount=3")
-    rt.summary["stats_delta"] = delta
+    ops.summary["stats_delta"] = delta
     matched = [row for row in descriptions if "gc_basic_reuse" in row]
     matched_server = [row for row in server_rows if "gc_basic_reuse" in row]
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "statement": "select name from test where id = ? /* gc_basic_reuse */",
         "execute_count": 3,
         "global_entry": matched[0] if matched else "",
@@ -82,7 +83,7 @@ def _assert_basic_reuse(rt, before_state, after_state):
         "stats_delta": dict(delta),
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
         {
             "title": "第 1 次执行创建 gc_basic_reuse 对应 global entry",
@@ -118,23 +119,23 @@ def _assert_basic_reuse(rt, before_state, after_state):
     )
 
 
-def _assert_cross_client_reuse(rt, before_state, after_state):
+def _assert_cross_client_reuse(context, before_state, after_state):
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     if delta.get("hits", 0) < 1:
         raise GlobalCacheFailure("cross_client_reuse expects hits delta >= 1, got %s" % delta.get("hits"))
     descriptions = ["|".join(row) for row in after_state["global"]]
     if not any("gc_cross_client_reuse" in row for row in descriptions):
         raise GlobalCacheFailure("cross_client_reuse target SQL not found in console global cache output")
-    rt.summary["stats_delta"] = delta
+    ops.summary["stats_delta"] = delta
     matched = [row for row in descriptions if "gc_cross_client_reuse" in row]
-    rt.summary["core_result"] = {
+    ops.summary["core_result"] = {
         "statement": "select name from test where id = ? /* gc_cross_client_reuse */",
         "matched_entries": list(matched),
         "matched_entry_count": len(matched),
         "stats_delta": dict(delta),
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
         {
             "title": "第 1 个客户端先创建 gc_cross_client_reuse 对应 global entry",
@@ -169,9 +170,9 @@ def _assert_cross_client_reuse(rt, before_state, after_state):
     )
 
 
-def _assert_close_unref(rt, before_state, after_state):
+def _assert_close_unref(context, before_state, after_state):
     delta = _stats_delta(before_state["stats"], after_state["stats"])
-    snapshots = rt.summary.get("close_unref_snapshots", {})
+    snapshots = ops.summary.get("close_unref_snapshots", {})
     close_before = snapshots.get("close_before", [])
     close_after_close = snapshots.get("close_after_close", [])
     close_final = snapshots.get("close_final", [])
@@ -192,7 +193,7 @@ def _assert_close_unref(rt, before_state, after_state):
     disconnect_final_row = next((row for row in disconnect_final if "gc_close_unref_disconnect" in row), "")
 
     def _record_close_unref_failure(title, expected, actual_rows):
-        rt.record_step(
+        ops.record_step(
             title,
             output=(
                 "expected: %s\n"
@@ -263,8 +264,8 @@ def _assert_close_unref(rt, before_state, after_state):
         )
         raise GlobalCacheFailure("close_and_disconnect_unref expects disconnect-path entry ref_count=0 after server_lifetime release")
 
-    rt.summary["stats_delta"] = delta
-    rt.summary["core_result"] = {
+    ops.summary["stats_delta"] = delta
+    ops.summary["core_result"] = {
         "close_before": close_before_row,
         "close_after_close": close_after_close_row,
         "close_final": close_final_row,
@@ -274,7 +275,7 @@ def _assert_close_unref(rt, before_state, after_state):
         "stats_delta": dict(delta),
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
         {
             "title": "显式 Close 只释放 client 持有的 1 个引用",
@@ -313,9 +314,9 @@ def _assert_close_unref(rt, before_state, after_state):
     )
 
 
-def _assert_shared_global_entry_disconnect_one_client_reuse(rt, before_state, after_state):
+def _assert_shared_global_entry_disconnect_one_client_reuse(context, before_state, after_state):
     delta = _stats_delta(before_state["stats"], after_state["stats"])
-    snapshots = rt.summary.get("shared_disconnect_reuse_snapshots", {})
+    snapshots = ops.summary.get("shared_disconnect_reuse_snapshots", {})
     both_connected = snapshots.get("both_connected", [])
     after_disconnect1 = snapshots.get("after_disconnect1", [])
     after_reuse2 = snapshots.get("after_reuse2", [])
@@ -337,12 +338,12 @@ def _assert_shared_global_entry_disconnect_one_client_reuse(rt, before_state, af
     if not row_after_disconnect2.endswith("|0"):
         raise GlobalCacheFailure("shared_global_entry_disconnect_one_client_other_client_reuse_still_ok expects shared entry ref_count=0 after both clients disconnect and server refs release")
 
-    libpq_text = rt.libpq_log.read_text(encoding="utf-8", errors="replace") if rt.libpq_log.exists() else ""
+    libpq_text = ops.libpq_log.read_text(encoding="utf-8", errors="replace") if ops.libpq_log.exists() else ""
     if "conn2_second_ok rows=" not in libpq_text:
         raise GlobalCacheFailure("shared_global_entry_disconnect_one_client_other_client_reuse_still_ok expects remaining client reuse success marker")
 
-    rt.summary["stats_delta"] = delta
-    rt.summary["core_result"] = {
+    ops.summary["stats_delta"] = delta
+    ops.summary["core_result"] = {
         "both_connected_entry": row_before,
         "after_disconnect1_entry": row_after_disconnect1,
         "after_reuse_entry": row_after_reuse2,
@@ -350,7 +351,7 @@ def _assert_shared_global_entry_disconnect_one_client_reuse(rt, before_state, af
         "stats_delta": dict(delta),
     }
     _summary_set_report_blocks(
-        rt,
+        context,
         verification_checks=[
             {
                 "title": "两个客户端先共享命中同一 global entry",
@@ -393,8 +394,8 @@ def _assert_shared_global_entry_disconnect_one_client_reuse(rt, before_state, af
     )
 
 
-def _run_shared_global_entry_disconnect_one_client_reuse_case(rt):
-    start_conf = rt.render_runtime_conf(
+def _run_shared_global_entry_disconnect_one_client_reuse_case(context):
+    start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  3'),
             ('server_lifetime 3600', 'server_lifetime 3'),
@@ -402,33 +403,33 @@ def _run_shared_global_entry_disconnect_one_client_reuse_case(rt):
         stem="shared_disconnect_reuse_runtime.conf",
     )
     start_conf_text = start_conf.read_text(encoding="utf-8", errors="replace")
-    rt.start_fbasecman(conf=start_conf)
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    rt.record_step(
+    ops.start_fbasecman(conf=start_conf)
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    ops.record_step(
         "运行配置: server_lifetime 3",
         output="conf : %s\n%s" % (start_conf, "\n".join(_conf_lines_by_keys(start_conf_text, ["server_lifetime"]))),
     )
 
-    driver, command, logfile = _start_phased_libpq(rt, "GC_shared_disconnect_reuse")
+    driver, command, logfile = _start_phased_libpq(context, "GC_shared_disconnect_reuse")
 
     def observe(phase, marker):
         if phase == "both_connected":
-            rt.record_step(
+            ops.record_step(
                 "执行 libpq driver: 两客户端共享同一 global entry",
                 command=" ".join(command), logfile=logfile,
                 output="两个客户端均已完成首次 prepared SQL，保持连接等待断开第一个客户端。",
             )
-            return rt.capture_console_state("shared_reuse_both_connected")
+            return ops.capture_console_state("shared_reuse_both_connected")
         if phase == "after_disconnect1":
-            return rt.capture_console_state("shared_reuse_after_disconnect1")
+            return ops.capture_console_state("shared_reuse_after_disconnect1")
         if phase == "after_reuse2":
-            rt.record_step(
+            ops.record_step(
                 "第 2 个客户端继续执行同一业务 SQL",
                 command="reuse2", logfile=logfile,
                 output="第 2 个客户端已在第 1 个客户端断开后再次成功执行同一 prepared SQL。",
             )
-            return rt.capture_console_state("shared_reuse_after_reuse2")
+            return ops.capture_console_state("shared_reuse_after_reuse2")
         return marker
 
     observations, rc, output = observe_phases(
@@ -449,29 +450,29 @@ def _run_shared_global_entry_disconnect_one_client_reuse_case(rt):
     after_disconnect1_state = observations["after_disconnect1"]
     after_reuse2_state = observations["after_reuse2"]
 
-    rt.record_step(
+    ops.record_step(
         "等待第二个客户端释放后的 server 引用清理",
         output="第二个客户端也断开后，再等待 server_lifetime 到期，确认共享 global entry 的剩余 server 引用回到 0",
     )
-    after_wait_state, matched_unref = _wait_target_entries_unref(rt, "gc_shared_disconnect_reuse", 1, 15)
+    after_wait_state, matched_unref = _wait_target_entries_unref(context, "gc_shared_disconnect_reuse", 1, 15)
     after_disconnect2_rows = ["|".join(row) for row in after_wait_state["global"] if len(row) >= 2 and "gc_shared_disconnect_reuse" in row[1]]
 
-    rt.summary["shared_disconnect_reuse_snapshots"] = {
+    ops.summary["shared_disconnect_reuse_snapshots"] = {
         "both_connected": ["|".join(row) for row in both_connected_state["global"] if len(row) >= 2 and "gc_shared_disconnect_reuse" in row[1]],
         "after_disconnect1": ["|".join(row) for row in after_disconnect1_state["global"] if len(row) >= 2 and "gc_shared_disconnect_reuse" in row[1]],
         "after_reuse2": ["|".join(row) for row in after_reuse2_state["global"] if len(row) >= 2 and "gc_shared_disconnect_reuse" in row[1]],
         "after_disconnect2": after_disconnect2_rows,
     }
-    _append_driver_log(rt.libpq_log, output)
-    rt.summary["shared_disconnect_reuse_waited_entries"] = ["|".join(row) for row in matched_unref]
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
-    _assert_shared_global_entry_disconnect_one_client_reuse(rt, before_state, after_state)
+    _append_driver_log(ops.libpq_log, output)
+    ops.summary["shared_disconnect_reuse_waited_entries"] = ["|".join(row) for row in matched_unref]
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
+    _assert_shared_global_entry_disconnect_one_client_reuse(context, before_state, after_state)
     return after_state
 
 
-def _run_close_unref_case(rt):
-    start_conf = rt.render_runtime_conf(
+def _run_close_unref_case(context):
+    start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  10'),
             ('server_lifetime 3600', 'server_lifetime 10'),
@@ -479,32 +480,32 @@ def _run_close_unref_case(rt):
         stem="close_unref_runtime.conf",
     )
     start_conf_text = start_conf.read_text(encoding="utf-8", errors="replace")
-    rt.summary["close_unref_runtime_conf"] = str(start_conf)
-    rt.summary["close_unref_runtime_conf_text"] = start_conf_text
-    rt.start_fbasecman(conf=start_conf)
-    before_state = rt.capture_console_state("before")
-    rt.summary["before_stats"] = before_state["stats"]
-    rt.record_step(
+    ops.summary["close_unref_runtime_conf"] = str(start_conf)
+    ops.summary["close_unref_runtime_conf_text"] = start_conf_text
+    ops.start_fbasecman(conf=start_conf)
+    before_state = ops.capture_console_state("before")
+    ops.summary["before_stats"] = before_state["stats"]
+    ops.record_step(
         "运行配置: server_lifetime 10",
         output="conf : %s\n%s" % (start_conf, "\n".join(_conf_lines_by_keys(start_conf_text, ["server_lifetime"]))),
     )
     binary = _build_libpq_asset(
-        rt, rt.logs_dir / "GC_close_and_disconnect_unref.gcc.log"
+        context, ops.logs_dir / "GC_close_and_disconnect_unref.gcc.log"
     )
     close_driver, close_command, close_log = _start_phased_libpq(
-        rt, "GC_close_and_disconnect_unref_close", ["close"],
+        context, "GC_close_and_disconnect_unref_close", ["close"],
         include_rw_method=False, binary=binary,
     )
 
     def observe_close(phase, marker):
         if phase == "before_close":
-            rt.record_step(
+            ops.record_step(
                 "执行 libpq driver: close-path prepared statement",
                 command=" ".join(close_command), logfile=close_log,
                 output="prepared SQL 已执行，客户端连接保持，等待发送显式 Close。",
             )
-            return rt.capture_console_state("after_close_before")
-        return rt.capture_console_state("after_close_after")
+            return ops.capture_console_state("after_close_before")
+        return ops.capture_console_state("after_close_after")
 
     close_observations, close_rc, close_output = observe_phases(
         close_driver,
@@ -518,32 +519,32 @@ def _run_close_unref_case(rt):
     )
     if close_rc != 0:
         raise GlobalCacheFailure("close path driver failed with rc=%s" % close_rc)
-    _append_driver_log(rt.libpq_log, close_output)
+    _append_driver_log(ops.libpq_log, close_output)
     close_before_state = close_observations["before_close"]
     close_before_rows = ["|".join(row) for row in close_before_state["global"] if len(row) >= 2 and "gc_close_unref_close" in row[1]]
     close_after_close_state = close_observations["after_close"]
     close_after_close_rows = ["|".join(row) for row in close_after_close_state["global"] if len(row) >= 2 and "gc_close_unref_close" in row[1]]
 
-    rt.record_step(
+    ops.record_step(
         "等待 gc_close_unref_close 后端引用释放",
         output="显式 Close 后，client 引用已释放；继续等待 server_lifetime 到期，并确认 gc_close_unref_close 的 ref_count 从 1 再降到 0",
     )
-    rt.summary["close_unref_close_output"] = close_output
-    close_final_state, close_final_matched = _wait_target_entries_unref(rt, "gc_close_unref_close", 1, 15)
+    ops.summary["close_unref_close_output"] = close_output
+    close_final_state, close_final_matched = _wait_target_entries_unref(context, "gc_close_unref_close", 1, 15)
     close_final_rows = ["|".join(row) for row in close_final_matched]
 
     disconnect_driver, disconnect_command, disconnect_log = _start_phased_libpq(
-        rt, "GC_close_and_disconnect_unref_disconnect", ["disconnect"],
+        context, "GC_close_and_disconnect_unref_disconnect", ["disconnect"],
         include_rw_method=False, binary=binary,
     )
 
     def observe_disconnect(phase, marker):
-        rt.record_step(
+        ops.record_step(
             "执行 libpq driver: disconnect-path prepared statement",
             command=" ".join(disconnect_command), logfile=disconnect_log,
             output="prepared SQL 已执行，客户端连接保持，等待断开连接。",
         )
-        return rt.capture_console_state("after_disconnect_before")
+        return ops.capture_console_state("after_disconnect_before")
 
     disconnect_observations, disconnect_rc, disconnect_output = observe_phases(
         disconnect_driver,
@@ -554,20 +555,20 @@ def _run_close_unref_case(rt):
     )
     if disconnect_rc != 0:
         raise GlobalCacheFailure("disconnect path driver failed with rc=%s" % disconnect_rc)
-    _append_driver_log(rt.libpq_log, disconnect_output)
+    _append_driver_log(ops.libpq_log, disconnect_output)
     disconnect_before_state = disconnect_observations["before_disconnect"]
     disconnect_before_rows = ["|".join(row) for row in disconnect_before_state["global"] if len(row) >= 2 and "gc_close_unref_disconnect" in row[1]]
-    rt.summary["close_unref_disconnect_output"] = disconnect_output
-    disconnect_after_disconnect_state = rt.capture_console_state("after_disconnect_after")
+    ops.summary["close_unref_disconnect_output"] = disconnect_output
+    disconnect_after_disconnect_state = ops.capture_console_state("after_disconnect_after")
     disconnect_after_disconnect_rows = ["|".join(row) for row in disconnect_after_disconnect_state["global"] if len(row) >= 2 and "gc_close_unref_disconnect" in row[1]]
-    rt.record_step(
+    ops.record_step(
         "等待 gc_close_unref_disconnect 引用释放",
         output="等待连接断开且 server_lifetime 到期，并确认 gc_close_unref_disconnect entry 的 ref_count 回到 0",
     )
-    waited_state, matched_unref = _wait_target_entries_unref(rt, "gc_close_unref_disconnect", 1, 15)
+    waited_state, matched_unref = _wait_target_entries_unref(context, "gc_close_unref_disconnect", 1, 15)
     disconnect_after_rows = ["|".join(row) for row in waited_state["global"] if len(row) >= 2 and "gc_close_unref_disconnect" in row[1]]
 
-    rt.summary["close_unref_snapshots"] = {
+    ops.summary["close_unref_snapshots"] = {
         "close_before": close_before_rows,
         "close_after_close": close_after_close_rows,
         "close_final": close_final_rows,
@@ -575,10 +576,10 @@ def _run_close_unref_case(rt):
         "disconnect_after_disconnect": disconnect_after_disconnect_rows,
         "disconnect_final": disconnect_after_rows,
     }
-    rt.summary["close_unref_waited_entries"] = ["|".join(row) for row in matched_unref]
-    after_state = rt.capture_console_state("after")
-    rt.summary["after_stats"] = after_state["stats"]
-    _assert_close_unref(rt, before_state, after_state)
+    ops.summary["close_unref_waited_entries"] = ["|".join(row) for row in matched_unref]
+    after_state = ops.capture_console_state("after")
+    ops.summary["after_stats"] = after_state["stats"]
+    _assert_close_unref(context, before_state, after_state)
     return after_state
 
 

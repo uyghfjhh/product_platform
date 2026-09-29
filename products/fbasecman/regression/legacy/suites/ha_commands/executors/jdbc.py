@@ -13,36 +13,37 @@ from cmanconf import load_regression_config
 from platform_regress.clients import jdbc as jdbc_client
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
 from suites.ha_commands.helpers import *
+import fbasecman_ops as ops
 
 __all__ = ['_run_jdbc_console_ha_commands']
 
 
-def _run_jdbc_console_ha_commands(rt):
-    conf = rt.start(transform=_without_promoted)
+def _run_jdbc_console_ha_commands(context):
+    conf = ops.start(transform=_without_promoted)
     before = conf.read_bytes()
-    jar = rt.root / rt.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
-    source = rt.root / "suites" / "ha_commands" / "assets" / "jdbc" / "HaConsoleCommands.java"
+    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    source = ops.root / "suites" / "ha_commands" / "assets" / "jdbc" / "HaConsoleCommands.java"
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC asset or jar: %s %s" % (source, jar))
-    rt.run_command(
-        jdbc_client.javac_argv(jar, source, dest_dir=rt.workdir),
-        rt.logs_dir / "HaConsoleCommands.javac.log", cwd=rt.workdir,
+    ops.run_command(
+        jdbc_client.javac_argv(jar, source, dest_dir=ops.workdir),
+        ops.logs_dir / "HaConsoleCommands.javac.log", cwd=ops.workdir,
         step_title="编译 JDBC 控制台高可用命令 driver")
     jdbc_url = jdbc_client.build_url(
-        "127.0.0.1", rt.listen_port, "console", {"preferQueryMode": "simple"})
+        "127.0.0.1", ops.listen_port, "console", {"preferQueryMode": "simple"})
     business_url = jdbc_client.build_url(
-        "127.0.0.1", rt.listen_port, "mmr_group", {"preferQueryMode": "simple"})
+        "127.0.0.1", ops.listen_port, "mmr_group", {"preferQueryMode": "simple"})
     single_url = jdbc_client.build_url(
-        "127.0.0.1", rt.listen_port, "single_group", {"preferQueryMode": "simple"})
-    snapshots = rt.workdir / "jdbc-config-snapshots"
-    ports = rt.env.config["database"]["ports"]
-    _, output = rt.run_command(
+        "127.0.0.1", ops.listen_port, "single_group", {"preferQueryMode": "simple"})
+    snapshots = ops.workdir / "jdbc-config-snapshots"
+    ports = ops.env.config["database"]["ports"]
+    _, output = ops.run_command(
         jdbc_client.java_argv(
-            jdbc_client.classpath(rt.workdir, jar), "HaConsoleCommands",
+            jdbc_client.classpath(ops.workdir, jar), "HaConsoleCommands",
             jdbc_url, "admin", "", str(conf), str(snapshots),
             business_url, single_url, str(ports["mmr1"]),
             str(ports["mmr2"]), str(ports["mmr1_standby1"])),
-        rt.logs_dir / "HaConsoleCommands.log", cwd=rt.workdir,
+        ops.logs_dir / "HaConsoleCommands.log", cwd=ops.workdir,
         step_title="通过 JDBC 控制台执行全部高可用命令")
     markers = (
         "JDBC_CONNECT=OK", "SET_NODE_PARTED=OK", "SET_NODE_ACTIVE=OK",
@@ -60,7 +61,7 @@ def _run_jdbc_console_ha_commands(rt):
         "ACTIVE_ROUTE_WRITE_CLUSTER=%s" % ports["mmr2"],
     )
     def fields(snapshot):
-        objects, _ = rt._semantic_objects(
+        objects, _ = ops._semantic_objects(
             (snapshots / snapshot).read_text(encoding="utf-8"))
         return objects
 
@@ -82,19 +83,19 @@ def _run_jdbc_console_ha_commands(rt):
         actual = fields(snapshot).get(identity, {}).get(field)
         check_results.append((snapshot, identity, field, expected, actual))
     for marker_name in ("ACTIVE_RESTORES_SINGLE_ROUTE", "WEIGHT_RESTORES_SINGLE_ROUTE"):
-        rt.check("验证 %s 路由结果" % marker_name,
+        ops.check("验证 %s 路由结果" % marker_name,
                  "结果为 pg_cluster_1 的 primary 或 standby",
                  "marker output checked",
                  any((marker_name + "=%s" % port) in output
                      for port in (ports["mmr1"], ports["mmr1_standby1"])))
-    rt.check(
+    ops.check(
         "验证每条 JDBC 持久化命令的配置快照",
         "各阶段只读快照中的 datasource/group 目标字段均为命令期望值",
         "\n".join("%s %s.%s expected=%s actual=%s" %
                   (item[0], item[1], item[2], item[3], item[4])
                   for item in check_results),
         all(item[3] == item[4] for item in check_results))
-    rt.check(
+    ops.check(
         "验证 REFRESH CLUSTER 不修改配置",
         "REFRESH 前后配置字节完全一致",
         "refresh_config_unchanged=%s" %
@@ -102,15 +103,15 @@ def _run_jdbc_console_ha_commands(rt):
          (snapshots / "10_after_refresh.conf").read_bytes()),
         (snapshots / "09_cluster_2_active.conf").read_bytes() ==
         (snapshots / "10_after_refresh.conf").read_bytes())
-    final_objects, _ = rt._semantic_objects(conf.read_text(encoding="utf-8"))
-    initial_objects, _ = rt._semantic_objects(before.decode("utf-8"))
+    final_objects, _ = ops._semantic_objects(conf.read_text(encoding="utf-8"))
+    initial_objects, _ = ops._semantic_objects(before.decode("utf-8"))
     initial_objects[("group", "mmr_group")]["promoted_cluster"] = '"pg_cluster_1"'
-    rt.check(
+    ops.check(
         "验证 JDBC 高可用命令最终配置语义",
         "往返字段均恢复，仅保留 PROMOTED 命令新增的 promoted_cluster",
         "final_semantics_expected=%s" % (final_objects == initial_objects),
         final_objects == initial_objects)
-    rt.check(
+    ops.check(
         "验证 JDBC 控制台命令及实际路由结果",
         "全部命令执行、内存状态和实际 backend 端口均符合预期",
         output, all(marker in output for marker in markers))
