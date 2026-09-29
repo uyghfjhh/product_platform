@@ -15,7 +15,7 @@
 """
 
 from platform_regress.execution.ports import (
-    free_port_pair, non_ephemeral_port_range, port_is_free,
+    free_port_block, non_ephemeral_port_range, port_is_free,
 )
 from platform_regress.persistence.atomic import write_json
 from platform_regress.runtime import CaseRuntimeFailure
@@ -55,8 +55,9 @@ def _non_ephemeral_port_range():
 def _port_pair(seed):
     """分配 (listen, read) 端口对；内部经模块级名字调用，保持可 patch。"""
     try:
-        return free_port_pair(
-            seed, is_free=_port_free, port_range=_non_ephemeral_port_range)
+        base = free_port_block(
+            seed, 3, is_free=_port_free, port_range=_non_ephemeral_port_range)
+        return base, base + 1
     except RuntimeError as exc:
         raise HaCommandFailure(str(exc))
 

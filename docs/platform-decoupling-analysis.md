@@ -122,11 +122,11 @@ runtime 构造注入 resolver `env`/`context_data`）；产品侧 executor 与 r
 
 #### 3.6.1 平台控制面核心（`backend/platform_app/`）：隐蔽的数据库形态与目录强假设
 平台控制面原本应完全中立，但深入排查后发现以下隐蔽耦合：
-1. **拓扑解析强绑定 PostgreSQL/pgcluster（`backend/platform_app/topology.py`）**：
+1. **拓扑解析强绑定 PostgreSQL/pgcluster（`backend/platform_app/topology.py`）**（✅ 已整改，见 3.6.5 阶段二落地）：
    - `configured_topology()` 与 `observed_status()` 在子进程中内嵌执行 Python 脚本，**直接写死 `from pgclusterlib.config import load` 和 `from pgclusterlib.runtime import Runtime`**；
    - 脚本内硬编码了 PostgreSQL 专属的四类复制模型：`streaming`、`logical`、`citus`、`mmr`；
    - **架构影响**：平台控制面目前本质上是“PostgreSQL 专用控制面”，一旦接入非 PG 架构的产品（如 Redis、Kafka、ClickHouse 等），该拓扑服务完全无法复用。
-2. **复制观测模型未插件化（`backend/platform_app/replication_observations.py`）**：
+2. **复制观测模型未插件化（`backend/platform_app/replication_observations.py`）**（✅ 已整改，见 3.6.5 阶段二落地）：
    - 在平台共享层直接定义了 `postgres.replication` 观测实体解析，将特定数据库的流复制指标（LSN、replay lag、slot）作为平台核心逻辑；
    - **架构影响**：违反产品适配器模式，应当下沉为数据库产品专有的 Observation 插件。
 3. **开发机兄弟目录假定（`backend/platform_app/config.py`）**：
@@ -215,7 +215,11 @@ graph TD
 
 - **阶段一 ✅ 已完成**：`native.py`/`common_native.py`/`ha_native.py` 全部改用 `context.environment["local_host"]`（provider 注入，`FBCMAN_LOCAL_HOST` 兜底）；vendored 套件统一走 `fbasecman_ops.LOCAL_HOST`；`isolated.py` 的 `TMP_PREFIX` 改为 `_tmp_prefix(context)`——从 `environment["tmp_root"]`/`FBASE_REGRESS_TMP_ROOT` 派生，安全断言与默认值同源；`router.py` 部署默认值改 `FBCMAN_*` 环境变量可覆盖。
 - **阶段三 ✅ 已完成**：`CaseContext.expand()` 支持 `{env.<key>}`/`{node.<name>.<field>}` 占位符；`cases.json` 的 228 条用例中 `127.0.0.1`、`/usr/local/fbase15.15`、`/home/postgres/license/license.dat`、`/tmp/fbase_regress_*`、`-U postgres` 已全部参数化（`env.user`/`env.local_host`/`env.db_bin_dir`/`env.license_file`/`env.tmp_root`/`env.contrib_root`/`node.*`），环境值统一由 `regress.yaml` + provider 注入；`pg_hba`/`postgresql.conf` 生成串、`user` 字段校验同步适配。
-- **阶段二 ⏳ 待办**：`topology.py`/`replication_observations.py` 下沉产品层、JDBC jar 版本扫描仍为开放项。
+- **阶段二 ✅ 已完成**：
+  - `platform_app/topology.py` 改为中立的部署驱动分发层——按环境记录 `deployment_driver` 字段（缺省 `pgcluster`）选择驱动；pgclusterlib 与 streaming/logical/citus/mmr schema 推导移入内置驱动 `platform_app/pgcluster_topology.py`，新产品可在产品包内提供同构驱动模块（`topology()`/`status()` 契约）并借环境字段接入，平台核心零改动。
+  - `platform_app/replication_observations.py` 拆分：通用 `ParsedObservation`/`parse_tsv_rows` 移入 `platform_app/observations.py`；`postgres.replication` 指标解析下沉至 PG 系产品共享库 `products/pg_common/observations.py`（fbasecman 与 fbase-database 共用，无 product.yaml 不参与产品发现）。
+  - `platform_regress/execution/ports.py` 泛化：`free_port_pair` 改为 `free_port_block(seed, count)` 通用 N 连端口分配，fbasecman 的 listen/read/prometheus 三连假设移回产品调用方。
+  - JDBC jar 版本锁解除：`platform_regress.clients.jdbc.resolve_jar` 支持 `version=None` 自动选取 `postgresql-*.jar` 最新版；provider 注入点与 4 处 vendored 执行器、`global_cache/drivers.py` 的 `42.7.7` 默认值全部改走版本扫描。
 - **有意保留**：`pg_hba` 信任规则中的 `127.0.0.1/32`（写入被测实例配置的语义值）、`process.py` 的上游配置 needle（改写目标的出厂默认值）、端口探测 `bind(("127.0.0.1", 0))`、用例自建测试账号（`fbase_regress_*`/`sao`/`sso`）、SQL 断言内容。
 
 #### 3.6.6 新增原生用例迁移中的反模式与隐蔽硬编码审查（以最新 outstanding 迁移为例）

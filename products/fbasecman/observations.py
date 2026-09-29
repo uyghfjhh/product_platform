@@ -4,11 +4,8 @@ These parsers accept psql's unaligned, tab-separated output so the platform
 stores fields instead of scraping human-facing report text.
 """
 
-from platform_app.replication_observations import (
-    ParsedObservation,
-    parse_replication,
-    parse_tsv_rows,
-)
+from platform_app.observations import ParsedObservation, parse_tsv_rows
+from products.pg_common.observations import parse_replication
 
 
 def parse_psql_rows(text: str, required: set[str]) -> list[dict[str, str]]:

@@ -33,7 +33,7 @@ from platform_regress.evidence.config_diff import (
     command_mutation_scope, semantic_config_diff,
 )
 from platform_regress.execution.command import run_logged_command
-from platform_regress.execution.ports import free_port_pair, port_is_free
+from platform_regress.execution.ports import free_port_block, port_is_free
 from platform_regress.reporting.model import ReportStep
 from platform_regress.runtime import CaseRuntime
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
@@ -50,7 +50,8 @@ class FbasecmanCaseRuntime(CaseRuntime):
             root, case, env=env, context_data=context_data)
         self.proxy_log = self.run_root / "fbasecman.log"
         self._port_seed = 1
-        self.listen_port, self.read_port = free_port_pair(1)
+        self.listen_port = free_port_block(1, 3)
+        self.read_port = self.listen_port + 1
         self.pid_file = self.workdir / "fbasecman.pid"
         self.active_conf = None
         self._crash_info = None
@@ -183,7 +184,8 @@ class FbasecmanCaseRuntime(CaseRuntime):
             self.trace("[retry] rendered listener ports became busy: %s" %
                        ",".join(str(port) for port, free in zip(ports, availability) if not free))
             self._port_seed += 1
-            self.listen_port, self.read_port = free_port_pair(self._port_seed)
+            self.listen_port = free_port_block(self._port_seed, 3)
+            self.read_port = self.listen_port + 1
             self.process.listen_port = self.listen_port
             self.process.prom_port = self.listen_port + 2
         else:

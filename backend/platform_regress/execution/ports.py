@@ -1,9 +1,9 @@
-"""非临时端口段的空闲端口探测与端口对分配。
+"""非临时端口段的空闲端口探测与连续端口块分配。
 
 回归用例需要为代理监听端口动态选口：固定端口易被历史残留进程占用，
 而内核临时端口段（ephemeral range）又可能被客户端连接抢占。
-这里统一提供避开临时段的 (listen, read, prom) 三连端口分配，
-fbasecman 实际需要 listen、listen+1(read) 与 listen+2(prometheus) 三个端口。
+``free_port_block`` 统一提供避开临时段的 N 连端口分配，
+具体需要几个端口由各产品调用方决定。
 """
 
 import os
@@ -48,21 +48,18 @@ def non_ephemeral_port_range():
     return max(usable, key=lambda item: item[1] - item[0])
 
 
-def free_port_pair(seed, is_free=None, port_range=None):
-    """在非临时段内分配一组三连空闲端口，返回 (listen, read)。
+def free_port_block(seed, count, is_free=None, port_range=None):
+    """在非临时段内分配 count 个连续空闲端口，返回起始端口。
 
-    listen+2（prometheus 端口）也一并校验保留。seed 叠加进程号做起点散列，
-    降低并发用例撞到同一候选端口的概率。
+    seed 叠加进程号做起点散列，降低并发用例撞到同一候选端口的概率。
     ``is_free``/``port_range`` 可注入替换实现，便于测试桩或兼容旧调用方。
     """
     is_free = is_free or port_is_free
     range_start, range_end = (port_range or non_ephemeral_port_range)()
-    pair_count = (range_end - range_start - 1) // 2
-    start_index = (os.getpid() * 17 + seed) % pair_count
-    for offset in range(pair_count):
-        listen = range_start + 2 * ((start_index + offset) % pair_count)
-        # fbasecman binds the console listener, read listener and
-        # prometheus endpoint (listen + 2); reserve all three as a unit.
-        if is_free(listen) and is_free(listen + 1) and is_free(listen + 2):
-            return listen, listen + 1
-    raise RuntimeError("no free port pair available")
+    slots = (range_end - range_start - count + 2) // count
+    start_index = (os.getpid() * 17 + seed) % slots
+    for offset in range(slots):
+        base = range_start + count * ((start_index + offset) % slots)
+        if all(is_free(base + index) for index in range(count)):
+            return base
+    raise RuntimeError("no free port block available")

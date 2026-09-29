@@ -10,6 +10,7 @@ import yaml
 
 from platform_app.product_catalog import discover_products
 from platform_app.providers import CommandSpec
+from platform_regress.clients import jdbc as jdbc_client
 from platform_app.topology import configured_topology
 from products.fbasecman.observations import (
     parse_group_members,
@@ -80,8 +81,8 @@ def native_case_context(settings, environment):
             "suites/ha_commands/assets/jdbc/HaSqlParseExtended.java"),
         "ha_console_java_asset": str(settings.product_regress_root("fbasecman") /
             "suites/ha_commands/assets/jdbc/HaConsoleCommands.java"),
-        "jdbc_jar": str(settings.product_regress_root("fbasecman") /
-            "lib_jdbc/postgresql-42.7.7.jar"),
+        "jdbc_jar": str(jdbc_client.resolve_jar(
+            settings.product_regress_root("fbasecman") / "lib_jdbc", None)),
     })
     # 节点远程停/起与本地 psql 路径（对齐 legacy env.config database/local 段）：
     # 环境 override 优先，产品 regress.yaml 兜底。

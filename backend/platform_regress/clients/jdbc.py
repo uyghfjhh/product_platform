@@ -10,6 +10,7 @@ javac/java argv building; phased stdin control lives in
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -18,9 +19,23 @@ class JdbcError(RuntimeError):
     """A JDBC driver asset, jar or invocation contract failed."""
 
 
-def resolve_jar(lib_dir, version, pattern="postgresql-%s.jar"):
-    """Return the pgjdbc jar under ``lib_dir`` or raise JdbcError."""
-    jar = Path(lib_dir) / (pattern % version)
+def _version_key(path):
+    return tuple(int(part) for part in re.findall(r"\d+", path.stem))
+
+
+def resolve_jar(lib_dir, version=None, pattern="postgresql-%s.jar"):
+    """Return the pgjdbc jar under ``lib_dir`` or raise JdbcError.
+
+    ``version=None`` selects the newest matching jar by numeric parts.
+    """
+    lib_dir = Path(lib_dir)
+    if version is None:
+        stem = pattern.split("%", 1)[0]
+        candidates = list(lib_dir.glob(stem + "*.jar"))
+        if not candidates:
+            raise JdbcError("missing jdbc jar: %s" % (lib_dir / (stem + "*.jar")))
+        return max(candidates, key=_version_key)
+    jar = lib_dir / (pattern % version)
     if not jar.exists():
         raise JdbcError("missing jdbc jar: %s" % jar)
     return jar

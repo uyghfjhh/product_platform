@@ -8,6 +8,7 @@ import re
 import sys
 import shlex
 from pathlib import Path
+from platform_regress.clients import jdbc as jdbc_client
 
 from cmanconf import load_regression_config
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
@@ -222,7 +223,7 @@ def _run_sql_parse_heartbeat_bind_normal(context):
             'pool_reserve_prepared_statement yes',
             'heartbeat_request "select 1"',
         )))
-    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     source = ops.root / "suites" / "sql_parse" / "assets" / "HeartbeatBindNormal.java"
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC heartbeat asset or jar: %s %s" % (source, jar))

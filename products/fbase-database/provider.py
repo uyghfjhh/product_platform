@@ -11,7 +11,7 @@ import psycopg
 import yaml
 
 from platform_app.providers import CommandSpec, Observation
-from platform_app.replication_observations import parse_replication
+from products.pg_common.observations import parse_replication
 from platform_app.event_contracts import SceneObservationError
 from platform_app.scene import emit_observation, endpoint_id
 from platform_app.topology import configured_topology

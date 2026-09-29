@@ -21,7 +21,7 @@ __all__ = ['_run_jdbc_console_ha_commands']
 def _run_jdbc_console_ha_commands(context):
     conf = ops.start(transform=_without_promoted)
     before = conf.read_bytes()
-    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     source = ops.root / "suites" / "ha_commands" / "assets" / "jdbc" / "HaConsoleCommands.java"
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC asset or jar: %s %s" % (source, jar))

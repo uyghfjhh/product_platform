@@ -291,7 +291,7 @@ def normalize_phased_prepared_operations(operations):
 def jdbc_jar(context, version=None):
     return jdbc_client.resolve_jar(
         ops.root / ops.env.config["local"]["jdbc_lib_dir"],
-        version or ops.case.jdbc.get("version", "42.7.7"),
+        version or ops.case.jdbc.get("version"),
     )
 
 

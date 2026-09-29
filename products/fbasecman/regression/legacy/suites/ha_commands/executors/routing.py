@@ -8,6 +8,7 @@ import re
 import sys
 import shlex
 from pathlib import Path
+from platform_regress.clients import jdbc as jdbc_client
 
 from cmanconf import load_regression_config
 from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
@@ -99,7 +100,7 @@ def _run_mmr_port_write_route(context):
 
 def _run_sql_parse_extended_protocol(context):
     ops.start(transform=_sql_parse_transform("mmr_group"))
-    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     source = ops.root / "suites" / "ha_commands" / "assets" / "jdbc" / "HaSqlParseExtended.java"
     if not jar.exists() or not source.exists():
         raise HaCommandFailure("missing JDBC asset or jar: %s %s" % (source, jar))

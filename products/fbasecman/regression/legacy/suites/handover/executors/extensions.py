@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from platform_regress.clients import jdbc as jdbc_client
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess
 from suites.handover.runtime import HandoverFailure
@@ -156,7 +157,7 @@ def execute_global_prepared_statements(context):
 
     # 2. 编译并运行 HandoverGlobalPrepared.java
     source = ops.root / "suites" / "handover" / "assets" / "jdbc" / "HandoverGlobalPrepared.java"
-    jar = ops.root / ops.env.config["local"]["jdbc_lib_dir"] / "postgresql-42.7.7.jar"
+    jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     build = ops.workdir / "global_ps_first"
     build.mkdir(parents=True, exist_ok=True)
     compile_res = run_logged_command(["javac", "-cp", str(jar), "-d", str(build), str(source)],
