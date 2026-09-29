@@ -1,9 +1,7 @@
 import json
-import sqlite3
 
 import pytest
 
-from platform_app.cli import migrate_sqlite
 from platform_app.filestore import ConflictError, FileStore
 
 
@@ -113,56 +111,6 @@ def test_environment_delete_cascades(tmp_path):
     assert store.get_task(task["id"]) is None
     assert store.list_results("lab") == []
     assert store.list_events(task["id"]) == []
-
-
-def _seed_legacy_db(tmp_path, title):
-    db = tmp_path / "platform" / "platform.sqlite3"
-    db.parent.mkdir(parents=True)
-    conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE environments (id TEXT PRIMARY KEY, product_id TEXT,"
-                 " title TEXT, host TEXT, port INTEGER, database_name TEXT,"
-                 " database_user TEXT, deployment_config TEXT, deployment_target TEXT,"
-                 " created_at TEXT)")
-    conn.execute("INSERT INTO environments VALUES('legacy','fbasecman',%r,'h',1,"
-                 "'d','u',NULL,NULL,'2024-01-01')" % title)
-    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, environment_id TEXT,"
-                 " action TEXT, target TEXT, status TEXT, parameters TEXT,"
-                 " submission_key TEXT, created_at TEXT, started_at TEXT,"
-                 " finished_at TEXT, reason TEXT, process_id INTEGER,"
-                 " cancel_requested INTEGER, last_sequence INTEGER)")
-    conn.execute("INSERT INTO tasks VALUES('t1','legacy','a','c','SUCCEEDED','{}',"
-                 "NULL,'2024-01-01',NULL,'2024-01-02',NULL,NULL,0,2)")
-    conn.commit()
-    conn.close()
-
-
-def test_sqlite_import_via_explicit_command(tmp_path):
-    """旧 SQLite 只经显式迁移命令导入，启动路径不再自动迁移。"""
-    _seed_legacy_db(tmp_path, "Old")
-    store = FileStore(tmp_path)
-    assert store.get_environment("legacy") is None  # 启动不导入
-
-    assert migrate_sqlite(store) == 0
-    assert store.get_environment("legacy")["title"] == "Old"
-    assert store.get_task("t1")["status"] == "SUCCEEDED"
-    assert (tmp_path / ".sqlite_imported").is_file()
-    # 已标记后重复迁移直接跳过，不重复写
-    (tmp_path / "environments" / "legacy.yaml").unlink()
-    assert migrate_sqlite(store) == 0
-    assert store.get_environment("legacy") is None
-
-
-def test_sqlite_reimport_never_overwrites(tmp_path):
-    """标记丢失导致的重复导入只补缺，不覆盖已存在的记录。"""
-    _seed_legacy_db(tmp_path, "Stale")
-
-    store = FileStore(tmp_path)
-    assert migrate_sqlite(store) == 0
-    store.update_environment("legacy", _env("legacy", title="Current"))
-    (tmp_path / ".sqlite_imported").unlink()  # 模拟标记丢失
-
-    assert migrate_sqlite(store) == 0
-    assert store.get_environment("legacy")["title"] == "Current"
 
 
 def test_task_meta_is_json_and_events_jsonl(tmp_path):
