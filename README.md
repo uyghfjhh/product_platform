@@ -49,22 +49,22 @@ cd products/fbasecman
 - **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
 - **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。
 - **License**:密钥库默认在 `data/license/keys`(`v1.N` 目录,厂商信息在同级 `config.json`);`PRODUCT_PLATFORM_LICENSE_KEYS`/`PRODUCT_PLATFORM_LICENSE_VENDOR` 可覆盖,迁移期可把旧 `fd_licenser` 密钥目录整体指入或拷入。签发为 Python 实现(Ed25519/Argon2id/XChaCha20),格式与签名由平台自验证,不再调用旧 C 校验器;自动测试只用临时密钥。
-- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/legacy_cman/<环境>/output/runs/`。SQLite 备份用在线备份工具或先停服务(WAL)。
+- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/operations/`,用例报告与证据在 `data/legacy_cman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;旧 `platform.sqlite3` 仅作 `product-platform migrate-sqlite` 的一次性迁移源。
 
 ## 目录结构
 
 ```text
 product_platform/
-├── backend/platform_app/          # 当前过渡实现(FastAPI + SQLite + Huey)
+├── backend/platform_app/          # 平台服务(FastAPI + FileStore 文件存储 + Huey 文件队列)
 │   ├── api.py                      #   全部 HTTP API(待按领域拆分)
 │   ├── actions.py                  #   任务执行器:环境锁/子进程/取消/事件/结果发布
 │   ├── providers.py                #   产品提供者分发(待全部迁入适配器)
-│   ├── storage.py + migrations.py   #   SQLite 元数据门面 + 事务式 schema 迁移
-│   ├── queue.py + cli.py           #   Huey 队列;启动入口(API + 后台 consumer)
+│   ├── filestore.py                #   文件元数据存储(环境/任务/事件/结果,原子写 + flock)
+│   ├── queue.py + cli.py           #   FileHuey 队列;启动入口(API + consumer + migrate-sqlite)
 │   ├── config.py + catalog.py      #   全局配置;产品目录
 │   ├── license.py                  #   License 生成与密钥管理(Python 重写)
 │   ├── diagnostics.py              #   AI 失败诊断(证据捆绑 + 引用防幻觉校验)
-│   ├── database.py + topology.py + scene.py   # SQL 查询;拓扑解析;场景动画事件
+│   ├── database.py + topology.py + scene.py   # SQL 查询;拓扑驱动分发(驱动见 pgcluster_topology.py);场景动画事件
 │   └── product_catalog.py          # 产品 manifest 发现与契约校验
 ├── frontend/src/                   # React 19 + TS + AntD 前端
 │   ├── views/                      #   部署/测试(多活·等保·fbasecman)/License 页面
@@ -74,9 +74,9 @@ product_platform/
 │   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
 │   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/
 │   └── demo/                       # 无数据库依赖的产品接入样例
-├── tests/                          # 平台自身测试(249 项 pytest)
+├── tests/                          # 平台自身测试(250+ 项 pytest)
 ├── data/                           # 控制面与本机历史资源（数据库实例不属于平台状态）
-│   ├── platform/                   # SQLite、队列、锁、操作/Web 日志
+│   ├── platform/                   # FileHuey 队列、锁、操作/Web 日志；旧 platform.sqlite3 仅为迁移源
 │   ├── environments/               # profile、fixture 上下文、回归证据
 │   └── <legacy-pgdata>/            # 迁移期旧实例资源；由 pgcluster 管理，不是平台数据库
 ├── docs/                           # design.md(设计文档)+ progress.md(进度)

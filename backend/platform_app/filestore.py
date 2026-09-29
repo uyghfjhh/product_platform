@@ -16,9 +16,7 @@ flock 独占锁，保证并发安全。
 import fcntl
 import hashlib
 import json
-import logging
 import os
-import sqlite3
 import tempfile
 import uuid
 from collections.abc import Iterator
@@ -36,8 +34,6 @@ def now() -> str:
 class ConflictError(RuntimeError):
     pass
 
-
-logger = logging.getLogger(__name__)
 
 ACTIVE_STATUSES = ("QUEUED", "RUNNING", "CANCELLING")
 TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED"}
@@ -58,7 +54,6 @@ class FileStore:
         self.platform_dir.mkdir(parents=True, exist_ok=True)
         for sub in ("environments", "tasks", "results", "diagnoses", "locks"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-        self._import_legacy_sqlite()
 
     # ---- 底层原语 ---------------------------------------------------------
 
@@ -163,31 +158,16 @@ class FileStore:
             for row in self._task_rows()
         )
 
-    # ---- 旧 SQLite 数据一次性导入 ------------------------------------------
+    # ---- 旧 SQLite 数据导入（显式迁移，不走启动路径） ------------------------
 
-    def _import_legacy_sqlite(self) -> None:
-        marker = self.root / ".sqlite_imported"
-        legacy = self.platform_dir / "platform.sqlite3"
-        if marker.exists() or not legacy.is_file():
-            return
-        try:
-            with self._locked():
-                if marker.exists():
-                    return
-                skipped = self._import_sqlite_rows(legacy)
-                marker.write_text(now(), encoding="utf-8")
-                if skipped:
-                    logger.warning(
-                        "旧 SQLite 导入跳过了 %d 条已存在的记录——"
-                        "若这不是首次导入，请检查 .sqlite_imported 标记是否丢失",
-                        skipped,
-                    )
-        except (sqlite3.Error, OSError, KeyError, ValueError) as exc:
-            # 旧库损坏不应阻塞文件存储启动；skip-existing 使重试幂等
-            logger.warning("旧 SQLite 数据导入失败并跳过: %s", exc)
+    def import_legacy_sqlite_rows(self, db_path: Path) -> int:
+        """逐条导入旧库行；已存在的目标文件一律跳过，返回跳过计数。
 
-    def _import_sqlite_rows(self, db_path: Path) -> int:
-        """逐条导入旧库行；已存在的目标文件一律跳过，返回跳过计数。"""
+        由 ``sqlite_migrate`` 显式迁移命令调用；FileStore 正常运行路径不
+        再接触 sqlite3。
+        """
+        import sqlite3
+
         skipped = 0
         connection = sqlite3.connect(db_path, timeout=10)
         connection.row_factory = sqlite3.Row
