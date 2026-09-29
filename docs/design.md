@@ -256,8 +256,11 @@ fbasecman、多活和等保的既有回归实现是迁移行为基准，参考�
    环境/二进制下批量对照旧代码 verdict；环境暂不可用时只能记为“代码迁移待实测”，
    不得宣称完成。
 
-当前 fbasecman 剩余目标即使已经批量接入平台引擎，只要仍调用旧 runtime/executor
-宿主，就只能定性为“批量接线完成”，后续必须按 suite 抽取公共能力、替换临时宿主。
+fbasecman 212 条已全部达到本完成标准：68 条 SDK-native 用例 + 144 条
+executor 用例（`def case_x(context)` + `fbasecman_ops` 产品操作面转发，
+runtime 构造注入 resolver `env`/`context_data`，不再自行加载 legacy 配置、
+不再经过 suite `run_case`/runner/registry/framework）。executor 与 runtime
+方法库作为产品知识保留在 `products/fbasecman/` 内，其通用原语全部为平台件。
 
 ### 5.1 RegressionEngine
 

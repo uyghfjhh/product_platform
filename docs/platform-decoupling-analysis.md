@@ -12,7 +12,7 @@
 经过 2026-09-28 下午的连续重构提交（`45f08f9`、`772e9b3`、`d3adddd`、`236b44c`），前一份报告中指出的**平台核心硬编码泄漏**、**前端公共视图业务穿透**、**用例依赖门禁缺失**以及**旧 shim 垫片层冗余**等主要阻碍已**基本被彻底拔除并全量通过自动化验证**。
 
 平台的测试门禁现状：
-- 平台原生单元测试：**226 passed**（100% 通过，无一失败）
+- 平台原生单元测试：**249 passed**（100% 通过，无一失败）
 - FBase legacy 单测：**149 passed**（100% 通过）
 - fbasecman legacy 单测：**258 passed**（仅 1 项依赖历史 `output/runs` 产物的文件检查失败，其余全绿）
 - 前端 TypeScript 类型检查与 Vite 生产构建：**0 错误**通过（`npm run build` 生成 `frontend/dist`）
@@ -24,7 +24,7 @@
 | :--- | :---: | :---: | :--- | :--- |
 | **产品接入与发现机制** | 85% | **98%** | `config.py`、`api.py`、`cli.py` 均已改为 `discover_products()` 动态扫描 | 仅待增加第三产品（demo）插拔测试 |
 | **数据库集群部署能力** | 90% | **92%** | 全面由平台 `PgclusterDatabaseProvider` 接管，产品零底层生命周期 | 部署页深色交互与 8081 参考站对齐 |
-| **回归测试框架通用内核** | 70% | **90%** | `requirements` 门禁、`daemon` 守护、`jdbc` 客户端、`pgwire` 原语全上收平台 | `fbase-database` 的 legacy framework 待随单测退役 |
+| **回归测试框架通用内核** | 70% | **96%** | `requirements`/`daemon`/`jdbc`/`pgwire`/`evidence`/`reporting` 全上收平台；fbasecman 212 条全部平台宿主（68 SDK-native + 144 `context`/`ops` executor），`LegacySuiteCase` 清零 | `fbase-database` 的 legacy framework 待随单测退役 |
 | **通用 License 签发** | 95% | **98%** | 纯 Python 实现，多产品/多版本/多 MAC 统一签发并通过 C 校验 | 生产密钥管理与轮换流程保持通用 |
 | **任务、锁与事件/证据** | 90% | **95%** | 资源级排他锁、不可变 execution、原子 `result.json` 全平台化 | 健壮性增强（如节点瞬断重试防级联） |
 | **前端平台壳与产品解耦** | 60% | **95%** | `TestsPage` 静态字典移除、`StabilityPage` 动作动态化、3D 拓扑角色动态化 | 前端包完全声明化 |
@@ -66,9 +66,15 @@
 
 ---
 
-## 3. 当前残余差距与待办分析（最后的 8% ~ 12%）
+## 3. 当前残余差距与待办分析（最后的 ~5%）
 
-当前代码距离“理想终态”只剩下以下 4 个局部的收尾工作：
+fbasecman 144 条 executor 用例已完成 `rt.*`→`ops.*`/`context` 形态迁移
+（`fbasecman_ops` PEP 562 转发 facade + `RuntimeBinding.context_executor`，
+runtime 构造注入 resolver `env`/`context_data`）；产品侧 executor 与 runtime
+方法库按 §5.0.1.3 属产品知识，物理位置保留在 `products/fbasecman/`
+产品包内（`regression/legacy/` 子路径为 vendored 迁移素材与 `run.sh`
+人工诊断入口，非平台运行路径依赖）。当前代码距离“理想终态”只剩下以下
+4 个局部的收尾工作：
 
 ### 3.1 `fbase-database` 的 `framework/` 遗留目录
 - **现状**：`products/fbase-database/regression/legacy/framework/` 仍存在。
