@@ -1,11 +1,9 @@
 import type { ProductFrontend } from '../../frontend/src/products/types';
-import DeploymentCanvas from './frontend/DeploymentCanvas';
 import ReportViewer from './frontend/ReportViewer';
 import RegressionTerminal from './frontend/RegressionTerminal';
 import SceneDetails from './frontend/SceneDetails';
 
 const frontend: ProductFrontend = {
-  DeploymentCanvas,
   ReportViewer,
   RegressionTerminal,
   sceneDetails: { kindPrefix: 'fbasecman.', component: SceneDetails },

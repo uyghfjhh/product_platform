@@ -190,8 +190,8 @@
         <div class="topo-canvas-state-banner active">
           <div class="banner-icon">✅</div>
           <div class="banner-content">
-            <div class="banner-title">集群运行中：全部 ${totalNodes} 个数据库节点与代理网关正常就绪</div>
-            <div class="banner-desc">MMR 多主双向数据同步与物理流复制链路处于活跃流动状态。</div>
+            <div class="banner-title">集群运行中：全部 ${totalNodes} 个数据库节点正常就绪</div>
+            <div class="banner-desc">实例探测全部在线，复制链路处于活跃流动状态。</div>
           </div>
         </div>
       `;
