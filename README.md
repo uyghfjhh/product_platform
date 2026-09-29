@@ -37,10 +37,13 @@
   --product-dir products/fbasecman --output-dir <输出目录> \
   --context-json '<环境上下文 JSON>' [target|--suite <套件>|failed]
 
-# fbasecman 单用例薄壳(注入环境上下文后调平台引擎)
+# fbasecman 命令行薄壳(自动解析回归绑定环境,注入上下文后调平台引擎)
 cd products/fbasecman
-./cli/run.sh --environment cman-mmr ha_commands.set_node_write_in_groups_roundtrip
-./cli/stable.sh show                           # 常稳命令
+./cli/run.sh run ha_commands                    # 套件
+./cli/run.sh run ha_commands.xxx                # 单条
+./cli/run.sh run failed|all [-e <环境>]
+./cli/run.sh show [suite]                       # 列用例目录
+./cli/stable.sh show                            # 常稳命令
 ```
 
 ## 平台使用要点
