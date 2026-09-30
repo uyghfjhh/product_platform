@@ -182,7 +182,11 @@ def _run_command(
             "log": str(log_path),
         },
     )
-    with log_path.open("w", encoding="utf-8") as log:
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(
+            "\n===== %s %s =====\n"
+            % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(command))
+        )
         env = os.environ.copy()
         env["PRODUCT_PLATFORM_TASK_ID"] = task_id
         current_pp = env.get("PYTHONPATH", "")

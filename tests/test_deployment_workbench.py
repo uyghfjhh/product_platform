@@ -1030,3 +1030,168 @@ def test_worker_rechecks_data_created_after_queueing(workbench):
             service.store.get_environment(draft["id"]),
             snapshot,
         )
+
+
+def test_discover_endpoint_forwards_ssh_options(workbench, monkeypatch):
+    """Review P1-3：discover 端点经 call() 转发 ssh kwargs——回归前 TypeError→500。"""
+    client, _, _, _ = workbench
+    captured = {}
+
+    def fake_probe(host, request, ssh=None):
+        captured.update({"host": host, "request": request, "ssh": ssh})
+        return {"installations": []}
+
+    monkeypatch.setattr(
+        "platform_app.api.routes_deployment.probe", fake_probe
+    )
+    response = client.post(
+        "/api/v1/deployment/discover",
+        json={"host": "127.0.0.1", "home": "/x", "data_dir": ""},
+    )
+    assert response.status_code == 200, response.text
+    assert captured["ssh"] is None
+    with_ssh = {
+        "host": "db2.internal",
+        "home": "/x",
+        "data_dir": "",
+        "ssh": {"user": "postgres", "port": 2222, "identity_file": "/home/postgres/.ssh/id_ed25519", "connect_timeout": 5},
+    }
+    response = client.post("/api/v1/deployment/discover", json=with_ssh)
+    assert response.status_code == 200, response.text
+    assert captured["ssh"]["user"] == "postgres" and captured["ssh"]["port"] == 2222
+
+
+def test_diff_plan_blocks_host_install_hba_and_unknown_drift(workbench):
+    """Review P1-1：主机地址/安装目录/HBA/未知段变化必须列出并拦截。"""
+    client, service, spec, _ = workbench
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "fixture"
+    )
+    _materialize_cluster(config)
+    _register_fbase_environment(service, config, "fbase-drift")
+
+    # 主机定义变化（地址改写）——引用名不变也要拦。
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    for host in edited["hosts"].values():
+        host["address"] = "192.168.99.9"
+    plan = _import_plan(client, spec, "fbase-drift", edited)
+    assert plan["mode"] == "diff" and not plan["executable"]
+    assert any(op["kind"] == "host" for op in plan["operations"]), plan["operations"]
+
+    # 安装定义变化（home 改写）。
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    for install in edited["postgresql_installations"].values():
+        install["home"] = install["home"] + "-other"
+    plan = _import_plan(client, spec, "fbase-drift", edited)
+    assert not plan["executable"]
+    assert any(op["kind"] == "installation" for op in plan["operations"])
+
+    # HBA 变化（postgresql_config 内 parameters 之外的键）。
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["postgresql_config"]["hba"] = [
+        {"type": "host", "database": "all", "user": "all",
+         "address": "127.0.0.1/32", "auth_method": "scram-sha-256"}
+    ]
+    plan = _import_plan(client, spec, "fbase-drift", edited)
+    assert not plan["executable"]
+    assert any(op["kind"] == "config" for op in plan["operations"])
+
+    # 完全未知的顶层段变化——兜底拦截。
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["custom_extension_block"] = {"foo": 1}
+    plan = _import_plan(client, spec, "fbase-drift", edited)
+    assert not plan["executable"]
+    assert any(op["kind"] == "section" for op in plan["operations"])
+
+    # 完整性：四类漂移下 apply 双入口均被拦。
+    assert (
+        client.post(f"/api/v1/deployment/plans/{plan['id']}/associate").status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/api/v1/deployment/plans/{plan['id']}/apply",
+            json={"acknowledge_change": True},
+        ).status_code
+        == 422
+    )
+
+
+def test_draft_host_assignment_survives_save_reload_resave(workbench):
+    """Review P1-2：草稿保存→重载→再保存主机分配不变（资源名契约）。"""
+    client, service, spec, _ = workbench
+    hosts = [
+        {"name": "h1", "address": "127.0.0.1", "ssh_user": "", "ssh_port": None,
+         "ssh_identity_file": "", "ssh_connect_timeout": 10, "home": ""},
+        {"name": "h2", "address": "localhost", "ssh_user": "", "ssh_port": None,
+         "ssh_identity_file": "", "ssh_connect_timeout": 10, "home": ""},
+    ]
+    # layout 返回解析地址；前端在布局阶段映射回资源名——按资源名存草稿。
+    layout_spec = {**spec, "hosts": hosts}
+    _, _, _ = client, layout_spec, None
+    created = client.post("/api/v1/deployment/drafts", json={"spec": layout_spec})
+    assert created.status_code == 201, created.text
+    layout = client.post(f"/api/v1/deployment/drafts/{created.json()['id']}/layout")
+    assert layout.status_code == 200, layout.text
+    nodes = layout.json()["nodes"]
+    name_by_address = {host["address"]: host["name"] for host in hosts}
+    mapped = [
+        {
+            "name": node["name"],
+            "host": name_by_address.get(node["host"], ""),
+            "port": node["port"],
+            "data_dir": node["data_dir"],
+        }
+        for node in nodes
+    ]
+    # 强制把备库指到 h2，保存。
+    mapped[1]["host"] = "h2"
+    draft = created.json()
+    saved = client.put(
+        f"/api/v1/deployment/drafts/{draft['id']}",
+        json={
+            "expected_revision": draft["revision"],
+            "spec": {**layout_spec, "nodes": mapped},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    # 重载：资源名仍是资源名（不是地址），再次原样保存不丢分配。
+    reloaded = client.get(f"/api/v1/deployment/drafts/{draft['id']}").json()
+    assert reloaded["spec"]["nodes"][1]["host"] == "h2"
+    resaved = client.put(
+        f"/api/v1/deployment/drafts/{draft['id']}",
+        json={
+            "expected_revision": reloaded["revision"],
+            "spec": reloaded["spec"],
+        },
+    )
+    assert resaved.status_code == 200, resaved.text
+    # 编译验证：mac_standby 归属 h2（localhost），且生成两个安装条目按主机分配。
+    config, target, _ = compile_spec(
+        service.settings,
+        DeploymentSpec(**resaved.json()["spec"]),
+        draft["id"],
+    )
+    assert config["instances"]["mac_standby"]["host"] == "h2"
+    assert config["hosts"]["h2"]["address"] == "localhost"
+
+
+def test_run_command_appends_stage_logs(workbench, tmp_path):
+    """Review P2：同一任务的部署+健康验收两段日志保留，阶段分隔。"""
+    from platform_app.actions import _run_command
+
+    _, service, _, _ = workbench
+    store = service.store
+    task = store.create_task("env-log", "deployment.create", "t", {}, None)
+    ok, _ = _run_command(
+        store, task["id"], ["sh", "-c", "echo deploy-stage"], tmp_path, True
+    )
+    assert ok
+    ok, _ = _run_command(
+        store, task["id"], ["sh", "-c", "echo health-stage"], tmp_path, False
+    )
+    assert ok
+    log = (store.platform_dir / "operations" / (task["id"] + ".log")).read_text()
+    assert "deploy-stage" in log and "health-stage" in log
+    assert log.count("=====") >= 4  # 两个阶段分隔行
+    assert "echo deploy-stage" in log and "echo health-stage" in log

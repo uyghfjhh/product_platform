@@ -90,7 +90,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
       base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir, role }) => ({
         name,
-        host: values.mode === 'free' ? (host || '') : (hosts.find((item) => item.address === host)?.name || ''),
+        host: hosts.length ? (host || '') : (values.mode === 'import' ? host : ''),
         port, data_dir, role: role || 'standby',
       })),
       source_yaml: values.source_yaml || '', target: values.target || '' };
@@ -116,7 +116,13 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       const saved = await save();
       if (saved.spec.mode !== 'free') {
         const layout = await api<{ nodes: Node[]; target: string }>(`/deployment/drafts/${saved.id}/layout`, { method: 'POST' });
-        setNodes(layout.nodes);
+        // 引擎返回解析后的主机地址；声明了主机资源时映射回资源名，保证草稿往返不丢分配。
+        setNodes(layout.nodes.map((node) => ({
+          ...node,
+          host: hosts.length
+            ? (hosts.find((item) => item.address === node.host)?.name || '')
+            : (saved.spec.mode === 'import' ? node.host : ''),
+        })));
       }
       setStep(2);
     } else if (step === 2) {
@@ -220,9 +226,9 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         <Table rowKey="name" pagination={false} size="small" scroll={{ x: 700 }} dataSource={nodes} columns={[
           { title: '节点', dataIndex: 'name' },
           { title: '主机', render: (_, node, index) => hosts.length
-              ? <Select size="small" style={{ minWidth: 170 }} disabled={mode === 'import'} value={node.host}
-                  options={hosts.map((item) => ({ value: item.address, label: `${item.name} · ${item.address}` }))}
-                  onChange={(address) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, host: address } : item))} />
+              ? <Select size="small" style={{ minWidth: 170 }} disabled={mode === 'import'} value={node.host || undefined} allowClear placeholder="默认主机"
+                  options={hosts.map((item) => ({ value: item.name, label: `${item.name} · ${item.address}` }))}
+                  onChange={(name) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, host: name || '' } : item))} />
               : node.host },
           { title: '端口', render: (_, node, index) => <InputNumber disabled={mode === 'import'} value={node.port} min={1024} max={65535} onChange={(port) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, port: port || 1024 } : item))} /> },
           { title: '数据目录', render: (_, node, index) => <Input disabled={mode === 'import'} value={node.data_dir} onChange={(event) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, data_dir: event.target.value } : item))} /> },
@@ -248,7 +254,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       )}
       <Typography.Title level={5}>操作预览 · {plan.target}</Typography.Title>
       <Table rowKey="node" size="small" pagination={false} dataSource={plan.operations} scroll={{ x: 650 }} columns={[
-        ...(plan.mode === 'diff' ? [{ title: '类型', render: (_: unknown, op: { kind?: string }) => <Tag>{({ add_standby: '扩容', add_node: '新增', remove_node: '缩容', change_node: '变更', parameters: '参数', topology: '拓扑' } as Record<string, string>)[op.kind || ''] || '操作'}</Tag> }] : []),
+        ...(plan.mode === 'diff' ? [{ title: '类型', render: (_: unknown, op: { kind?: string }) => <Tag>{({ add_standby: '扩容', add_node: '新增', remove_node: '缩容', change_node: '变更', parameters: '参数', topology: '拓扑', host: '主机', installation: '安装', config: '配置', section: '配置段' } as Record<string, string>)[op.kind || ''] || '操作'}</Tag> }] : []),
         { title: '节点', dataIndex: 'node' }, { title: '端口', dataIndex: 'port' }, { title: '数据目录', dataIndex: 'data_dir' }, { title: '将执行', dataIndex: 'operation' },
         ...(plan.mode === 'diff' ? [{ title: '可执行', render: (_: unknown, op: { executable?: boolean }) => <Tag color={op.executable ? 'success' : 'default'}>{op.executable ? '是' : '暂不支持'}</Tag> }] : []),
       ]} />

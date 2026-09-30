@@ -151,6 +151,38 @@ def validate_config(settings, path, target):
     return facts
 
 
+def _section_fields(before, after):
+    """Named-object diff inside a config section: added/removed/changed(+fields)."""
+    before = before or {}
+    after = after or {}
+    changed = []
+    for name in sorted(set(before) & set(after)):
+        old, new = before[name], after[name]
+        if old == new:
+            continue
+        fields = {
+            field: {"from": old.get(field), "to": new.get(field)}
+            for field in sorted(set(old or {}) | set(new or {}))
+            if (old or {}).get(field) != (new or {}).get(field)
+        }
+        changed.append({"name": name, "fields": fields} if fields else {"name": name})
+    return {
+        "added": sorted(set(after) - set(before)),
+        "removed": sorted(set(before) - set(after)),
+        "changed": changed,
+    }
+
+
+# 差异对比已识别的顶层段；其余任何顶层键变化都归入 sections 兜底拦截。
+_TOPOLOGY_SECTIONS = (
+    "streaming_clusters", "mmr_clusters", "logical_replications", "citus_clusters",
+)
+_KNOWN_SECTIONS = {
+    "instances", "postgresql_config", "hosts", "postgresql_installations",
+    *_TOPOLOGY_SECTIONS,
+}
+
+
 def diff_configs(current, desired):
     """Semantic diff between two pgcluster configs (order/formatting ignored)."""
     cur_instances = current.get("instances") or {}
@@ -167,16 +199,28 @@ def diff_configs(current, desired):
         }
         if fields:
             changed.append({"name": name, "fields": fields})
-    cur_params = (current.get("postgresql_config") or {}).get("parameters") or {}
-    new_params = (desired.get("postgresql_config") or {}).get("parameters") or {}
+    cur_config = current.get("postgresql_config") or {}
+    new_config = desired.get("postgresql_config") or {}
+    cur_params = cur_config.get("parameters") or {}
+    new_params = new_config.get("parameters") or {}
     parameters = {
         key: {"from": cur_params.get(key), "to": new_params.get(key)}
         for key in sorted(set(cur_params) | set(new_params))
         if cur_params.get(key) != new_params.get(key)
     }
+    # hba、replication_capacity 等 parameters 之外的 postgresql_config 键。
+    config_extra = {
+        key: {"from": cur_config.get(key), "to": new_config.get(key)}
+        for key in sorted(set(cur_config) | set(new_config))
+        if key != "parameters" and cur_config.get(key) != new_config.get(key)
+    }
+    hosts = _section_fields(current.get("hosts"), desired.get("hosts"))
+    installations = _section_fields(
+        current.get("postgresql_installations"),
+        desired.get("postgresql_installations"),
+    )
     topology = {}
-    for section in ("streaming_clusters", "mmr_clusters", "logical_replications",
-                    "citus_clusters"):
+    for section in _TOPOLOGY_SECTIONS:
         before = current.get(section) or {}
         after = desired.get(section) or {}
         if before != after:
@@ -188,12 +232,21 @@ def diff_configs(current, desired):
                     if before[name] != after[name]
                 ),
             }
+    sections = sorted(
+        key
+        for key in set(current) | set(desired)
+        if key not in _KNOWN_SECTIONS and current.get(key) != desired.get(key)
+    )
     return {
         "added": added,
         "removed": removed,
         "changed": changed,
         "parameters": parameters,
+        "config_extra": config_extra,
+        "hosts": hosts,
+        "installations": installations,
         "topology": topology,
+        "sections": sections,
     }
 
 
@@ -268,6 +321,50 @@ def diff_operations(current, desired):
                 "operation": "postgresql 参数差异 %d 项需重启/热加载，暂不支持自动应用"
                 % len(diff["parameters"]),
                 "detail": diff["parameters"],
+            }
+        )
+    if diff["config_extra"]:
+        executable = False
+        operations.append(
+            {
+                "kind": "config",
+                "executable": False,
+                "operation": "postgresql 配置段差异（%s）暂不支持自动应用"
+                % "、".join(sorted(diff["config_extra"])),
+                "detail": diff["config_extra"],
+            }
+        )
+    for kind, key, title in (
+        ("host", "hosts", "主机定义"),
+        ("installation", "installations", "安装定义"),
+    ):
+        section = diff[key]
+        if any((section["added"], section["removed"], section["changed"])):
+            executable = False
+            operations.append(
+                {
+                    "kind": kind,
+                    "executable": False,
+                    "operation": (
+                        "%s差异：新增 %s、移除 %s、修改 %s，地址/目录/凭据变化不支持自动执行"
+                        % (
+                            title,
+                            section["added"] or "∅",
+                            section["removed"] or "∅",
+                            [row["name"] for row in section["changed"]] or "∅",
+                        )
+                    ),
+                    "detail": section,
+                }
+            )
+    for key in diff["sections"]:
+        executable = False
+        operations.append(
+            {
+                "kind": "section",
+                "executable": False,
+                "operation": "未识别的配置段 %s 发生变化，暂不支持自动执行" % key,
+                "detail": {"from": current.get(key), "to": desired.get(key)},
             }
         )
     streaming_changes = diff["topology"].get("streaming_clusters")

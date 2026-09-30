@@ -25,9 +25,9 @@ class ApplyInput(BaseModel):
 def register(app, settings, store):
     service = Workbench(settings, store)
 
-    def call(function, *args):
+    def call(function, *args, **kwargs):
         try:
-            return function(*args)
+            return function(*args, **kwargs)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
@@ -153,13 +153,23 @@ def register(app, settings, store):
         submission_key = (
             base_key if not prior else f"{base_key}:attempt-{len(prior) + 1}"
         )
-        return app.state.start_operation(
-            OperationInput(
-                environment_id=row["environment_id"],
-                action=row["action"],
-                target=row["target"],
-                acknowledge_change=item.acknowledge_change,
-                deployment_plan_id=plan_id,
-                submission_key=submission_key,
+        try:
+            return app.state.start_operation(
+                OperationInput(
+                    environment_id=row["environment_id"],
+                    action=row["action"],
+                    target=row["target"],
+                    acknowledge_change=item.acknowledge_change,
+                    deployment_plan_id=plan_id,
+                    submission_key=submission_key,
+                )
             )
-        )
+        except Exception as exc:
+            # 配置已关联但任务未入队：环境指向的是"已声明未执行"的意图态，
+            # 计划快照与重放机制不变——修复后重新 apply 即可继续。
+            raise HTTPException(
+                500,
+                "部署配置已关联到环境，但任务入队失败：%s。"
+                "环境当前指向该计划配置；修复后可重新执行部署（幂等，已受管节点将跳过）。"
+                % exc,
+            ) from exc

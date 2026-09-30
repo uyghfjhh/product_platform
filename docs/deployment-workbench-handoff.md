@@ -73,6 +73,16 @@
 - **验证**：工作台专项 35 passed（自由拓扑编译/校验/计划生成）；`frontend/tests/free-topo-check.mjs` 隔离 fixture 浏览器验收通过（画布渲染、增删节点、改名、计划检查通过、YAML 含 streaming 集群）；tsc/Vite build 通过。
 - **已知边界**：自由拓扑仅覆盖单流复制集群（MMR/Citus 仍走产品固定模板）；React Flow 连线为角色派生的展示元素，不支持手动连边自定义复制层级（级联备库暂不支持）。
 
+## 数据库管理补全（能力域 2.16）与 review 修复（最近批）
+
+- **数据库管理补全**：`database.py` 新增 `list_sessions`（pg_stat_activity 含等待事件）、`list_locks`（pg_locks+pg_blocking_pids 阻塞链）、`list_replication`（发送端/接收端/复制槽三视图）、`list_settings`（非默认值+常用项/ILIKE 检索，%_ 通配符转义）、`cancel_backend`（pg_cancel_backend / terminate 走 pg_terminate_backend）。API：`GET …/sessions|locks|replication|settings?port=`、`POST …/sessions/{pid}/cancel`；所有视图接受 `port` 选节点，环境不存在先于查询报错（404 不被 except 吞成 422）。前端 DatabasePage 新增"实例运行状态"Tabs：会话表含取消查询/终止会话（Popconfirm）、锁表、复制三表、参数表（检索框）。
+- **Review P1-1 差异完整性**：`diff_configs` 曾只比对实例引用名——主机地址、安装 home、HBA 改了依旧 `executable=True`。现补齐 `hosts`/`postgresql_installations` 逐字段 diff、`postgresql_config` 除 parameters 外全部键（hba/replication_capacity 等）、未知顶层段兜底——一律列出为不可执行操作（kind=host/installation/config/section），associate/apply 双入口 422。
+- **Review P1-2 草稿主机分配丢失**：保存时按"地址→资源名"反查，草稿重载后存的是资源名 → 二次保存置空。统一：节点 host 全程用资源名，layout 响应在摄入时按地址映射回资源名，Select 选项改 value=name，无资源声明存空（=主表单主机）。
+- **Review P1-3 探测接口 500**：`call()` 不转发 kwargs，`probe(…, ssh=ssh)` 必 TypeError。已修 `call(*args, **kwargs)` 并补端点级回归（无 ssh 与带 ssh 两路径）。
+- **Review P2 阶段日志覆盖**：`_run_command` 以 "w" 打开任务日志，部署后健康验收复用 task_id 截断部署输出。改 "a" 追加 + 每段写 `===== 时间 命令 =====` 分隔行。
+- **入队一致性**：apply 顺序保持 关联→入队（关联的活动任务守卫保护发布）；入队失败时 500 明确"已关联未执行"语义与重放恢复路径（幂等键按已终结尝试计数，失败入队不烧号）。
+- **验证**：新增 `test_database_admin.py` 8 项（假 psycopg）+ workbench 4 项契约测试（discover kwargs、host/install/hba/未知段拦截、草稿再保存、阶段日志）；全量 412 passed；tsc/Vite build 通过。
+
 ## 继续工作定位
 
 - backend/platform_app/deployment/：models、probe_agent、probes、workbench。
