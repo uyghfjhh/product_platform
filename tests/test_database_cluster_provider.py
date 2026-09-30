@@ -25,6 +25,23 @@ def test_pgcluster_provider_builds_platform_lifecycle_plans(tmp_path):
         assert str(pgcluster) in plan.command.command
 
 
+def test_pgcluster_provider_restore_passes_yes(tmp_path):
+    settings = settings_for(tmp_path)
+    pgcluster = settings.pgcluster_root / "pgcluster"
+    pgcluster.parent.mkdir(parents=True)
+    pgcluster.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    config = tmp_path / "profiles" / "cluster.yaml"
+    config.parent.mkdir()
+    config.write_text("target: test\n", encoding="utf-8")
+    environment = {"deployment_config": str(config)}
+
+    plan = PgclusterDatabaseProvider().lifecycle(
+        settings, environment, "deployment.restore", "mmr.test")
+    command = plan.command.command
+    assert command[command.index("restore") + 1] == "mmr.test"
+    assert "--yes" in command
+
+
 def test_pgcluster_provider_rejects_missing_config(tmp_path):
     settings = settings_for(tmp_path)
     provider = PgclusterDatabaseProvider()

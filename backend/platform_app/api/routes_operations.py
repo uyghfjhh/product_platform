@@ -61,7 +61,7 @@ def register(app, settings: Settings, store, enqueuer) -> None:
             if item.action in {"deployment.failover", "deployment.switchover",
                                "deployment.rejoin", "deployment.lag"}:
                 allowed = {f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
-            if item.action == "deployment.verify":
+            if item.action in {"deployment.verify", "deployment.restore"}:
                 allowed = {environment["deployment_target"]} | {
                     f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
             if target not in allowed:

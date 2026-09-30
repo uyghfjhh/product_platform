@@ -126,13 +126,15 @@ class NodeController(object):
         self.stop_node(standby_key, immediate=True)
         stop_transcript = self.last_operation_transcript
 
+        st_name = os.path.basename(st_pgdata.rstrip("/"))
         cmd = (
             'rm -rf "%s" && '
             '%s/bin/pg_basebackup -h "%s" -p %d -U "%s" -D "%s" -Fp -Xs -R -c fast && '
             'sed -i "s/target_session_attrs=any/target_session_attrs=any application_name=%s/" "%s/postgresql.auto.conf" && '
             'sed -i "/^primary_slot_name/d" "%s/postgresql.auto.conf" "%s/pgcluster.conf" 2>/dev/null || true; '
-            'echo "port=%d" >>"%s/postgresql.conf"'
-            % (st_pgdata, self.pg_dir, self.host, pr_port, self.repl_user, st_pgdata, app_name, st_pgdata, st_pgdata, st_pgdata, st_port, st_pgdata)
+            'echo "port=%d" >>"%s/postgresql.conf" && '
+            'printf \'{"node": "%s"}\\n\' > "%s/.pgcluster-managed"'
+            % (st_pgdata, self.pg_dir, self.host, pr_port, self.repl_user, st_pgdata, app_name, st_pgdata, st_pgdata, st_pgdata, st_port, st_pgdata, st_name, st_pgdata)
         )
         rc, out = self._run_cmd(cmd, "pg_rebuild_%s.log" % standby_key)
         rebuild_transcript = self.last_operation_transcript

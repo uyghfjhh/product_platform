@@ -38,7 +38,7 @@ DEPLOYMENT_ACTIONS = frozenset({
     "deployment.start", "deployment.stop", "deployment.restart",
     "deployment.clean", "deployment.failover", "deployment.rejoin",
     "deployment.lag", "deployment.verify", "deployment.switchover",
-    "deployment.reset",
+    "deployment.reset", "deployment.restore",
 })
 
 
@@ -68,6 +68,7 @@ ACTIONS = {
         Action("deployment.failover", "主备故障切换", "deployment", True),
         Action("deployment.switchover", "主备计划内切换", "deployment", True),
         Action("deployment.rejoin", "重建旧主节点", "deployment", True),
+        Action("deployment.restore", "恢复配置声明的主备角色", "deployment", True),
         Action("deployment.lag", "检查复制延迟", "deployment"),
         Action("deployment.verify", "校验集群复制", "deployment"),
         Action("diagnostics.analyze", "AI 分析当前测试结果", "diagnostics"),

@@ -50,7 +50,8 @@ def build_profile(
         raise ValueError("License 文件需要绝对路径")
 
     use_citus = bool(db.get("enable_citus"))
-    preloads = ["fdd_mmr"] + (["citus"] if use_citus else [])
+    # Citus 必须位于 shared_preload_libraries 首位，否则实例拒绝启动。
+    preloads = (["citus"] if use_citus else []) + ["fdd_mmr"]
     mmr_extensions = ["fbase_mac", "fdd_mmr", "fb_license"] + (["citus"] if use_citus else [])
     installations = {
         "regress_postgres": {

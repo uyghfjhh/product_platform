@@ -91,7 +91,7 @@ class PgclusterDatabaseProvider:
         command = [sys.executable, str(pgcluster), "-f", str(config_file), cli_action]
         if cli_action != "doctor":
             command.append(target)
-        if cli_action in {"clean", "failover", "rejoin", "switchover"}:
+        if cli_action in {"clean", "failover", "rejoin", "switchover", "restore"}:
             command.append("--yes")
         return CommandSpec(command, settings.pgcluster_root)
 
