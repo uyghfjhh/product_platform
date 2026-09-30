@@ -6,6 +6,21 @@ import zhCN from 'antd/locale/zh_CN';
 import PlatformShell, { type ThemeName } from './platform/PlatformShell';
 import './style.css';
 
+// crypto.randomUUID 仅存在于安全上下文（HTTPS/localhost）；平台常经
+// http://<局域网IP> 访问，第三方组件（Prisma Studio）依赖该 API——
+// 在模块加载最早期补齐，getRandomValues 在非安全上下文可用。
+if (typeof crypto !== 'undefined' && !crypto.randomUUID) {
+  const fromBytes = (bytes: Uint8Array): `${string}-${string}-${string}-${string}-${string}` => {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as `${string}-${string}-${string}-${string}-${string}`;
+  };
+  crypto.randomUUID = crypto.getRandomValues
+    ? () => fromBytes(crypto.getRandomValues(new Uint8Array(16)))
+    : () => fromBytes(Uint8Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)));
+}
+
 function PlatformRoot() {
   const [themeName, setThemeName] = useState<ThemeName>(() => {
     const saved = localStorage.getItem('platform-theme');

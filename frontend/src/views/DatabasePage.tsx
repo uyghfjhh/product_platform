@@ -6,6 +6,7 @@ const StudioPanel = lazy(() => import('../components/StudioPanel'));
 
 import { api, post, type Environment, type Product } from '../platform/api';
 import CodeEditor from '../components/LazyCodeEditor';
+import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
 
 type Props = {
   product: Product | undefined;
@@ -472,13 +473,15 @@ export default function DatabasePage({ environment, environments = [], onSelectE
               </Typography.Text>
             </div>
           </div>
-          <Suspense fallback={<Empty description="正在加载数据管理器…" />}>
-            <StudioPanel
-              key={`${environment.id}:${selectedPort || environment.port}`}
-              environmentId={environment.id}
-              port={selectedPort || environment.port}
-            />
-          </Suspense>
+          <PlatformErrorBoundary>
+            <Suspense fallback={<Empty description="正在加载数据管理器…" />}>
+              <StudioPanel
+                key={`${environment.id}:${selectedPort || environment.port}`}
+                environmentId={environment.id}
+                port={selectedPort || environment.port}
+              />
+            </Suspense>
+          </PlatformErrorBoundary>
         </section>
       </>}
     </>
