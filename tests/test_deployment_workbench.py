@@ -533,6 +533,60 @@ def test_associate_keeps_test_context_when_config_unchanged(workbench, tmp_path)
     assert context.read_text() == "current identifiers"
 
 
+def test_import_rejects_version_mismatched_cluster(workbench):
+    client, service, spec, _ = workbench
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "fixture"
+    )
+    for node in config["instances"].values():
+        path = Path(node["data_dir"])
+        path.mkdir(parents=True)
+        # 目标集群是 PG 14，但安装目录的工具是 15.x——接管必须拒绝。
+        (path / "PG_VERSION").write_text("14")
+    draft = client.post(
+        "/api/v1/deployment/drafts",
+        json={
+            "spec": {
+                **spec,
+                "mode": "import",
+                "source_yaml": yaml.safe_dump(config),
+                "target": target,
+            }
+        },
+    ).json()
+    plan = client.post(f"/api/v1/deployment/drafts/{draft['id']}/plan").json()
+    assert not plan["ready"]
+    assert any(
+        not check["ok"] and "数据目录" in check["title"]
+        for check in plan["checks"]
+    )
+
+
+def test_plan_reports_unreachable_remote_host(workbench):
+    client, _, spec, _ = workbench
+    _, plan = create_plan(
+        workbench, {**spec, "host": "no-such-host.invalid"}
+    )
+    assert not plan["ready"]
+    assert any(
+        check["title"] == "目标主机探测" and not check["ok"]
+        for check in plan["checks"]
+    )
+
+
+def test_mixed_tool_versions_make_installation_incomplete(workbench):
+    client, _, spec, _ = workbench
+    psql = Path(spec["home"]) / "bin" / "psql"
+    psql.write_text('#!/bin/sh\necho "PostgreSQL 14.0"\n')
+    psql.chmod(0o755)
+    _, plan = create_plan(workbench)
+    assert not plan["ready"]
+    tool_check = next(
+        check for check in plan["checks"] if check["title"] == "数据库工具完整性"
+    )
+    assert not tool_check["ok"]
+
+
 def test_preload_library_file_must_exist(workbench):
     client, _, spec, _ = workbench
     (Path(spec["home"]) / "lib" / "fdd_mmr.so").unlink()
