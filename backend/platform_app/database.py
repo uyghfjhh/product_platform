@@ -162,7 +162,7 @@ def list_replication(environment: dict) -> dict:
         LIMIT 50
     """)
     slots = _query_dicts(environment, """
-        SELECT slot_name, plugin, slot_type, datname, temporary, active,
+        SELECT slot_name, plugin, slot_type, database, temporary, active,
                restart_lsn::text AS restart_lsn, confirmed_flush_lsn::text AS confirmed_flush_lsn,
                wal_status, safe_wal_size
         FROM pg_catalog.pg_replication_slots
