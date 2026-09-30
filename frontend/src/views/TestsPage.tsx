@@ -10,6 +10,7 @@ import {
 import { testAdapter, testFrontend, type TestMode } from '../products/testRegistry';
 import DiagnosisDrawer from '../components/DiagnosisDrawer';
 import EvidenceDrawer from '../platform/EvidenceDrawer';
+import PlatformReportViewer from '../platform/ReportViewer';
 import TestBindingBar from '../components/TestBindingBar';
 import { FileSearchOutlined } from '@ant-design/icons';
 
@@ -83,7 +84,9 @@ export default function TestsPage({
   }, [environment?.id, results]);
 
   const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
-  const ReportDrawer = testFrontend(product)?.ReportViewer;
+  const ReportDrawer = testFrontend(product)?.ReportViewer || PlatformReportViewer;
+  const reportPath = adapter.reportPath || ((environmentId: string, format: 'junit' | 'html') =>
+    `/environments/${encodeURIComponent(environmentId)}/reports/${format}`);
   const RegressionTerminal = testFrontend(product)?.RegressionTerminal;
   const effectiveProductId = adapter.productId;
 
@@ -159,7 +162,7 @@ export default function TestsPage({
   };
 
   const canViewReport = (target: string): boolean => {
-    if (!adapter.supportsLegacyReports) return false;
+    if (!adapter.supportsLegacyReports) return Boolean(environment && resultByTarget.has(target));
     const s = sourceStatuses[target];
     if (s && (s.has_report || s.status === 'PASS' || s.status === 'FAIL')) return true;
     const r = resultByTarget.get(target);
@@ -249,17 +252,21 @@ export default function TestsPage({
 
   // 打开失败弹窗时，异步获取失败原因与步骤断言
   useEffect(() => {
-    if (!failedModalOpen || failedCasesList.length === 0 || !adapter.artifactPath) return;
+    if (!failedModalOpen || failedCasesList.length === 0 || (!adapter.artifactPath && !environment)) return;
     let cancelled = false;
     failedCasesList.forEach((c) => {
       if (failedReasons[c.target]) return;
       api<{
+        reason?: string;
+        steps?: Array<{ result?: string; status: string; title?: string; actual?: string; expected?: string }>;
         summary?: { reason?: string };
         parsed?: { reason?: string; steps?: Array<{ status: string; title?: string; actual?: string; expected?: string }> };
-      }>(adapter.artifactPath!(c.target, environment?.id))
+      }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id)
+        : `/environments/${encodeURIComponent(environment!.id)}/results/${encodeURIComponent(c.target)}/report`)
         .then((data) => {
           if (cancelled) return;
-          let reason = data.summary?.reason || data.parsed?.reason;
+          if (data.steps) data.parsed = { reason: data.reason, steps: data.steps.map((step) => ({ ...step, status: step.result || step.status })) };
+          let reason = data.reason || data.summary?.reason || data.parsed?.reason;
           if (!reason && data.parsed?.steps) {
             const failedStep = data.parsed.steps.find((s) => s.status === 'FAIL');
             if (failedStep) {
@@ -542,11 +549,11 @@ export default function TestsPage({
               </button>
             )}
 
-            {adapter.reportPath && environment && (
+            {environment && (
               <>
                 <a
                   className="tool-btn"
-                  href={`/api/v1${adapter.reportPath(environment.id, 'junit')}`}
+                  href={`/api/v1${reportPath(environment.id, 'junit')}`}
                   target="_blank"
                   rel="noreferrer"
                   title="导出标准 JUnit XML 报告"
@@ -555,7 +562,7 @@ export default function TestsPage({
                 </a>
                 <a
                   className="tool-btn"
-                  href={`/api/v1${adapter.reportPath(environment.id, 'html')}`}
+                  href={`/api/v1${reportPath(environment.id, 'html')}`}
                   target="_blank"
                   rel="noreferrer"
                   title="导出沉浸式 HTML 报告"
@@ -624,8 +631,7 @@ export default function TestsPage({
                       const dur = getCaseDuration(c.target);
                       const canView = canViewReport(c.target);
                       const result = resultByTarget.get(c.target);
-                      const hasArchive = Boolean(environment && result?.artifact_dir?.endsWith(
-                        `/regression/${environment.id}/${c.target}`));
+                      const hasArchive = Boolean(environment && result?.artifact_dir);
 
                       return (
                         <div key={c.target} className="case-row">
@@ -672,7 +678,7 @@ export default function TestsPage({
                               ▶ 执行
                             </button>
 
-                            {adapter.supportsLegacyReports && (
+                            {(adapter.supportsLegacyReports || environment) && (
                               <button
                                 className="btn-view-report"
                                 disabled={!canView}
@@ -803,7 +809,7 @@ export default function TestsPage({
                     >
                       ▶ 单独重跑
                     </button>
-                    {adapter.supportsLegacyReports && (
+                    {canViewReport(c.target) && (
                       <button
                         className="btn-view-report"
                         onClick={() => {

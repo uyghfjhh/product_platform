@@ -29,6 +29,7 @@ class OperationInput(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     submission_key: str | None = Field(default=None, min_length=1, max_length=100)
     acknowledge_change: bool = False
+    deployment_plan_id: str | None = Field(default=None, pattern=IDENTIFIER)
 
 
 class RegressionBindingInput(BaseModel):

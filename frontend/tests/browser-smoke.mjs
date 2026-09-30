@@ -11,8 +11,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(base, { waitUntil: 'domcontentloaded' });
-  // header title 恒为当前页名（不受所选环境产品 workspaceClass 影响）
-  await page.locator('.header-title', { hasText: '数据库部署管理' }).waitFor();
+  // 等待部署环境选择区加载（顶部标题栏已移除）
+  await page.locator('.platform-content').waitFor();
 
   const sider = page.locator('.platform-sidebar');
   // 带图标菜单项的可访问名是"图标label+文字"（如 "tool 数据库部署管理"），
@@ -77,7 +77,7 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   mobile.on('pageerror', (error) => errors.push(error.message));
   await mobile.goto(base, { waitUntil: 'domcontentloaded' });
-  await mobile.locator('.header-title', { hasText: '数据库部署管理' }).waitFor();
+  await mobile.locator('.platform-content').waitFor();
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0);
   await mobile.screenshot({ path: '/tmp/product-platform-mobile.png', fullPage: true });
 

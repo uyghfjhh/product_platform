@@ -543,3 +543,14 @@
 }
 
 .node-quick-actions-popover {
+
+/* Match the model's card dimensions and keep badges inside the header. */
+.reference-deploy-canvas .topo-node { box-sizing: border-box; }
+.reference-deploy-canvas .topo-node-header { flex-direction: column; align-items: stretch; gap: 6px; }
+.reference-deploy-canvas .topo-node-title { min-width: 0; }
+.reference-deploy-canvas .node-label-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-deploy-canvas .topo-node-badges { justify-content: flex-start; flex-wrap: wrap; }
+.reference-deploy-canvas .topo-node-badge { white-space: nowrap; }
+.reference-deploy-canvas .topo-node-field { gap: 8px; }
+.reference-deploy-canvas .topo-node-field .field-key { flex-shrink: 0; }
+.reference-deploy-canvas .topo-node-field .field-val { min-width: 0; overflow-wrap: anywhere; }

@@ -54,6 +54,8 @@ cd products/fbasecman
 
 ## 平台使用要点
 
+- **查看测试报告**：等保、多活及其他产品可在用例行点击“查看报告”，浏览执行步骤、预期与实际结果、失败原因和原始报告，并下载原文；绑定环境后可导出 HTML／JUnit。fbasecman 使用专属拓扑报告。旧结果没有步骤文件时仍展示归档结论。
+
 - **环境登记**:选择产品,填写环境 ID、主机、端口、数据库与用户;部署另填 pgcluster YAML 路径与目标(如 `mmr.fbasecman_regress`)。
 - **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
 - **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。

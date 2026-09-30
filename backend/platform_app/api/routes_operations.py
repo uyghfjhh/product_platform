@@ -22,6 +22,19 @@ def register(app, settings: Settings, store, enqueuer) -> None:
 
     @app.post("/api/v1/operations", status_code=202)
     def start_operation(item: OperationInput):
+        if any(key.startswith("_deployment_") for key in item.parameters):
+            raise HTTPException(422, "不能直接设置部署任务内部参数")
+        snapshot = None
+        if item.deployment_plan_id:
+            from ..deployment.workbench import Workbench
+            try:
+                plan = Workbench(settings, store).verify(item.deployment_plan_id)
+            except (ValueError, KeyError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if (plan["environment_id"] != item.environment_id or plan["action"] != item.action
+                    or item.target != plan["target"]):
+                raise HTTPException(422, "操作与部署计划不匹配")
+            snapshot = {"plan_id": plan["id"], "sha256": plan["config_sha256"]}
         environment = store.get_environment(item.environment_id)
         if environment is None:
             raise HTTPException(status_code=404, detail="环境不存在")
@@ -84,11 +97,14 @@ def register(app, settings: Settings, store, enqueuer) -> None:
             item.parameters.get("profile", "default"),
         ) is None:
             raise HTTPException(status_code=404, detail="当前环境没有该测试目标的结果")
+        parameters = dict(item.parameters)
+        if snapshot:
+            parameters["_deployment_snapshot"] = snapshot
         task, created = store.create_task_once(
             item.environment_id,
             item.action,
             target,
-            item.parameters,
+            parameters,
             item.submission_key,
         )
         if created:
@@ -98,6 +114,8 @@ def register(app, settings: Settings, store, enqueuer) -> None:
                 store.finish_task(task["id"], ("QUEUED",), "FAILED", "任务入队失败")
                 raise HTTPException(status_code=503, detail="任务入队失败") from exc
         return public_task(task)
+
+    app.state.start_operation = start_operation
 
     @app.get("/api/v1/operations")
     def operations(limit: int = Query(default=40, ge=1, le=200)):

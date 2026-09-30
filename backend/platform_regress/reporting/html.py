@@ -51,7 +51,11 @@ def generate_html_report(
         })
 
     # Prepare JSON data for client-side interactivity
-    results_json = json.dumps(results, ensure_ascii=False)
+    # JSON is embedded inside a script element; escape HTML delimiters so
+    # SQL/log text containing </script> remains data when the report is opened.
+    results_json = (json.dumps(results, ensure_ascii=False)
+                    .replace("<", "\\u003c").replace(">", "\\u003e")
+                    .replace("&", "\\u0026"))
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Circumference for radius 45 is 2 * pi * 45 ≈ 282.74

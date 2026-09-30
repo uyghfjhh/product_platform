@@ -61,7 +61,7 @@ def _node_roles(groups):
     return roles
 
 
-def _cluster_context(settings, cluster, with_nodes=True):
+def _cluster_context(settings, cluster, with_nodes=True, environment=None):
     """Read product plugins, binaries, nodes and relation groups from the
     legacy regress config (the same source the old executor used)."""
     context = {"plugins": [], "plugins_detail": {}, "node_groups": {},
@@ -72,6 +72,14 @@ def _cluster_context(settings, cluster, with_nodes=True):
     except (OSError, ValueError):
         context["topology_error"] = "无法读取回归集群定义: %s" % path
         return context
+    if environment and environment.get("deployment_config"):
+        override = Path(environment["deployment_config"]).parent / "regress.override.yaml"
+        if override.is_file():
+            changes = yaml.safe_load(override.read_text()) or {}
+            data.setdefault("postgres", {}).update(changes.get("postgres") or {})
+            for name, values in (changes.get("clusters") or {}).items():
+                if name in data.get("clusters", {}):
+                    data["clusters"][name].setdefault("nodes", {}).update(values.get("nodes") or {})
     clusters = data.get("clusters") or {}
     cluster_config = clusters.get(cluster)
     if cluster_config is None:
@@ -168,6 +176,12 @@ ALL_CASE_TARGETS = frozenset(case["target"] for case in exported_cases())
 class FbaseProvider:
     """FBase target validation, test command, and database observations."""
 
+    def deployment_templates(self, settings):
+        return importlib.import_module("products.fbase-database.deployment.templates").templates(settings)
+
+    def compile_deployment(self, settings, spec, environment_id):
+        return importlib.import_module("products.fbase-database.deployment.templates").compile_template(settings, spec, environment_id)
+
     def validate_target(self, settings, target):
         targets = {case["target"] for case in exported_cases()}
         return target == "all" or target in targets or any(item.startswith(target + ".") for item in targets)
@@ -253,7 +267,7 @@ class FbaseProvider:
             context = {"user": environment.get("database_user") or "postgres",
                        "users": environment.get("database_users") or {},
                        "cluster": cluster}
-            context.update(_cluster_context(settings, cluster))
+            context.update(_cluster_context(settings, cluster, environment=environment))
             return context
         nodes, topology_error = {}, None
         if with_topology:
@@ -279,7 +293,7 @@ class FbaseProvider:
                    "users": environment.get("database_users") or {},
                    "cluster": cluster}
         context.update(_cluster_context(settings, cluster,
-                                               with_nodes=False))
+                                               with_nodes=False, environment=environment))
         if topology_error:
             context["topology_error"] = topology_error
         return context

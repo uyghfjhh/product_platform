@@ -127,6 +127,14 @@ def suite_case_context(settings, environment):
 class FbasecmanProvider:
     """Product rules and commands; task lifecycle belongs to the platform."""
 
+    def deployment_templates(self, settings):
+        from products.fbasecman.deployment.templates import templates
+        return templates(settings)
+
+    def compile_deployment(self, settings, spec, environment_id):
+        from products.fbasecman.deployment.templates import compile_template
+        return compile_template(settings, spec, environment_id)
+
     def validate_target(self, settings, target):
         if target in {"all", "failed"}:
             return True

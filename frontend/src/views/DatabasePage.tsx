@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Empty, Select, Space, Table, Tag, Tree, Typography } from 'antd';
+import { Alert, App, Badge, Button, Empty, Select, Space, Table, Tag, Tree, Typography } from 'antd';
 import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined } from '@ant-design/icons';
 
 import { api, post, type Environment, type Product } from '../api';
@@ -10,6 +10,8 @@ type Props = {
   environment: Environment | undefined;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
+  environments?: Environment[];
+  onSelectEnvironment?: (id: string) => void;
 };
 
 type QueryResult = {
@@ -32,6 +34,8 @@ type TopologyNode = {
   role: string;
   group?: string;
 };
+
+type NodeStatusMap = Record<string, { running: boolean | null }>;
 
 function quoteIdentifier(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
@@ -64,7 +68,7 @@ const SQL_TEMPLATES = [
   },
 ];
 
-export default function DatabasePage({ environment }: Props) {
+export default function DatabasePage({ environment, environments = [], onSelectEnvironment }: Props) {
   const { message } = App.useApp();
   const [sql, setSql] = useState('SELECT version(), current_timestamp, pg_is_in_recovery() AS is_standby;');
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -75,6 +79,7 @@ export default function DatabasePage({ environment }: Props) {
   const [objectsLoading, setObjectsLoading] = useState(false);
   const [objectsError, setObjectsError] = useState('');
   const [nodes, setNodes] = useState<TopologyNode[]>([]);
+  const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
 
   useEffect(() => {
@@ -84,6 +89,7 @@ export default function DatabasePage({ environment }: Props) {
     setResult(null);
     setObjectsError('');
     setNodes([]);
+    setNodeStatus({});
 
     if (environment) {
       // Check if arriving from DeploymentPage with specific node
@@ -102,6 +108,9 @@ export default function DatabasePage({ environment }: Props) {
             setNodes(res.nodes);
           }
         })
+        .catch(() => undefined);
+      api<NodeStatusMap>(`/environments/${encodeURIComponent(environment.id)}/topology/status`)
+        .then((res) => setNodeStatus(res || {}))
         .catch(() => undefined);
     }
   }, [environment?.id]);
@@ -181,19 +190,33 @@ export default function DatabasePage({ environment }: Props) {
     };
     if (!nodes.length) return [baseOption];
 
-    const topoOptions = nodes.map((n) => ({
-      label: `[${n.role.toUpperCase()}] ${n.label} (${n.host}:${n.port})`,
-      value: n.port,
-    }));
+    const topoOptions = nodes.map((n) => {
+      const running = nodeStatus[n.id]?.running;
+      return {
+        label: (
+          <Space size={6}>
+            <Badge
+              status={running === true ? 'success' : running === false ? 'error' : 'default'}
+              title={running === true ? '运行中' : running === false ? '已停止' : '状态未知'}
+            />
+            <span>
+              [{n.role.toUpperCase()}] {n.label} ({n.host}:{n.port})
+              {running === false && <Typography.Text type="danger">（已停止）</Typography.Text>}
+            </span>
+          </Space>
+        ),
+        value: n.port,
+      };
+    });
     return [baseOption, ...topoOptions];
-  }, [environment, nodes]);
+  }, [environment, nodes, nodeStatus]);
 
   return (
     <>
       <div className="page-heading">
         <div>
           <Typography.Title level={3} style={{ marginBottom: 4 }}>数据库管理</Typography.Title>
-          <Typography.Text type="secondary">Web-PSQL 全节点交互工作台与内核状态实时查询</Typography.Text>
+          <Typography.Text type="secondary">对象浏览、SQL 查询与运行状态</Typography.Text>
         </div>
         {environment && (
           <Space>
@@ -209,6 +232,12 @@ export default function DatabasePage({ environment }: Props) {
       </div>
 
       {!environment ? <Empty description="先选择数据库环境" /> : <>
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Typography.Text strong>连接环境</Typography.Text>
+          <Select aria-label="选择数据库环境" style={{ minWidth: 240 }} value={environment?.id}
+            options={environments.map((item) => ({ value: item.id, label: `${item.title} · ${item.host}:${item.port}` }))}
+            onChange={(id) => onSelectEnvironment?.(id)} />
+        </Space>
         {/* Quick SQL Templates Bar */}
         <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>快捷模板:</span>

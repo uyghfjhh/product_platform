@@ -16,7 +16,7 @@ try {
 
   console.log('1. Loading base page...');
   await page.goto(base, { waitUntil: 'domcontentloaded' });
-  await page.locator('.header-title', { hasText: '数据库部署管理' }).waitFor();
+  await page.locator('.platform-content').waitFor();
 
   console.log('2. Verifying left navigation (expand product submenus)...');
   const sider = page.locator('.platform-sidebar');

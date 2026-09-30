@@ -8,7 +8,7 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(base, { waitUntil: 'domcontentloaded' });
-  await page.locator('.header-title', { hasText: '数据库部署管理' }).waitFor();
+  await page.locator('.platform-content').waitFor();
   // 菜单结构见 tests/README.md：License 授权管理（子菜单）→ 密钥管理（叶子）
   const sider = page.locator('.platform-sidebar');
   const menu = (name) => sider.locator('.ant-menu-title-content', { hasText: name }).first();

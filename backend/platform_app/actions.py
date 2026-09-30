@@ -298,6 +298,9 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
     try:
         lock = nullcontext() if action.id == "diagnostics.analyze" else environment_lock(settings.platform_dir, environment["id"])
         with lock:
+            if parameters.get("_deployment_snapshot"):
+                from .deployment.workbench import worker_environment
+                environment = worker_environment(settings, store, environment, parameters["_deployment_snapshot"])
             if action.id == "diagnostics.analyze":
                 result = store.get_result(environment["product_id"], environment["id"],
                                           task["target"], parameters.get("profile", "default"))

@@ -8,7 +8,7 @@ from ..config import Settings, load_settings
 from ..filestore import ConflictError, FileStore
 from ..product_catalog import ProductManifestError, discover_products
 from ..product_routes import register_product_routes
-from . import routes_environments, routes_licenses, routes_meta, routes_operations, routes_results
+from . import routes_deployment, routes_environments, routes_licenses, routes_meta, routes_operations, routes_results
 from .schemas import (
     EnvironmentInput,
     LicenseKeyCreateInput,
@@ -70,6 +70,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     routes_environments.register(app, settings, store)
     routes_operations.register(app, settings, store, enqueuer)
     routes_results.register(app, settings, store)
+    routes_deployment.register(app, settings, store)
     register_product_routes(app, settings, store)
 
     if settings.frontend_dist.is_dir():

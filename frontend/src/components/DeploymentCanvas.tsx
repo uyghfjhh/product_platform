@@ -18,10 +18,13 @@ function toReference(topology: TopologyData, observed: Observed) {
     const members = topology.nodes.filter((n) => (n.group || 'cluster') === group);
     const primaries = members.filter((n) => n.role === 'primary' || n.role?.includes('primary'));
     const nonPrimaries = members.filter((n) => !primaries.includes(n));
-    const isTwoStandby = nonPrimaries.length === 2;
 
-    const groupHeight = members.length <= 2 ? 180 : (nonPrimaries.length <= 4 ? 260 : 340);
-    const groupWidth = members.length > 2 && isTwoStandby ? 980 : (members.length > 2 && nonPrimaries.length > 4 ? 820 : 760);
+    const rowGap = 250;
+    const primaryRows = Math.max(1, primaries.length);
+    const standbyRows = Math.max(1, Math.ceil(nonPrimaries.length / 2));
+    const rows = Math.max(primaryRows, standbyRows);
+    const groupHeight = 60 + rows * rowGap + 30;
+    const groupWidth = nonPrimaries.length > 1 ? 1100 : 800;
 
     let groupTitle = `${group.toUpperCase()} 复制组`;
     let groupTag = `${group.toUpperCase()} 复制组 (${primaries.length} 主 + ${nonPrimaries.length} 备)`;
@@ -47,34 +50,19 @@ function toReference(topology: TopologyData, observed: Observed) {
     });
 
     primaries.forEach((priNode, pIdx) => {
-      const pY = currentY + (members.length <= 2 ? 45 : (members.length <= 4 ? 60 : 130 + pIdx * 90));
       nodePositions[priNode.id] = {
         x: 90,
-        y: pY,
+        y: currentY + 60 + (rows - primaryRows) * rowGap / 2 + pIdx * rowGap,
         compact: false,
       };
     });
 
     nonPrimaries.forEach((stdNode, sIdx) => {
-      if (members.length <= 2) {
-        nodePositions[stdNode.id] = {
-          x: 400,
-          y: currentY + 45,
-          compact: true,
-        };
-      } else if (isTwoStandby) {
-        nodePositions[stdNode.id] = {
-          x: 390 + sIdx * 290,
-          y: currentY + 45,
-          compact: true,
-        };
-      } else {
-        nodePositions[stdNode.id] = {
-          x: 370 + (sIdx % 2) * 210,
-          y: currentY + 50 + Math.floor(sIdx / 2) * 75,
-          compact: true,
-        };
-      }
+      nodePositions[stdNode.id] = {
+        x: 460 + (sIdx % 2) * 340,
+        y: currentY + 60 + Math.floor(sIdx / 2) * rowGap,
+        compact: true,
+      };
     });
 
     currentY += groupHeight + 40;
@@ -101,6 +89,8 @@ function toReference(topology: TopologyData, observed: Observed) {
         ? '接收写事务并广播物理/逻辑 WAL'
         : (isMacSubscriber ? '逻辑解码订阅同步节点' : '流复制物理只读备库'),
       compact: pos.compact,
+      width: 300,
+      height: pos.compact ? 220 : 240,
     };
   });
 
@@ -125,6 +115,7 @@ function toReference(topology: TopologyData, observed: Observed) {
     nodes,
     edges,
     clusters,
+    bounds: { width: Math.max(920, ...clusters.map((group) => group.width + 120)), height: currentY + 20 },
     health: {
       ...health,
       total_db_nodes: nodes.length,
@@ -149,10 +140,19 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
 
+  const reference = useMemo(() => toReference(topology, observed), [topology, observed]);
+  const { bounds } = reference;
   const html = useMemo(() => DOMPurify.sanitize(
-    renderDeploymentCanvas(toReference(topology, observed)),
+    renderDeploymentCanvas(reference),
     { USE_PROFILES: { html: true, svg: true, svgFilters: true } },
-  ), [topology, observed]);
+  ), [reference]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const availableWidth = containerRef.current.clientWidth - 40;
+    setScale(Math.min(1, Math.max(0.2, Math.floor(availableWidth / bounds.width * 100) / 100)));
+    setPan({ x: 10, y: 10 });
+  }, [topology.target, bounds.width]);
 
   // GSAP Choreographed Node & Link Animations on status/topology update
   useEffect(() => {
@@ -207,7 +207,7 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
   function handleFitView() {
     if (!containerRef.current) return;
     const stageW = containerRef.current.clientWidth - 40;
-    const fitScale = Math.min(1.0, Math.max(0.48, Math.round((stageW / 1420) * 100) / 100));
+    const fitScale = Math.min(1.0, Math.max(0.2, Math.floor((stageW / bounds.width) * 100) / 100));
     setScale(fitScale);
     setPan({ x: 10, y: 10 });
   }
@@ -252,7 +252,8 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      style={{ cursor: isPanning ? 'grabbing' : 'default', position: 'relative', overflow: 'hidden' }}
+      style={{ cursor: isPanning ? 'grabbing' : 'default', position: 'relative', overflow: 'hidden',
+        height: Math.max(360, bounds.height * scale + Math.max(0, pan.y) + 20) }}
     >
       {/* Floating Canvas Controls */}
       <div
@@ -299,12 +300,14 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
         {Math.round(scale * 100)}%
       </div>
 
-      <div className="reference-deploy-viewport" style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div className="reference-deploy-viewport" style={{ width: '100%', height: '100%', maxHeight: 'none', overflow: 'hidden' }}>
         <div
           ref={canvasRef}
           className="reference-deploy-canvas topo-canvas"
           onClick={handleClick}
           style={{
+            width: bounds.width,
+            height: bounds.height,
             transformOrigin: '0 0',
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
             transition: isPanning ? 'none' : 'transform 0.15s ease-out',

@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  App as AntApp, Button, Drawer, Layout, Menu, Space, Tag, Typography,
+  App as AntApp, Button, Drawer, Layout, Menu, Tag,
   type MenuProps,
 } from 'antd';
 import {
-  FileProtectOutlined, KeyOutlined, MenuOutlined, PlayCircleOutlined,
+  DatabaseOutlined, FileProtectOutlined, KeyOutlined, MenuOutlined, PlayCircleOutlined,
   SettingOutlined, ToolOutlined,
 } from '@ant-design/icons';
 
@@ -15,14 +15,15 @@ import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
 import { testMode } from '../products/testRegistry';
 
 const DeploymentPage = lazy(() => import('../views/DeploymentPage'));
+const DatabasePage = lazy(() => import('../views/DatabasePage'));
 const TestsPage = lazy(() => import('../views/TestsPage'));
 const StabilityPage = lazy(() => import('../views/StabilityPage'));
 const LicenseKeysView = lazy(() => import('../views/license/LicenseKeysView'));
 const LicenseGenerateView = lazy(() => import('../views/license/LicenseGenerateView'));
 
-const { Header, Sider, Content } = Layout;
+const { Sider, Content } = Layout;
 
-type Page = 'deployment'
+type Page = 'deployment' | 'database'
   | 'license:keys' | 'license:generate'
   | `tests:${string}` | `stability:${string}`;
 export type ThemeName = 'cman' | 'dark' | 'soft' | 'warm';
@@ -161,16 +162,6 @@ export default function PlatformShell({ themeName, onThemeChange }: {
           || environmentId))
     : undefined;
 
-  const title = page === 'license:keys'
-    ? '密钥管理'
-    : page === 'license:generate'
-      ? 'License 生成'
-      : page === 'deployment'
-        ? '数据库部署管理'
-        : page.startsWith('stability:')
-          ? `稳定性测试 · ${stabilityProduct?.title || stabilityProductId}`
-          : `测试 · ${testProfile?.title || testProduct?.title || testProductId}`;
-
   // 固定导航树：不随环境增删跳变（§5.1）
   const menuItems = useMemo<MenuProps['items']>(() => [
     {
@@ -178,6 +169,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       icon: <ToolOutlined />,
       label: '数据库部署管理',
     },
+    { key: 'database', icon: <DatabaseOutlined />, label: '数据库管理' },
     {
       key: 'tests',
       icon: <PlayCircleOutlined />,
@@ -218,6 +210,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       reload,
       openTask: setTaskId,
     };
+    if (page === 'database') return <DatabasePage {...common} />;
     if (page === 'license:keys') return <LicenseKeysView />;
     if (page === 'license:generate') return <LicenseGenerateView />;
     if (page.startsWith('stability:')) {
@@ -236,8 +229,10 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         bindings={bindings}
         tasks={tasks} />;
     }
-    return <DeploymentPage {...common} productBindings={bindings}
-      products={products} />;
+    return <DeploymentPage {...common} onOpenDatabase={(node) => {
+      if (node) sessionStorage.setItem('sql_target_port', String(node.port));
+      setPage('database');
+    }} products={products} />;
   }, [page, product, environment, environments, reload, products, environmentId,
       bindings, testProduct, testProfile, selectedTestEnvironment, stabilityProduct,
       stabilityEnvironment, tasks]);
@@ -251,7 +246,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       defaultOpenKeys={['tests', 'license', ...products.map((item) => `product:${item.id}`)]}
       items={menuItems}
       onClick={({ key }) => {
-        if (key === 'deployment' || key.startsWith('license:')
+        if (key === 'deployment' || key === 'database' || key.startsWith('license:')
             || key.startsWith('tests:') || key.startsWith('stability:')) {
           setPage(key as Page);
           // 测试页跳转到已绑定环境，保证页面上下文与执行上下文一致
@@ -275,6 +270,9 @@ export default function PlatformShell({ themeName, onThemeChange }: {
           <span><strong>产品工作台</strong><small>内部管理平台</small></span>
         </div>
         {menu}
+        {active && <Button type="text" onClick={() => setTaskId(active.id)}>
+          当前任务 <Tag color={statusColor(active.status)}>{active.status}</Tag>
+        </Button>}
         <button
           type="button"
           className="sidebar-foot sidebar-settings"
@@ -284,23 +282,8 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         </button>
       </Sider>
       <Layout>
-        <Header className="platform-header">
-          <Space className="header-left">
-            <Button className="mobile-menu-button" icon={<MenuOutlined />}
-              onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
-            <Typography.Text strong className="header-title">{title}</Typography.Text>
-          </Space>
-          <Space className="header-controls" wrap size="middle">
-            {active && (
-              <Button type="text" onClick={() => setTaskId(active.id)}>
-                <Tag color={statusColor(active.status)}>{active.status}</Tag>
-              </Button>
-            )}
-            <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)}>
-              设置
-            </Button>
-          </Space>
-        </Header>
+        <Button className="mobile-menu-button" icon={<MenuOutlined />}
+          onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
         <Content className="platform-content">
           <div className="content-width">
             <PlatformErrorBoundary>
@@ -312,7 +295,15 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         </Content>
       </Layout>
       <Drawer open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)}
-        placement="left" width={230} title="产品工作台">
+        placement="left" width={230} title="产品工作台"
+        footer={<>
+          {active && <Button type="text" onClick={() => { setMobileMenuOpen(false); setTaskId(active.id); }}>
+            当前任务 <Tag color={statusColor(active.status)}>{active.status}</Tag>
+          </Button>}
+          <Button icon={<SettingOutlined />} onClick={() => { setMobileMenuOpen(false); setSettingsOpen(true); }}>
+            系统设置
+          </Button>
+        </>}>
         {menu}
       </Drawer>
       <TaskDrawer taskId={taskId} onClose={() => { setTaskId(null); void reload(); }} />

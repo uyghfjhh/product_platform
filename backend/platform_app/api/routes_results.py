@@ -21,6 +21,8 @@ def _platform_result_index(settings: Settings, environment_id: str) -> dict[str,
     if not root.is_dir():
         return index
     for path in root.rglob("result.json"):
+        if not path.resolve().is_relative_to(settings.output_dir.resolve()):
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -47,7 +49,7 @@ def _row_timestamp(row: dict) -> float:
 
 
 def _archived_result(settings: Settings, store, environment_id: str,
-                     target: str, profile: str) -> tuple[Path, dict]:
+                     target: str, profile: str, *, archive_index=None) -> tuple[Path, dict]:
     environment = store.get_environment(environment_id)
     if environment is None:
         raise HTTPException(status_code=404, detail="环境不存在")
@@ -60,11 +62,12 @@ def _archived_result(settings: Settings, store, environment_id: str,
         recorded = Path(result["artifact_dir"]).resolve()
         if recorded.is_relative_to(output_root) and (recorded / "result.json").is_file():
             base = recorded
-    if base is None:
-        entry = _platform_result_index(settings, environment_id).get(target)
-        if entry is not None:
-            base = entry[0].resolve()
-    if base is None:
+    index = archive_index if archive_index is not None else _platform_result_index(settings, environment_id)
+    entry = index.get(target)
+    if entry is not None and (base is None or entry[1] > _row_timestamp(result or {})):
+        base = entry[0].resolve()
+    if (base is None or not base.is_relative_to(output_root)
+            or not (base / "result.json").resolve().is_relative_to(output_root)):
         raise HTTPException(status_code=404, detail="平台归档结果不存在")
     try:
         payload = json.loads((base / "result.json").read_text(encoding="utf-8"))
@@ -105,6 +108,49 @@ def register(app, settings: Settings, store) -> None:
                 # after a web-run failure) — the newer fact wins the row.
                 stale.update(fresh)
         return rows
+
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/report")
+    def result_report(environment_id: str, target: str, profile: str = "default"):
+        from ..report_views import describe_report
+        base, payload = _archived_result(settings, store, environment_id, target, profile)
+        return describe_report(base, payload)
+
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/report.txt")
+    def result_report_text(environment_id: str, target: str, profile: str = "default"):
+        from ..report_views import report_file
+        base, _ = _archived_result(settings, store, environment_id, target, profile)
+        path = report_file(base, "report.txt")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="原始报告不存在")
+        return FileResponse(path, media_type="text/plain; charset=utf-8",
+                            filename=target + ".report.txt",
+                            headers={"X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/v1/environments/{environment_id}/reports/{format_name}")
+    def environment_report(environment_id: str, format_name: str):
+        from platform_regress.reporting.export import export_html, export_junit
+
+        from ..report_views import describe_report
+        if format_name not in {"html", "junit"}:
+            raise HTTPException(status_code=404, detail="报告格式不存在")
+        snapshots = []
+        archive_index = _platform_result_index(settings, environment_id)
+        for row in results(environment_id):
+            try:
+                base, payload = _archived_result(settings, store, environment_id,
+                                                 row["target"], row.get("profile", "default"),
+                                                 archive_index=archive_index)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                continue
+            snapshots.append({**payload, "steps": describe_report(base, payload)["steps"]})
+        if not snapshots:
+            raise HTTPException(status_code=404, detail="当前环境尚无平台归档报告")
+        content = export_html(snapshots) if format_name == "html" else export_junit(snapshots)
+        extension = "html" if format_name == "html" else "xml"
+        return Response(content, media_type="text/html" if format_name == "html" else "application/xml",
+                        headers={"Content-Disposition": f'attachment; filename="report.{extension}"'})
 
     @app.get("/api/v1/environments/{environment_id}/results/{target}/evidence")
     def result_evidence(environment_id: str, target: str, profile: str = "default"):

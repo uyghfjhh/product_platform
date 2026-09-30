@@ -1,8 +1,8 @@
-// Ported from fbasecman_regress_v2/tools/web/app.js; drawing remains source-faithful.
+// Shared deployment renderer; layout dimensions come from the topology model.
 
   export function renderDeploymentCanvas(env) {
 
-    const { nodes, edges, clusters, health = {} } = env;
+    const { nodes, edges, clusters, health = {}, bounds = { width: 1400, height: 1200 } } = env;
 
     // Render Cluster Grouping Boxes with status pills
     let clusterBoxesHtml = '';
@@ -42,10 +42,10 @@
       const targetNode = nodes.find((n) => n.id === edge.target);
       if (!sourceNode || !targetNode) return;
 
-      const sWidth = sourceNode.compact ? 195 : 220;
-      const sHeight = sourceNode.compact ? 50 : 80;
-      const tWidth = targetNode.compact ? 195 : 220;
-      const tHeight = targetNode.compact ? 50 : 80;
+      const sWidth = sourceNode.width || (sourceNode.compact ? 195 : 220);
+      const sHeight = sourceNode.height || (sourceNode.compact ? 50 : 80);
+      const tWidth = targetNode.width || (targetNode.compact ? 195 : 220);
+      const tHeight = targetNode.height || (targetNode.compact ? 50 : 80);
 
       let x1, y1, x2, y2, d;
 
@@ -95,7 +95,7 @@
     });
 
     const svgHtml = `
-      <svg class="topo-svg-layer" width="1400" height="1200">
+      <svg class="topo-svg-layer" width="${bounds.width}" height="${bounds.height}">
         <defs>
           <linearGradient id="edgeGlow" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
@@ -127,7 +127,7 @@
         : '点击查看详情';
 
       nodesHtml += `
-        <div class="topo-node ${compactClass} ${nodeCardClass}" id="node_${n.id}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;" onclick="${clickAction}" title="${cardTitle}">
+        <div class="topo-node ${compactClass} ${nodeCardClass}" id="node_${n.id}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;${n.width ? `width: ${n.width}px;` : ''}${n.height ? `height: ${n.height}px;` : ''}" onclick="${clickAction}" title="${cardTitle}">
           <div class="topo-node-header">
             <div class="topo-node-title">
               <span class="topo-node-pulse ${statusClass}"></span>

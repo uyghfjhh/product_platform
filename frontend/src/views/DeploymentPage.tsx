@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Segmented, Space, Tag, Typography } from 'antd';
 import {
-  CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined,
+  CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined, MoreOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
 
-import { api, operationRequest, type Action, type Environment, type Product, type RegressionBinding } from '../api';
-import CodeEditor from '../components/LazyCodeEditor';
-import ThreeTopologyView, { type TopologyData, type TopologyNode } from '../components/ThreeTopologyView';
+import { api, operationRequest, type Action, type Environment, type Product } from '../api';
+import type { TopologyData, TopologyNode } from '../components/ThreeTopologyView';
 import SharedDeploymentCanvas from '../components/DeploymentCanvas';
 import EnvironmentModal from '../components/EnvironmentModal';
 import SqlWorkbenchDrawer from '../components/SqlWorkbenchDrawer';
@@ -20,7 +19,7 @@ type Props = {
   onSelectEnvironment?: (id: string) => void;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
-  productBindings?: RegressionBinding[];
+  onOpenDatabase?: (node?: TopologyNode) => void;
 };
 
 type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean; defaults?: { data_root?: string; license_file?: string } };
@@ -33,11 +32,10 @@ export default function DeploymentPage({
   onSelectEnvironment,
   openTask,
   reload,
-  productBindings = [],
+  onOpenDatabase,
 }: Props) {
   const { message, modal } = App.useApp();
   const [actions, setActions] = useState<Action[]>([]);
-  const [configuration, setConfiguration] = useState<{ content: string; path: string } | null>(null);
   const [topology, setTopology] = useState<TopologyData | null>(null);
   const [topologyError, setTopologyError] = useState('');
   const [observed, setObserved] = useState<Record<string, { running: boolean | null; message: string }> | null>(null);
@@ -50,48 +48,20 @@ export default function DeploymentPage({
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'3d' | '2d'>('2d');
   // adapter 工厂每次调用返回新对象——必须 memo，否则下方 effect 依赖每轮渲染都变，
   // 造成 topology/status 无限 refetch 且 setObserved(null) 把已取回的状态清空。
   const productAdapter = useMemo(() => deploymentAdapter(product), [product?.id]);
   // 2D 画布是平台中立能力：产品未提供自有画布时使用共享实现
   const ProductCanvas = useMemo(() => deploymentFrontend(product)?.DeploymentCanvas, [product?.id]);
-  const compatibleProfiles = (product?.test_profiles || []).filter((profile) =>
-    profile.deployment_targets.some((pattern) => pattern.endsWith('*')
-      ? Boolean(environment?.deployment_target?.startsWith(pattern.slice(0, -1)))
-      : environment?.deployment_target === pattern));
-  const boundProfiles = productBindings.filter((binding) => binding.environment_id === environment?.id
-    && binding.product_id === product?.id).map((binding) => binding.profile_id);
-
-  async function updateRegressionBindings(selected: string[]) {
-    if (!product || !environment) return;
-    try {
-      for (const profileId of boundProfiles.filter((id) => !selected.includes(id))) {
-        await api(`/regression-bindings/${encodeURIComponent(product.id)}/${encodeURIComponent(profileId)}`,
-          { method: 'DELETE' });
-      }
-      for (const profileId of selected.filter((id) => !boundProfiles.includes(id))) {
-        await api(`/regression-bindings/${encodeURIComponent(product.id)}/${encodeURIComponent(profileId)}`,
-          { method: 'PUT', body: JSON.stringify({ environment_id: environment.id }) });
-      }
-      await reload();
-      message.success('环境用途已更新');
-    } catch (cause) {
-      message.error((cause as Error).message);
-    }
-  }
-
   useEffect(() => {
-    if (!environment) { setActions([]); setConfiguration(null); setTopology(null); setObserved(null); return; }
+    if (!environment) { setActions([]); setTopology(null); setObserved(null); return; }
     setObserved(null);
     void Promise.all([
       api<Action[]>(`/environments/${encodeURIComponent(environment.id)}/actions`),
-      api<{ content: string; path: string }>(`/environments/${encodeURIComponent(environment.id)}/configuration`).catch(() => null),
       api<TopologyData>(`/environments/${encodeURIComponent(environment.id)}/topology`).then((value) => { setTopologyError(''); return value; }).catch((error) => { setTopologyError(error.message); return null; }),
       productAdapter.profilePath ? api<Profile>(productAdapter.profilePath(environment.id)).catch(() => null) : Promise.resolve(null),
-    ]).then(([list, config, graph, currentProfile]) => {
+    ]).then(([list, graph, currentProfile]) => {
       setActions(list.filter((item) => item.capability === 'deployment'));
-      setConfiguration(config);
       setTopology(graph);
       setProfile(currentProfile);
     }).catch((error) => message.error(error.message));
@@ -190,8 +160,7 @@ export default function DeploymentPage({
   return (
     <div className={productAdapter.workspaceClass}>
       {/* Multi-Environment Switcher Bar */}
-      {environments.length > 0 && (
-        <div
+      <div
           className="deployment-env-switcher-card"
           style={{
             background: 'var(--bg-surface)',
@@ -209,9 +178,9 @@ export default function DeploymentPage({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <CloudServerOutlined style={{ fontSize: 18, color: '#38bdf8' }} />
             <div>
-              <Typography.Text strong style={{ fontSize: 14, display: 'block' }}>当前集群部署环境</Typography.Text>
+              <Typography.Text strong style={{ fontSize: 14, display: 'block' }}>部署环境</Typography.Text>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                已接入 {environments.length} 套独立集群，点击切换拓扑视图与生命周期管控
+                已接入 {environments.length} 套独立集群，选择环境查看节点与复制关系
               </Typography.Text>
             </div>
           </div>
@@ -225,7 +194,7 @@ export default function DeploymentPage({
               </Button>
             )}
           </Space>
-          <Segmented
+          {environments.length > 0 && <Segmented
             size="middle"
             // 窄视口下环境枚举个数多时允许横向滚动，不撑破 body 宽度
             style={{ maxWidth: '100%', overflowX: 'auto' }}
@@ -247,37 +216,18 @@ export default function DeploymentPage({
                 ),
               };
             })}
-          />
+          />}
         </div>
-      )}
-      {!productAdapter.workspaceClass && <div className="page-heading">
-        <div>
-          <Typography.Title level={3} style={{ marginBottom: 4 }}>数据库部署管理</Typography.Title>
-          <Typography.Text type="secondary">pgcluster 驱动的多中心拓扑编排、健康探测与实例生命周期</Typography.Text>
-        </div>
-      </div>}
-
-      {environment && <div className="regression-binding-control" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-        <Typography.Text strong>环境用途</Typography.Text>
-        <Tag color={boundProfiles.length ? 'green' : 'default'}>{boundProfiles.length ? '回归测试' : '开发环境'}</Tag>
-        <Select mode="multiple" aria-label="绑定回归测试" style={{ minWidth: 260, maxWidth: '100%' }}
-          value={boundProfiles} placeholder="选择回归测试"
-          options={compatibleProfiles.map((profile) => ({ value: profile.id, label: profile.title }))}
-          onChange={(values: string[]) => void updateRegressionBindings(values)} />
-      </div>}
-
       {!environment ? <Empty description="先在产品与环境页登记环境" /> : <>
         <section className="cman-deploy-toolbar" aria-label="集群部署操作" style={{ marginBottom: 16 }}>
           <div className="cman-deploy-actions">
             {([
               ['create', '⚡ 一键部署'], ['start', '▶ 启动'], ['stop', '⏹ 停止'],
-              ['restart', '🔄 重启'], ['clean', '🧹 清理'], ['heal', '🩺 自愈'],
-              ['reset', '♻️ 重置'],
-              ['doctor', '🔍 体检'],
+              ['restart', '🔄 重启'],
             ] as const).map(([name, label]) => {
               const action = actions.find((item) => item.id === `deployment.${name}`);
               return <Button key={name} type={name === 'create' ? 'primary' : 'default'}
-                danger={name === 'stop' || name === 'clean'} disabled={!action || loading}
+                danger={name === 'stop'} disabled={!action || loading}
                 onClick={() => action && void run(action)}>{label}</Button>;
             })}
           </div>
@@ -289,62 +239,46 @@ export default function DeploymentPage({
                 🧪 准备测试夹具
               </Button>
             </>}
-            <Button loading={statusLoading} icon={<ReloadOutlined />} onClick={() => void refreshStatus()}>🔄 刷新拓扑</Button>
-            <Segmented
-              value={viewMode}
-              onChange={(val) => setViewMode(val as '3d' | '2d')}
-              options={[
-                { label: '📐 2D 架构 (GSAP/SVG)', value: '2d' },
-                { label: '🪐 3D 全息 (Three.js)', value: '3d' },
-              ]}
-            />
+            <Dropdown menu={{ items: [
+              ['doctor', '环境体检'], ['heal', '自愈'], ['reset', '重置'], ['restore', '角色回切'], ['clean', '清理'],
+            ].map(([name, label]) => ({ key: name, label, danger: name === 'clean' || name === 'reset',
+              disabled: loading || !actions.some((action) => action.id === `deployment.${name}`),
+            })), onClick: ({ key }) => {
+              const action = actions.find((item) => item.id === `deployment.${key}`);
+              if (action) void run(action);
+            } }}>
+              <Button icon={<MoreOutlined />}>更多操作</Button>
+            </Dropdown>
           </div>
         </section>
 
         {!environment.deployment_config ? (
-          <Alert type="info" showIcon message="该环境尚未关联部署配置" description="可在上方点击一键生成 pgcluster 方案，或在产品与环境中填写现有配置路径与目标。" />
+          <Alert type="info" showIcon message="该环境尚未关联部署配置" description="编辑当前环境并关联现有部署配置后，即可查看拓扑和管理集群。" />
         ) : <>
-          {/* Unified Cyberpunk Topology Stage (2D GSAP / 3D Three.js) */}
-          <section className="work-section cman-topology-section" style={{ background: 'transparent', padding: 0, border: 'none', marginBottom: 16 }}>
-            {topology ? (
-              viewMode === '3d' ? (
-                <ThreeTopologyView
-                  topology={topology}
-                  observed={observed}
-                  onSelectNode={(node) => setSelectedNode(node)}
-                  height={640}
-                />
-              ) : (
-                (() => {
-                  const Canvas = ProductCanvas ?? SharedDeploymentCanvas;
-                  return (
-                    <Canvas
-                      topology={topology}
-                      observed={observed}
-                      onSelectNode={setSelectedNode}
-                      onOpenSql={handleOpenSqlWorkbench}
-                      onDeploy={() => {
-                        const action = actions.find((item) => item.id === 'deployment.create');
-                        if (action) void run(action);
-                      }}
-                    />
-                  );
-                })()
-              )
-            ) : (
-              <Alert type="warning" showIcon message="拓扑暂不可显示" description={topologyError || '检查部署配置和目标名称'} />
-            )}
-          </section>
-
-          {/* Configuration File Viewer */}
-          <section className="work-section" style={{ background: 'var(--bg-surface)', padding: '16px 20px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
-            <div className="section-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <Typography.Title level={5} style={{ margin: 0 }}>底层部署配置 (YAML)</Typography.Title>
-              <Typography.Text type="secondary" copyable={{ text: environment.deployment_config }}>
-                {environment.deployment_config}
-              </Typography.Text>
+          <section className="work-section cman-topology-section deployment-topology">
+            <div className="deployment-topology-heading">
+              <Space wrap>
+                <Typography.Text strong>集群拓扑</Typography.Text>
+                {topology && <Typography.Text type="secondary">{topology.nodes.length} 个节点</Typography.Text>}
+                {topology && <Tag color={observed ? 'default' : 'processing'}>
+                  {observed ? `在线 ${topology.nodes.filter((node) => observed[node.id]?.running === true).length} · 已停止 ${topology.nodes.filter((node) => observed[node.id]?.running === false).length} · 未知 ${topology.nodes.filter((node) => observed[node.id]?.running == null).length}` : '正在探测'}
+                </Tag>}
+              </Space>
+              <Space wrap>
+                {onOpenDatabase && <Button icon={<DatabaseOutlined />} onClick={() => onOpenDatabase()}>数据库管理</Button>}
+                <Button loading={statusLoading} icon={<ReloadOutlined />} onClick={() => void refreshStatus()}>刷新状态</Button>
+              </Space>
             </div>
-            {configuration ? <CodeEditor value={configuration.content} language="yaml" readOnly height={420} /> : <Alert type="warning" showIcon message="配置文件尚不可读取" />}
+            {topology ? (() => {
+              const Canvas = ProductCanvas ?? SharedDeploymentCanvas;
+              return <Canvas topology={topology} observed={observed}
+                onSelectNode={setSelectedNode} onOpenSql={handleOpenSqlWorkbench}
+                onDeploy={() => {
+                  const action = actions.find((item) => item.id === 'deployment.create');
+                  if (action) void run(action);
+                }} />;
+            })() : <Alert type="warning" showIcon message="拓扑暂不可显示"
+              description={topologyError || '检查部署配置和目标名称'} />}
           </section>
         </>}
       </>}
@@ -414,6 +348,15 @@ export default function DeploymentPage({
               >
                 打开 SQL 探测抽屉
               </Button>
+              {onOpenDatabase && (
+                <Button
+                  style={{ width: '100%', marginTop: 8 }}
+                  icon={<DatabaseOutlined />}
+                  onClick={() => onOpenDatabase(selectedNode)}
+                >
+                  进入数据库管理
+                </Button>
+              )}
             </div>
 
             {/* Key Metadata Table */}
@@ -454,6 +397,11 @@ export default function DeploymentPage({
                 {selectedNode.group && actions.some((item) => item.id === 'deployment.rejoin') && (
                   <Button disabled={loading} onClick={() => void run(actions.find((item) => item.id === 'deployment.rejoin')!, `streaming.${selectedNode.group}`)}>
                     旧主重建
+                  </Button>
+                )}
+                {selectedNode.group && actions.some((item) => item.id === 'deployment.restore') && (
+                  <Button disabled={loading} onClick={() => void run(actions.find((item) => item.id === 'deployment.restore')!, `streaming.${selectedNode.group}`)}>
+                    角色回切
                   </Button>
                 )}
               </Space>
