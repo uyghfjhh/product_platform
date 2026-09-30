@@ -42,6 +42,11 @@ class QueryInput(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
 
 
+class CancelBackendInput(BaseModel):
+    terminate: bool = False
+    port: int | None = Field(default=None, ge=1, le=65535)
+
+
 class LicenseKeyCreateInput(BaseModel):
     version: str = Field(pattern=r"^1\.[1-9][0-9]*$")
     password: str = Field(min_length=1, max_length=1024)

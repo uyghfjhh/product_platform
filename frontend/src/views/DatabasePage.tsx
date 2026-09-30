@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Badge, Button, Empty, Select, Space, Table, Tag, Tree, Typography } from 'antd';
-import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Typography } from 'antd';
+import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons';
 
 import { api, post, type Environment, type Product } from '../api';
 import CodeEditor from '../components/LazyCodeEditor';
@@ -36,6 +36,8 @@ type TopologyNode = {
 };
 
 type NodeStatusMap = Record<string, { running: boolean | null }>;
+type Row = Record<string, string | number | boolean | null>;
+type ReplicationInfo = { senders: Row[]; receivers: Row[]; slots: Row[] };
 
 function quoteIdentifier(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
@@ -81,6 +83,13 @@ export default function DatabasePage({ environment, environments = [], onSelectE
   const [nodes, setNodes] = useState<TopologyNode[]>([]);
   const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
+  const [sessions, setSessions] = useState<Row[]>([]);
+  const [locks, setLocks] = useState<Row[]>([]);
+  const [replication, setReplication] = useState<ReplicationInfo>({ senders: [], receivers: [], slots: [] });
+  const [settings, setSettings] = useState<Row[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminTab, setAdminTab] = useState('sessions');
+  const [settingsSearch, setSettingsSearch] = useState('');
 
   useEffect(() => {
     setObjects([]);
@@ -90,6 +99,9 @@ export default function DatabasePage({ environment, environments = [], onSelectE
     setObjectsError('');
     setNodes([]);
     setNodeStatus({});
+    setSessions([]); setLocks([]);
+    setReplication({ senders: [], receivers: [], slots: [] });
+    setSettings([]); setSettingsSearch('');
 
     if (environment) {
       // Check if arriving from DeploymentPage with specific node
@@ -165,6 +177,48 @@ export default function DatabasePage({ environment, environments = [], onSelectE
   function handleSelectTemplate(tplSql: string) {
     setSql(tplSql);
     void run(tplSql);
+  }
+
+  async function refreshAdmin(tab = adminTab, search = settingsSearch) {
+    if (!environment) return;
+    const port = selectedPort || environment.port;
+    const query = `?port=${port}`;
+    setAdminLoading(true);
+    try {
+      if (tab === 'sessions') setSessions(await api<Row[]>(`/environments/${encodeURIComponent(environment.id)}/sessions${query}`));
+      else if (tab === 'locks') setLocks(await api<Row[]>(`/environments/${encodeURIComponent(environment.id)}/locks${query}`));
+      else if (tab === 'replication') setReplication(await api<ReplicationInfo>(`/environments/${encodeURIComponent(environment.id)}/replication${query}`));
+      else setSettings(await api<Row[]>(`/environments/${encodeURIComponent(environment.id)}/settings${query}&search=${encodeURIComponent(search)}`));
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function cancelBackend(pid: number, terminate: boolean) {
+    if (!environment) return;
+    try {
+      await post(`/environments/${encodeURIComponent(environment.id)}/sessions/${pid}/cancel`, {
+        terminate, port: selectedPort || environment.port,
+      });
+      message.success(terminate ? `已终止会话 ${pid}` : `已取消查询 ${pid}`);
+      void refreshAdmin('sessions');
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+  }
+
+  function rowColumns(rows: Row[], order: string[], widths?: Record<string, number>) {
+    const seen = new Set(order.filter((key) => rows.some((row) => key in row)));
+    rows.forEach((row) => Object.keys(row).forEach((key) => seen.add(key)));
+    return Array.from(seen).map((key) => ({
+      title: key, dataIndex: key, key,
+      width: widths?.[key],
+      render: (value: Row[string]) => value === null || value === undefined
+        ? <Typography.Text type="secondary">NULL</Typography.Text>
+        : String(value),
+    }));
   }
 
   const rows = result?.rows.map((row, index) => ({
@@ -325,6 +379,86 @@ export default function DatabasePage({ environment, environments = [], onSelectE
           </> : (
             <Alert type="success" showIcon message={result.command_tag || '执行完成'} />
           )}
+        </section>
+
+        <section className="work-section">
+          <div className="section-heading">
+            <Space>
+              <Typography.Title level={5}>实例运行状态</Typography.Title>
+              <Tag color="cyan">端口: {selectedPort || environment.port}</Tag>
+            </Space>
+            <Space>
+              {adminTab === 'settings' && (
+                <Input.Search size="small" placeholder="参数名" style={{ width: 200 }} allowClear
+                  value={settingsSearch} onChange={(event) => setSettingsSearch(event.target.value)}
+                  onSearch={(value) => void refreshAdmin('settings', value)} />
+              )}
+              <Button icon={<ReloadOutlined />} loading={adminLoading} onClick={() => void refreshAdmin()} aria-label="刷新实例状态" />
+            </Space>
+          </div>
+          <Tabs
+            size="small"
+            activeKey={adminTab}
+            onChange={(key) => { setAdminTab(key); void refreshAdmin(key); }}
+            items={[
+              {
+                key: 'sessions', label: `会话 (${sessions.length})`,
+                children: sessions.length ? (
+                  <Table rowKey="pid" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20 }}
+                    dataSource={sessions}
+                    columns={[
+                      ...rowColumns(sessions, ['pid', 'usename', 'datname', 'application_name', 'client_addr', 'state', 'wait_event_type', 'wait_event', 'query_start', 'backend_type', 'query'], { query: 360 }),
+                      {
+                        title: '操作', key: 'ops', fixed: 'right' as const, render: (_, row) => (
+                          <Space size={4}>
+                            <Popconfirm title={`取消 PID ${row.pid} 的当前查询？`} onConfirm={() => void cancelBackend(Number(row.pid), false)}>
+                              <Button size="small">取消查询</Button>
+                            </Popconfirm>
+                            <Popconfirm title={`终止会话 PID ${row.pid}？连接将被断开`} onConfirm={() => void cancelBackend(Number(row.pid), true)}>
+                              <Button size="small" danger icon={<StopOutlined />}>终止会话</Button>
+                            </Popconfirm>
+                          </Space>
+                        ),
+                      },
+                    ]} />
+                ) : <Empty description="点击刷新读取会话" />,
+              },
+              {
+                key: 'locks', label: `锁 (${locks.length})`,
+                children: locks.length ? (
+                  <Table rowKey={(row) => `${row.pid}-${row.locktype}-${row.mode}`} size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20 }}
+                    dataSource={locks}
+                    columns={rowColumns(locks, ['pid', 'locktype', 'mode', 'granted', 'relation', 'blocked_by', 'usename', 'state', 'query'], { query: 320 })} />
+                ) : <Empty description="点击刷新读取锁" />,
+              },
+              {
+                key: 'replication', label: '复制',
+                children: <>
+                  <Typography.Text strong>发送端 (pg_stat_replication)</Typography.Text>
+                  <Table rowKey="pid" size="small" scroll={{ x: 'max-content' }} pagination={false} style={{ marginBottom: 16 }}
+                    dataSource={replication.senders}
+                    columns={rowColumns(replication.senders, ['pid', 'application_name', 'client_addr', 'state', 'sync_state', 'sent_lsn', 'replay_lsn', 'replay_lag'])}
+                    locale={{ emptyText: '本节点无发送端连接（备库或无订阅者）' }} />
+                  <Typography.Text strong>接收端 (pg_stat_wal_receiver)</Typography.Text>
+                  <Table rowKey="pid" size="small" scroll={{ x: 'max-content' }} pagination={false} style={{ marginBottom: 16 }}
+                    dataSource={replication.receivers}
+                    columns={rowColumns(replication.receivers, ['pid', 'status', 'sender_host', 'sender_port', 'written_lsn', 'flushed_lsn'])}
+                    locale={{ emptyText: '本节点不是备库' }} />
+                  <Typography.Text strong>复制槽 (pg_replication_slots)</Typography.Text>
+                  <Table rowKey="slot_name" size="small" scroll={{ x: 'max-content' }} pagination={false}
+                    dataSource={replication.slots}
+                    columns={rowColumns(replication.slots, ['slot_name', 'slot_type', 'datname', 'active', 'wal_status', 'restart_lsn', 'confirmed_flush_lsn', 'safe_wal_size'])} />
+                </>,
+              },
+              {
+                key: 'settings', label: `参数 (${settings.length})`,
+                children: settings.length ? (
+                  <Table rowKey="name" size="small" scroll={{ x: 'max-content' }} pagination={{ pageSize: 20 }}
+                    dataSource={settings}
+                    columns={rowColumns(settings, ['name', 'setting', 'unit', 'source', 'pending_restart', 'category', 'vartype', 'min_val', 'max_val'])} />
+                ) : <Empty description="点击刷新读取参数（默认显示非默认值与常用项）" />,
+              },
+            ]} />
         </section>
       </>}
     </>

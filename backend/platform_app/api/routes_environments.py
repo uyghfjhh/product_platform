@@ -7,11 +7,16 @@ from fastapi import HTTPException
 from ..actions import actions_for_environment
 from ..catalog import get_product
 from ..config import Settings
-from ..database import execute_query, list_columns, list_objects
+from ..database import (
+    cancel_backend, execute_query, list_columns, list_locks, list_objects,
+    list_replication, list_sessions, list_settings,
+)
 from ..discovery import discover_cases
 from ..product_catalog import discover_products
 from ..topology import configured_topology, observed_status
-from .schemas import EnvironmentInput, QueryInput, RegressionBindingInput
+from .schemas import (
+    CancelBackendInput, EnvironmentInput, QueryInput, RegressionBindingInput,
+)
 
 
 def register(app, settings: Settings, store) -> None:
@@ -139,6 +144,60 @@ def register(app, settings: Settings, store) -> None:
             return list_columns(environment, schema, table)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _admin_env(environment_id: str, port: int | None):
+        environment = store.get_environment(environment_id)
+        if environment is None:
+            raise HTTPException(status_code=404, detail="环境不存在")
+        target = dict(environment)
+        if port:
+            target["port"] = port
+        return target
+
+    @app.get("/api/v1/environments/{environment_id}/sessions")
+    def database_sessions(environment_id: str, port: int | None = None):
+        target = _admin_env(environment_id, port)
+        try:
+            return list_sessions(target)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/environments/{environment_id}/locks")
+    def database_locks(environment_id: str, port: int | None = None):
+        target = _admin_env(environment_id, port)
+        try:
+            return list_locks(target)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/environments/{environment_id}/replication")
+    def database_replication(environment_id: str, port: int | None = None):
+        target = _admin_env(environment_id, port)
+        try:
+            return list_replication(target)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/environments/{environment_id}/settings")
+    def database_settings(environment_id: str, port: int | None = None, search: str = ""):
+        target = _admin_env(environment_id, port)
+        try:
+            return list_settings(target, search[:80])
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/environments/{environment_id}/sessions/{pid}/cancel")
+    def database_cancel_session(environment_id: str, pid: int, item: CancelBackendInput):
+        if pid < 1:
+            raise HTTPException(status_code=422, detail="无效的后端 PID")
+        target = _admin_env(environment_id, item.port)
+        try:
+            done = cancel_backend(target, pid, item.terminate)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not done:
+            raise HTTPException(status_code=404, detail="后端不存在或已结束")
+        return {"status": "ok", "pid": pid, "terminated": item.terminate}
 
     @app.get("/api/v1/environments/{environment_id}/configuration")
     def environment_configuration(environment_id: str):
