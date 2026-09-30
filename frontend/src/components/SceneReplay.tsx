@@ -5,7 +5,7 @@ import gsap from 'gsap';
 import { Grid, Segmented } from 'antd';
 import '@xyflow/react/dist/style.css';
 
-import type { Event } from '../api';
+import type { Event } from '../platform/api';
 import ProductSceneDetails from '../products/sceneDetails';
 
 gsap.registerPlugin(useGSAP);

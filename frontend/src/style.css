@@ -159,19 +159,6 @@ button, input, textarea { font-family: inherit; }
 }
 .page-heading .ant-typography { margin-top: 0; margin-bottom: 3px; }
 .page-heading h3 { font-size: 23px; font-weight: 600; }
-.overview-numbers {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  padding: 18px 0;
-  border-top: 1px solid #dce3e0;
-  border-bottom: 1px solid #dce3e0;
-  margin-bottom: 29px;
-}
-.overview-numbers > div { padding: 2px 28px; border-left: 1px solid #dce3e0; }
-.overview-numbers > div:first-child { padding-left: 0; border-left: 0; }
-.overview-numbers span { display: block; color: #6c7974; font-size: 13px; }
-.overview-numbers strong { display: block; color: #273731; margin-top: 5px; font-size: 26px; font-weight: 600; }
 .work-section { margin-top: 26px; padding: 0 0 28px; border-bottom: 1px solid #dce3e0; }
 .work-section:first-child { margin-top: 0; }
 .database-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 24px; }
@@ -181,8 +168,6 @@ button, input, textarea { font-family: inherit; }
 .database-columns { display: flex; flex-direction: column; gap: 5px; margin-top: 13px; overflow-wrap: anywhere; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; }
 .section-heading .ant-typography { margin: 0; }
-.product-list { border-top: 1px solid #e2e8e5; }
-.product-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-bottom: 1px solid #e2e8e5; }
 .filter-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
 .filter-toolbar .ant-input-affix-wrapper, .filter-toolbar .ant-input-search { flex: 1; max-width: 470px; }
 .filter-toolbar .ant-select { min-width: 144px; }
@@ -325,7 +310,6 @@ button, input, textarea { font-family: inherit; }
   }
   .context-select { min-width: 128px; flex: 1; }
   .platform-content { padding: 22px 15px 35px; }
-  .overview-numbers > div { padding-left: 14px; }
   .license-product-row { grid-template-columns: 1fr 1fr; }
   .database-workspace { grid-template-columns: 1fr; gap: 18px; }
   .database-objects { border-right: 0; border-bottom: 1px solid #dde5e0; padding: 0 0 14px; }
@@ -335,14 +319,10 @@ button, input, textarea { font-family: inherit; }
 @media (max-width: 520px) {
   .page-heading { align-items: flex-start; }
   .page-heading h3 { font-size: 20px; }
-  .overview-numbers { gap: 0; }
-  .overview-numbers strong { font-size: 21px; }
-  .overview-numbers span { font-size: 11px; }
   .form-grid { grid-template-columns: 1fr; }
   .license-product-row { grid-template-columns: 1fr; gap: 0; border-bottom: 1px solid #e5eae8; margin-bottom: 14px; }
   .filter-toolbar { flex-wrap: wrap; }
   .filter-toolbar .ant-input-affix-wrapper, .filter-toolbar .ant-input-search, .filter-toolbar .ant-select { width: 100%; max-width: none; }
-  .product-row { align-items: flex-start; }
 }
 
 /* Test workspace: quiet surfaces with color reserved for results and actions. */

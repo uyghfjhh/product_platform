@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { App, Form, Input, InputNumber, Modal, Select } from 'antd';
 
-import { api, put, type Environment, type Product } from '../api';
+import { api, put, type Environment, type Product } from '../platform/api';
 
 /** 环境登记/编辑弹窗：保存后落盘为 data/environments/<id>.yaml。 */
 export default function EnvironmentModal({ open, editing, products, onClose, onSaved }: {

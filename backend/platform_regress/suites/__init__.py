@@ -1,4 +1,4 @@
-"""Product-neutral suite contracts, registry, and runner."""
+"""Product-neutral suite contracts, registry, and engine executor bindings."""
 
 from .contracts import CaseResult, CaseSpec, SuitePlugin, SuiteRunResult
 from .failed import (

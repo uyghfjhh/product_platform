@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Descriptions, Modal, Space, Tag, Typography } from 'antd';
 import { CheckCircleFilled } from '@ant-design/icons';
 
-import { api, type Product } from '../api';
-import type { ThemeName } from '../App';
+import { api, type Product } from '../platform/api';
+import type { ThemeName } from '../platform/PlatformShell';
 
 const THEMES: { key: ThemeName; title: string; description: string; swatch: string[] }[] = [
   { key: 'cman', title: '极客夜蓝', description: '暗黑冷蓝荧光', swatch: ['#0a0d14', '#38bdf8', '#111726'] },

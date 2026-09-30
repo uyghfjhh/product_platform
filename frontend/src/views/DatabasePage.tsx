@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Typography } from 'antd';
 import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons';
 
-import { api, post, type Environment, type Product } from '../api';
+import { api, post, type Environment, type Product } from '../platform/api';
 import CodeEditor from '../components/LazyCodeEditor';
 
 type Props = {

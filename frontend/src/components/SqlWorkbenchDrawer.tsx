@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Alert, Button, Drawer, Input, Space, Table, Tag, Typography } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
 
-import { post, type Environment } from '../api';
-import type { TopologyNode } from './ThreeTopologyView';
+import { post, type Environment } from '../platform/api';
+import type { TopologyNode } from '../platform/topology';
 
 type QueryResult = {
   columns: string[];

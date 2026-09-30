@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { App as AntApp, ConfigProvider, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 
-import App, { type ThemeName } from './App';
+import PlatformShell, { type ThemeName } from './platform/PlatformShell';
 import './style.css';
 
 function PlatformRoot() {
@@ -52,7 +52,7 @@ function PlatformRoot() {
         fontSize: 14,
       },
     }}>
-      <AntApp><App themeName={themeName} onThemeChange={setThemeName} /></AntApp>
+      <AntApp><PlatformShell themeName={themeName} onThemeChange={setThemeName} /></AntApp>
     </ConfigProvider>
   );
 }

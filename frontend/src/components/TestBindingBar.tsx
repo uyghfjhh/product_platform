@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, App, Button, Select, Space, Tag, Typography } from 'antd';
 import { AimOutlined, CheckCircleFilled, CloseCircleFilled, LinkOutlined } from '@ant-design/icons';
 
-import { api, post, type Environment, type Product, type RegressionBinding } from '../api';
+import { api, post, type Environment, type Product, type RegressionBinding } from '../platform/api';
 
 /** 测试页就地绑定栏：展示/切换当前测试 profile 绑定的执行环境（§6.2）。 */
 export default function TestBindingBar({ product, profileId, environments, bindings, onChanged }: {

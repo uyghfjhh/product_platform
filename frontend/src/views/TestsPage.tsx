@@ -6,7 +6,7 @@ import {
 import {
   api, operationRequest, type Case, type Environment, type Product,
   type RegressionBinding, type Result, type Task,
-} from '../api';
+} from '../platform/api';
 import { testAdapter, testFrontend, type TestMode } from '../products/testRegistry';
 import DiagnosisDrawer from '../components/DiagnosisDrawer';
 import EvidenceDrawer from '../platform/EvidenceDrawer';

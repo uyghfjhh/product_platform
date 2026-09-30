@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Drawer, Empty, Space, Spin, Tag, Typography } from 'antd';
 
-import { api, operationRequest, type Task } from '../api';
+import { api, operationRequest, type Task } from '../platform/api';
 
 type Finding = { text: string; evidence_ids: string[] };
 type Candidate = { revision: string; reason: string; evidence_ids: string[] };

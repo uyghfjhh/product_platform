@@ -4,8 +4,8 @@ import {
   CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined, MoreOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
 
-import { api, operationRequest, type Action, type Environment, type Product } from '../api';
-import type { TopologyData, TopologyNode } from '../components/ThreeTopologyView';
+import { api, operationRequest, type Action, type Environment, type Product } from '../platform/api';
+import type { TopologyData, TopologyNode } from '../platform/topology';
 import SharedDeploymentCanvas from '../components/DeploymentCanvas';
 import EnvironmentModal from '../components/EnvironmentModal';
 import DeploymentWizard from '../components/DeploymentWizard';

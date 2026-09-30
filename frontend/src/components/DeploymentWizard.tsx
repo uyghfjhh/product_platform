@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, App, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal, Radio, Select, Space, Steps, Table, Tag, Typography } from 'antd';
-import { api, type Environment, type Task } from '../api';
+import { api, type Environment, type Task } from '../platform/api';
 import FreeTopologyEditor from './FreeTopologyEditor';
 
 type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number };

@@ -1,5 +1,20 @@
 # 实现进度
 
+## 2026-09-30:删除退役页面、执行器和一次性脚本
+
+- 删除 `scratch/` 中全部 18 个已跟踪的一次性补丁、环境同步及旧界面巡检脚本；这些脚本不属于正式入口，硬编码旧环境且部分直接修改外部工程或数据库。保留现有正式部署／报告／场景浏览器验收脚本。
+- 删除无引用的 OverviewPage 及其专属 CSS、旧 `platform_regress.suites.runner`、硬编码地址和截图路径的 `frontend/test_multi_env_ui.mjs`。
+- 删除旧 ThreeTopologyView 渲染器；TopologyNode／TopologyData 移入 `frontend/src/platform/topology.ts`，五处调用直接迁移。现用产品报告 3D 实现仍由产品包提供。
+- 更新 README 当前目录、suite 包说明及初始化失败报告注释，不留旧模块转发壳。旧 runner 的禁止加载测试保留，防止旧执行面重新进入产品路径。
+- 验证：TypeScript／Vite 构建通过、删除目标与残留引用检查通过、`git diff --check` 通过。沙箱内 API 请求等待及本地 socket 权限受限；解除沙箱限制后使用隔离临时数据目录运行全量 pytest，412 passed（32.01 秒）。没有执行真实数据库部署或回归。
+
+## 2026-09-30:删除前端兼容入口
+
+- 删除仅转发导出的 `frontend/src/App.tsx` 与 `frontend/src/api.ts`；主入口直接使用 `platform/PlatformShell`，页面、组件和产品前端直接引用 `platform/api`。
+- SettingsModal 的主题类型直接来自 PlatformShell，不再经旧 App 入口转发。
+- 本次只迁移内部模块引用，不保留旧路径兼容层。
+- 验证：TypeScript 检查与 Vite 构建通过，扫描 57 个前端源码／脚本无旧入口引用，`git diff --check` 通过。全量 pytest 在默认数据目录下 120 秒及隔离数据目录下 90 秒均无输出并超时，未确认通过；未执行真实数据库操作。
+
 ## 2026-09-30:七项 review 修复与验证提速
 
 - 修复清理路径 `..`/父 symlink 越界；只删除最终链接本身。长跑 cleanup 异常、False 资源结果或 errors 均导致 failed。

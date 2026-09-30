@@ -80,11 +80,11 @@ product_platform/
 │   └── product_catalog.py          # 产品 manifest 发现与契约校验
 ├── frontend/src/                   # React 19 + TS + AntD 前端
 │   ├── views/                      #   部署/测试(多活·等保·fbasecman)/License 页面
-│   ├── components/                 #   TaskDrawer/LogViewer/ThreeTopologyView 等
-│   └── product-adapters/fbasecman/ #   产品专属组件(报告/2D 拓扑/回归终端)
+│   ├── components/                 #   TaskDrawer/LogViewer/DeploymentCanvas 等
+│   └── platform/                 #   公共外壳/API/报告/拓扑类型
 ├── products/                       # 每个产品一个代码目录
 │   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
-│   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/
+│   ├── fbasecman/                  # fbasecman 适配、CLI、用例、frontend/ 和 regression/
 │   └── demo/                       # 无数据库依赖的产品接入样例
 ├── tests/                          # 平台自身测试(340+ 项 pytest)
 ├── data/                           # 控制面状态：环境/任务/绑定/结果/诊断/profile（不可随意删除）

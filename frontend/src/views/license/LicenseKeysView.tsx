@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, App, Button, Empty, Form, Input, Modal, Space, Table, Tag, Typography } from 'antd';
 import { KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 
-import { api } from '../../api';
+import { api } from '../../platform/api';
 
 type Options = {
   vendor: string;

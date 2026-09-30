@@ -79,7 +79,7 @@ def _spec(source, suite_id, name):
 
 
 def _write_init_failure_report(env, suite_id, spec, exc):
-    """Preserve run_runtime_case's report when runtime construction fails."""
+    """Record initialization failure when runtime construction fails."""
     try:
         run_root = Path(env.output_dir) / "runs" / suite_id / spec.name
         run_root.mkdir(parents=True, exist_ok=True)

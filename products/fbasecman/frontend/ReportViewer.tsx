@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Empty, Modal, Segmented, Select, Space, Tabs, Tag, Typography } from 'antd';
 import { PauseOutlined, PlayCircleOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
 
-import { api, statusColor } from '../../../frontend/src/api';
+import { api, statusColor } from '../../../frontend/src/platform/api';
 import CodeEditor from '../../../frontend/src/components/LazyCodeEditor';
 import LogViewer from '../../../frontend/src/components/LogViewer';
-import type { TopologyData, TopologyNode } from '../../../frontend/src/components/ThreeTopologyView';
+import type { TopologyData, TopologyNode } from '../../../frontend/src/platform/topology';
 import Topology2D from './Topology2D';
 import ReferenceThreeTopology from './ReferenceThreeTopology';
 import type { RegressionTopology } from './topologyModel';

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Tag } from 'antd';
-import { api, post, type Event, type Task } from '../../../frontend/src/api';
+import { api, post, type Event, type Task } from '../../../frontend/src/platform/api';
 
 const finished = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED']);
 

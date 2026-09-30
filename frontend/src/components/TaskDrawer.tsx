@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Button, Drawer, Empty, Select, Space, Tag, Typography } from 'antd';
 import { CloseCircleOutlined, PauseOutlined, PlayCircleOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
 
-import { api, post, type Event, type Task, statusColor } from '../api';
+import { api, post, type Event, type Task, statusColor } from '../platform/api';
 import LogViewer from './LogViewer';
 import SceneReplay from './SceneReplay';
 

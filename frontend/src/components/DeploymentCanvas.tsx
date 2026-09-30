@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import gsap from 'gsap';
-import type { TopologyData, TopologyNode } from './ThreeTopologyView';
+import type { TopologyData, TopologyNode } from '../platform/topology';
 import { renderDeploymentCanvas } from './referenceDeploymentCanvas';
 import './referenceDeploymentCanvas.css';
 

@@ -2,7 +2,7 @@ import type { DeploymentProductAdapter } from './deploymentRegistry';
 import type { TestMode, TestProductAdapter } from './testRegistry';
 import type { Environment } from '../platform/api';
 import type { ComponentType } from 'react';
-import type { TopologyData, TopologyNode } from '../components/ThreeTopologyView';
+import type { TopologyData, TopologyNode } from '../platform/topology';
 
 type ReportProps = { target: string | null; environmentId?: string; onClose: () => void };
 type TerminalProps = { taskId: string | null; onInspect: (taskId: string) => void; onFinished: () => void };

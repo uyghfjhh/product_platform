@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, App, Button, Empty, Input, Space, Typography } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
 
-import { operationRequest, type Environment, type Product, type RegressionBinding } from '../api';
+import { operationRequest, type Environment, type Product, type RegressionBinding } from '../platform/api';
 import TestBindingBar from '../components/TestBindingBar';
 
 type Props = {
