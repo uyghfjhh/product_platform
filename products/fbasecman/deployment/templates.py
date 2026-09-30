@@ -34,6 +34,51 @@ def compile_template(settings, spec, environment_id):
     overrides = {node.name: node for node in spec.nodes}
     if overrides and set(overrides) != set(config["instances"]):
         raise ValueError("节点覆盖必须包含模板全部节点")
+    if spec.hosts:
+        hosts_section = {}
+        for host in spec.hosts:
+            entry = {"address": host.address}
+            ssh = host.ssh_options()
+            if ssh:
+                entry["ssh"] = ssh
+            hosts_section[host.name] = entry
+        default_host = next(
+            host.name for host in spec.hosts if host.address == spec.host
+        )
+        base_installation = deepcopy(config["postgresql_installations"]["regress_postgres"])
+        install_by_home = {}
+        install_for_host = {}
+        installations = {}
+        for host_name in hosts_section:
+            home = next(
+                host.home or spec.home
+                for host in spec.hosts
+                if host.name == host_name
+            )
+            if home not in install_by_home:
+                install_name = (
+                    "regress_postgres"
+                    if not install_by_home
+                    else "regress_postgres_" + host_name
+                )
+                install_by_home[home] = install_name
+                installations[install_name] = {**base_installation, "home": home}
+            install_for_host[host_name] = install_by_home[home]
+        config["hosts"] = hosts_section
+        config["postgresql_installations"] = installations
+        for name, node in config["instances"].items():
+            host_name = (
+                overrides[name].host
+                if name in overrides and overrides[name].host
+                else default_host
+            )
+            if host_name not in hosts_section:
+                raise ValueError(f"节点 {name} 的主机 {host_name} 未在主机资源中声明")
+            node["host"] = host_name
+            node["installation"] = install_for_host[host_name]
+        regression["database"]["mmr_host"] = hosts_section[
+            config["instances"]["test_mmr1"]["host"]
+        ]["address"]
     for name, node in overrides.items():
         config["instances"][name].update(port=node.port, data_dir=node.data_dir)
     # cman 回归代码按 <数据根目录>/<节点名> 约定定位数据目录（rebuild/备份等），

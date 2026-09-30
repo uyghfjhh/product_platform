@@ -39,7 +39,9 @@ def register(app, settings, store):
 
     @app.post("/api/v1/deployment/discover")
     def discover_installations(item: DiscoveryInput):
-        return call(probe, item.host, {"operation": "discover", **item.model_dump()})
+        request = item.model_dump()
+        ssh = request.pop("ssh") or None
+        return call(probe, item.host, request, ssh=ssh)
 
     @app.post("/api/v1/deployment/import-targets")
     def import_targets(item: ImportInput):

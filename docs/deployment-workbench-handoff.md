@@ -24,7 +24,7 @@
 3. ~~符号链接进入平台项目目录阻断规则的专门测试。~~ **已完成**：两条专项用例（data_root 符号链接入平台目录、两节点目录经符号链接解析到同一实际目录）。
 4. ~~再跑最终全量与更新后的 browser-smoke~~。**已完成**：全量 385 项通过；browser-smoke 修正节点点击落点（卡片中心命中 SQL 快捷行是既有设计，详情抽屉须点标题区）；部署工作台隔离浏览器验收通过。远程失败与安装工具混版本路径仍未覆盖。
 5. ~~重启运行平台加载新 API，核验既有环境。~~ **已完成**：机器重启后的空闲窗口启动服务，模板目录（mac/mmr/cman）与三环境拓扑核验正常（fbase-mmr 6、fbase-mac 3、cman-lab 14）。真机部署仍需用户审阅方案。
-6. B 批次：~~现有集群修改的真实差异计划~~（已完成，见下）、多主机／凭据资源、分阶段恢复与 React Flow 自由拓扑编辑。
+6. B 批次：~~现有集群修改的真实差异计划~~、~~显式主机／凭据资源 + 多主机安装分配~~（均已完成，见下）、分阶段恢复与 React Flow 自由拓扑编辑。
 
 ## 后续批次进展（2026-09-30 续）
 
@@ -45,6 +45,16 @@
 - **前端**：差异计划横幅（可执行=警告/不可执行=错误）、操作表新增类型与可执行列、确认框文案区分扩容与初始化。
 - **验证**：新增 5 项专项（扩容可执行端到端含 apply 202、缩容列出但双入口 422、端口/参数变更拦截、规范重发仍触发上下文失效、漂移导入被拒且上下文保留）；工作台专项 27 passed，全量 392 passed；真机 fbase-mac 三场景实测通过（原样=纯接管、+备库=可执行 diff、改端口=422）。
 - **已知边界**：cman/MMR 加成员暂不支持自动执行（`create_mmr` 虽幂等但 join 语义与流复制不同，保守拦截）；移除节点需 pgcluster 补实例级元数据卸载原语后才有安全缩容路径。
+
+## B 批次进展：显式主机/凭据资源 + 多主机安装分配（已完成第二项）
+
+- **pgcluster 侧**（仓库已推送 `288aa6c`）：`hosts.<name>.ssh = {user, port, identity_file, connect_timeout}` 经模型校验（POSIX 登录名、端口范围、密钥绝对路径、未知字段拒绝、address 全局唯一）；`Executor` 按地址查凭据构造 `ssh -o BatchMode -o ConnectTimeout [-i key] [-p port] [user@]address`，`Runtime` 默认从 `config.hosts` 注入——即执行层真实使用声明凭据，而非装饰。
+- **平台 spec**：`DeploymentSpec.hosts`（≤16，名称/地址唯一，有声明时 spec.host 必须落在其中）、`NodeOverride.host`（主机资源名，空=主表单主机所在资源）、`HostResource.home` 覆盖该主机安装目录。`DiscoveryInput.ssh` 允许探测带凭据。
+- **探测分发**：`probes.probe(host, req, ssh=…)`；`VALIDATE_SCRIPT` 导出 `facts.hosts`（name→address+ssh），`inspect_plan` 按节点地址映射凭据——导入 YAML 自带 ssh 段同样生效。
+- **产品编译器**：fbase-database 与 fbasecman 均支持 `spec.hosts`——hosts 段带 ssh 段、节点按 `override.host` 归属、按主机 `home`（缺省 spec.home）去重生成 `deploy_postgres[_<host>]`/`regress_postgres[_<host>]` 安装条目；cman 的 `mmr_host` 跟随 test_mmr1 所在主机。
+- **前端**：步骤一折叠面板"多主机与 SSH 凭据"（名称/地址/用户/端口/密钥/安装目录），步骤二节点主机列变为下拉（地址→资源名映射保存）。
+- **校验**：工作台专项 31 passed（多主机编译、逐节点归属、安装去重、cman ssh 端到端 validate_config、重复/孤儿主机拒绝）；全量 396 passed。
+- **边界**：凭据仅存密钥路径不存口令（走 agent/密钥文件）；sudo 安装扩展沿用目标主机本地 sudo 规则。
 
 ## 继续工作定位
 

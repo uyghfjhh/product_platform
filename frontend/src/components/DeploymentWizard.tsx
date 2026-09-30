@@ -3,10 +3,11 @@ import { Alert, App, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal
 import { api, type Environment, type Task } from '../api';
 
 type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number };
+type HostResource = { name: string; address: string; ssh_user: string; ssh_port?: number | null; ssh_identity_file: string; ssh_connect_timeout: number; home: string };
 type Node = { name: string; host?: string; port: number; data_dir: string };
 type Spec = {
   title: string; product_id: string; template_id: string; mode: 'new' | 'adopt' | 'import';
-  host: string; home: string; data_root: string; license_file: string; base_port: number;
+  host: string; hosts: HostResource[]; home: string; data_root: string; license_file: string; base_port: number;
   nodes: Node[]; parameters: Record<string, unknown>; source_yaml: string; target: string;
 };
 type Draft = { id: string; revision: number; spec: Spec };
@@ -28,6 +29,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [hosts, setHosts] = useState<HostResource[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [busy, setBusy] = useState(false);
@@ -38,7 +40,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const mode = Form.useWatch('mode', form);
 
   function loadDraft(value: Draft) {
-    setDraft(value); setNodes(value.spec.nodes); setPlan(null); setStep(0); setConfirmed(false); setPreview(''); setImportTargets(value.spec.target ? [{ value: value.spec.target, label: value.spec.target }] : []);
+    setDraft(value); setNodes(value.spec.nodes); setHosts(value.spec.hosts || []); setPlan(null); setStep(0); setConfirmed(false); setPreview(''); setImportTargets(value.spec.target ? [{ value: value.spec.target, label: value.spec.target }] : []);
     form.setFieldsValue({ ...value.spec, template_key: `${value.spec.product_id}:${value.spec.template_id}`,
       parameters_text: JSON.stringify(value.spec.parameters, null, 2) });
   }
@@ -46,7 +48,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setStep(0); setDraft(null); setPlan(null); setNodes([]); setError(''); setConfirmed(false); setPreview(''); setInstallations([]);
+    setStep(0); setDraft(null); setPlan(null); setNodes([]); setHosts([]); setError(''); setConfirmed(false); setPreview(''); setInstallations([]);
     setBusy(true);
     void Promise.all([api<Template[]>('/deployment/templates'), api<Draft[]>('/deployment/drafts')])
       .then(async ([options, saved]) => {
@@ -80,8 +82,9 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     const parameters = JSON.parse(values.parameters_text || '{}') as Record<string, unknown>;
     if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('高级参数需要 JSON 对象');
     const spec: Spec = { title: values.title, product_id, template_id, mode: values.mode,
-      host: values.host, home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
-      base_port: values.base_port, parameters, nodes: nodes.map(({ name, port, data_dir }) => ({ name, port, data_dir })),
+      host: values.host, hosts: values.mode === 'import' ? [] : hosts.filter((item) => item.name && item.address),
+      home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
+      base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir }) => ({ name, host: hosts.find((item) => item.address === host)?.name || '', port, data_dir })),
       source_yaml: values.source_yaml || '', target: values.target || '' };
     const saved = await api<Draft>(draft ? `/deployment/drafts/${draft.id}` : '/deployment/drafts', {
       method: draft ? 'PUT' : 'POST', body: JSON.stringify({ spec, expected_revision: draft?.revision || 0 }),
@@ -148,7 +151,21 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         <Alert type="info" message={draft ? `稳定环境 ID：${draft.id}` : '环境 ID 会自动生成；名称修改不会改变测试、任务和报告的关联。'} />
       </div>
       <div style={{ display: step === 1 ? 'block' : 'none' }}>
-        <Form.Item label="目标主机" name="host" extra="本机使用 127.0.0.1；远程使用当前用户的 SSH 配置／agent，目标主机需有 Python 3。"><Input /></Form.Item>
+        <Form.Item label="目标主机" name="host" extra="本机使用 127.0.0.1；远程使用声明的 SSH 凭据或当前用户的 SSH 配置／agent，目标主机需有 Python 3。"><Input /></Form.Item>
+        {mode !== 'import' && <Collapse style={{ marginBottom: 16 }} items={[{ key: 'hosts', label: '多主机与 SSH 凭据（可选）', children: <>
+          <Alert type="info" style={{ marginBottom: 8 }}
+            message="声明多台主机后可在实例步骤逐节点分配；主表单的主机地址必须出现在主机资源中。凭据只填密钥文件路径，不写口令。" />
+          <Table rowKey={(_, index) => String(index)} size="small" pagination={false} dataSource={hosts} columns={[
+            { title: '名称', render: (_, host, index) => <Input value={host.name} placeholder="host1" onChange={(e) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} /> },
+            { title: '地址', render: (_, host, index) => <Input value={host.address} placeholder="192.168.x.x" onChange={(e) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, address: e.target.value } : item))} /> },
+            { title: 'SSH 用户', render: (_, host, index) => <Input value={host.ssh_user} onChange={(e) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, ssh_user: e.target.value } : item))} /> },
+            { title: 'SSH 端口', render: (_, host, index) => <InputNumber value={host.ssh_port} min={1} max={65535} onChange={(port) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, ssh_port: port } : item))} /> },
+            { title: '密钥文件', render: (_, host, index) => <Input value={host.ssh_identity_file} placeholder="/home/postgres/.ssh/id_ed25519" onChange={(e) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, ssh_identity_file: e.target.value } : item))} /> },
+            { title: '安装目录', render: (_, host, index) => <Input value={host.home} placeholder="留空用统一安装目录" onChange={(e) => setHosts((prev) => prev.map((item, i) => i === index ? { ...item, home: e.target.value } : item))} /> },
+            { title: '', render: (_, _host, index) => <Button size="small" danger onClick={() => setHosts((prev) => prev.filter((_, i) => i !== index))}>删除</Button> },
+          ]} />
+          <Button size="small" onClick={() => setHosts((prev) => [...prev, { name: `host${prev.length + 1}`, address: '', ssh_user: '', ssh_identity_file: '', ssh_connect_timeout: 10, home: '' }])}>添加主机</Button>
+        </> }]} />}
         {mode === 'import' ? <>
           <Form.Item label="部署文件内容" name="source_yaml"><Input.TextArea rows={12} /></Form.Item>
           <Space wrap style={{ marginBottom: 12 }}>
@@ -182,7 +199,11 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         <Alert type="info" message="固定回归模板保留节点名称与复制关系；可调整端口和数据目录。" style={{ marginBottom: 12 }} />
         <Table rowKey="name" pagination={false} size="small" scroll={{ x: 700 }} dataSource={nodes} columns={[
           { title: '节点', dataIndex: 'name' },
-          { title: '主机', dataIndex: 'host' },
+          { title: '主机', render: (_, node, index) => hosts.length
+              ? <Select size="small" style={{ minWidth: 170 }} disabled={mode === 'import'} value={node.host}
+                  options={hosts.map((item) => ({ value: item.address, label: `${item.name} · ${item.address}` }))}
+                  onChange={(address) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, host: address } : item))} />
+              : node.host },
           { title: '端口', render: (_, node, index) => <InputNumber disabled={mode === 'import'} value={node.port} min={1024} max={65535} onChange={(port) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, port: port || 1024 } : item))} /> },
           { title: '数据目录', render: (_, node, index) => <Input disabled={mode === 'import'} value={node.data_dir} onChange={(event) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, data_dir: event.target.value } : item))} /> },
         ]} />

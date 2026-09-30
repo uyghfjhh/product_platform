@@ -8,22 +8,28 @@ import sys
 from pathlib import Path
 
 
-def probe(host, request):
+def probe(host, request, ssh=None):
     script = Path(__file__).with_name("probe_agent.py").read_text()
     args = ["python3", "-c", script, json.dumps(request)]
     if host in {"127.0.0.1", "localhost", "::1", socket.gethostname()}:
         args[0] = sys.executable
     else:
+        ssh = ssh or {}
+        target = (
+            f"{ssh['user']}@{host}" if ssh.get("user") else host
+        )
         args = [
             "ssh",
             "-o",
             "BatchMode=yes",
             "-o",
-            "ConnectTimeout=5",
-            host,
-            "--",
-            shlex.join(args),
+            f"ConnectTimeout={int(ssh.get('connect_timeout', 5))}",
         ]
+        if ssh.get("identity_file"):
+            args += ["-i", ssh["identity_file"]]
+        if ssh.get("port"):
+            args += ["-p", str(int(ssh["port"]))]
+        args += [target, "--", shlex.join(args)]
     try:
         result = subprocess.run(args, capture_output=True, text=True, timeout=30)
         payload = json.loads(result.stdout)

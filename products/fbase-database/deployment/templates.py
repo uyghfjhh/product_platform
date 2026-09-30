@@ -40,11 +40,39 @@ def compile_template(settings, spec, environment_id):
         }
         for name, node in cluster["nodes"].items()
     }
+    host_entries = list(spec.hosts)
+    if host_entries:
+        hosts_section = {}
+        for host in host_entries:
+            entry = {"address": host.address}
+            ssh = host.ssh_options()
+            if ssh:
+                entry["ssh"] = ssh
+            hosts_section[host.name] = entry
+        default_host = next(
+            host.name for host in host_entries if host.address == spec.host
+        )
+        homes = {
+            host.name: host.home or spec.home for host in host_entries
+        }
+    else:
+        hosts_section = {"deploy_host": {"address": spec.host}}
+        default_host = "deploy_host"
+        homes = {default_host: spec.home}
     overrides = {node.name: node for node in spec.nodes}
     if overrides and set(overrides) != set(nodes):
         raise ValueError("节点覆盖必须包含模板全部节点，不能增删固定回归节点")
+    node_hosts = {name: default_host for name in nodes}
     for name, node in overrides.items():
-        nodes[name].update(port=node.port, data_dir=node.data_dir)
+        host_name = node.host or default_host
+        if host_name not in hosts_section:
+            raise ValueError(f"节点 {name} 的主机 {host_name} 未在主机资源中声明")
+        node_hosts[name] = host_name
+        nodes[name].update(
+            host=hosts_section[host_name]["address"],
+            port=node.port,
+            data_dir=node.data_dir,
+        )
     plugins = {
         name: {"required": True, "extension": name} for name in cluster["plugins"]
     }
@@ -73,19 +101,31 @@ def compile_template(settings, spec, environment_id):
         parameters.update(
             {"track_commit_timestamp": "on", "fdd.running_databases": "postgres"}
         )
-    config = {
-        "hosts": {"deploy_host": {"address": spec.host}},
-        "postgresql_installations": {
-            "deploy_postgres": {
+    install_by_home = {}
+    installations = {}
+    install_for_host = {}
+    for host_name in hosts_section:
+        home = homes[host_name]
+        if home not in install_by_home:
+            install_name = (
+                "deploy_postgres"
+                if not install_by_home
+                else "deploy_postgres_" + host_name
+            )
+            install_by_home[home] = install_name
+            installations[install_name] = {
                 "provider": "fbase",
-                "home": spec.home,
+                "home": home,
                 "plugins": plugins,
                 "license": {
                     "source_file": spec.license_file,
                     "data_file": "license.dat",
                 },
             }
-        },
+        install_for_host[host_name] = install_by_home[home]
+    config = {
+        "hosts": hosts_section,
+        "postgresql_installations": installations,
         "postgresql_config": {
             "parameters": parameters,
             "replication_capacity": {
@@ -117,8 +157,8 @@ def compile_template(settings, spec, environment_id):
         },
         "instances": {
             name: {
-                "host": "deploy_host",
-                "installation": "deploy_postgres",
+                "host": node_hosts[name],
+                "installation": install_for_host[node_hosts[name]],
                 "port": node["port"],
                 "data_dir": node["data_dir"],
             }

@@ -683,6 +683,131 @@ def _materialize_cluster(config, major="15"):
         (path / "PG_VERSION").write_text(major)
 
 
+def test_multi_host_spec_compiles_hosts_ssh_and_installations(workbench):
+    client, _, spec, _ = workbench
+    two_hosts = [
+        {
+            "name": "local_a",
+            "address": "127.0.0.1",
+            "ssh_user": "",
+            "ssh_port": None,
+            "ssh_identity_file": "",
+            "ssh_connect_timeout": 10,
+            "home": "",
+        },
+        {
+            "name": "local_b",
+            "address": "localhost",
+            "ssh_user": "postgres",
+            "ssh_port": 22,
+            "ssh_identity_file": "",
+            "ssh_connect_timeout": 10,
+            "home": "",
+        },
+    ]
+    config, target, _ = compile_spec(
+        workbench[1].settings, DeploymentSpec(**{**spec, "hosts": two_hosts}), "m"
+    )
+    assert set(config["hosts"]) == {"local_a", "local_b"}
+    assert config["hosts"]["local_b"]["ssh"] == {"user": "postgres", "port": 22}
+    assert all(
+        node["host"] in {"local_a", "local_b"}
+        for node in config["instances"].values()
+    )
+
+
+def test_multi_host_per_node_assignment_and_per_home_installation(workbench):
+    _, service, spec, _ = workbench
+    alt_home = spec["home"] + "-b"
+    spec = {
+        **spec,
+        "hosts": [
+            {"name": "h1", "address": "127.0.0.1"},
+            {"name": "h2", "address": "localhost", "home": alt_home},
+        ],
+        "nodes": [
+            {"name": "mac_primary", "host": "h1", "port": spec["base_port"],
+             "data_dir": spec["data_root"] + "/mac_primary"},
+            {"name": "mac_standby", "host": "h2", "port": spec["base_port"] + 1,
+             "data_dir": spec["data_root"] + "/mac_standby"},
+            {"name": "logical_subscriber", "host": "h2", "port": spec["base_port"] + 2,
+             "data_dir": spec["data_root"] + "/logical_subscriber"},
+        ],
+    }
+    config, _, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "m"
+    )
+    assert config["instances"]["mac_primary"]["host"] == "h1"
+    assert config["instances"]["mac_standby"]["host"] == "h2"
+    installs = config["postgresql_installations"]
+    assert set(installs) == {"deploy_postgres", "deploy_postgres_h2"}
+    assert installs["deploy_postgres_h2"]["home"] == alt_home
+    assert (
+        config["instances"]["mac_standby"]["installation"]
+        == "deploy_postgres_h2"
+    )
+
+
+def test_host_resource_validation_rejects_duplicates_and_orphan(workbench):
+    _, service, spec, _ = workbench
+    for hosts in (
+        [{"name": "h1", "address": "127.0.0.1"}, {"name": "h1", "address": "127.0.0.2"}],
+        [{"name": "h1", "address": "127.0.0.1"}, {"name": "h2", "address": "127.0.0.1"}],
+        [{"name": "h1", "address": "10.0.0.9"}],  # spec.host 不在声明的主机资源中
+    ):
+        with pytest.raises(ValueError):
+            compile_spec(
+                service.settings, DeploymentSpec(**{**spec, "hosts": hosts}), "m"
+            )
+
+
+def test_cman_multi_host_compiles_with_ssh_and_host_assignment(workbench, tmp_path):
+    _, service, spec, _ = workbench
+    config, _ = _cman_compiled(service, spec, tmp_path, 45800)
+    cman_spec = {
+        **spec,
+        "product_id": "fbasecman",
+        "template_id": "cman",
+        "base_port": 45800,
+        "data_root": str(tmp_path / "cman-data"),
+        "hosts": [
+            {"name": "h1", "address": "127.0.0.1"},
+            {
+                "name": "h2",
+                "address": "localhost",
+                "ssh_user": "postgres",
+                "ssh_port": 22,
+            },
+        ],
+        "nodes": [
+            {
+                "name": name,
+                "host": "h2" if name.startswith("test_mmr2") else "h1",
+                "port": node["port"],
+                "data_dir": node["data_dir"],
+            }
+            for name, node in config["instances"].items()
+        ],
+    }
+    compiled, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**cman_spec), "cman-env"
+    )
+    assert compiled["hosts"]["h2"]["ssh"] == {"user": "postgres", "port": 22}
+    assert compiled["instances"]["test_mmr2"]["host"] == "h2"
+    assert compiled["instances"]["test_mmr1"]["host"] == "h1"
+    assert target == "mmr.fbasecman_regress"
+    # pgcluster 引擎本身接受声明的 ssh 主机段
+    import tempfile
+
+    from platform_app.deployment.workbench import validate_config
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "pgcluster.yaml"
+        path.write_text(yaml.safe_dump(compiled, allow_unicode=True))
+        facts = validate_config(service.settings, path, target)
+    assert set(facts["hosts"]) == {"h1", "h2"}
+
+
 def test_diff_plan_scale_out_new_standby_is_executable(workbench, tmp_path):
     client, service, spec, _ = workbench
     config, target, _ = compile_spec(

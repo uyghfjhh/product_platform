@@ -69,6 +69,14 @@ def compile_spec(settings, spec, environment_id):
         for key in spec.parameters
     ):
         raise ValueError("高级参数包含由拓扑管理的结构参数或无效名称")
+    names = [host.name for host in spec.hosts]
+    if len(set(names)) != len(names):
+        raise ValueError("主机资源名称不能重复")
+    addresses = [host.address for host in spec.hosts]
+    if len(set(addresses)) != len(addresses):
+        raise ValueError("主机资源地址不能重复")
+    if spec.hosts and spec.host not in addresses:
+        raise ValueError("主表单主机地址必须在已声明的主机资源中")
     if spec.mode == "import":
         try:
             config = yaml.safe_load(spec.source_yaml)
@@ -93,7 +101,7 @@ from pgclusterlib.config import load
 from pgclusterlib.runtime import Runtime
 config=load(sys.argv[1]);target=sys.argv[2];config.validate(target)
 names=Runtime(config).target_instances(target)
-print(json.dumps({"nodes":[{"name":name,"host":config.instance(name)["host_config"]["address"],"port":config.instance(name)["port"],"data_dir":config.instance(name)["data_dir"],"installation":config.instance(name)["installation"]} for name in names],"installations":config.installations,"cluster_extensions":{kind+"."+name:cluster.get("extensions") or [] for kind,attr in (("mmr","mmr_clusters"),("streaming","streaming_clusters"),("citus","citus_clusters")) for name,cluster in (getattr(config,attr) or {}).items()}}))
+print(json.dumps({"nodes":[{"name":name,"host":config.instance(name)["host_config"]["address"],"port":config.instance(name)["port"],"data_dir":config.instance(name)["data_dir"],"installation":config.instance(name)["installation"]} for name in names],"installations":config.installations,"hosts":{name:{"address":h["address"],"ssh":h.get("ssh")} for name,h in config.hosts.items()},"cluster_extensions":{kind+"."+name:cluster.get("extensions") or [] for kind,attr in (("mmr","mmr_clusters"),("streaming","streaming_clusters"),("citus","citus_clusters")) for name,cluster in (getattr(config,attr) or {}).items()}}))
 """
 
 
@@ -301,6 +309,10 @@ def inspect_plan(plan):
     checks = []
     groups = {}
     added = set((plan.get("diff") or {}).get("added") or [])
+    ssh_by_address = {
+        host["address"]: host.get("ssh")
+        for host in (facts.get("hosts") or {}).values()
+    }
     for node in facts["nodes"]:
         if added:
             node = {**node, "existing": node["name"] not in added}
@@ -315,6 +327,7 @@ def inspect_plan(plan):
                     "installation": facts["installations"][installation],
                     "nodes": nodes,
                 },
+                ssh=ssh_by_address.get(host),
             )
             checks.extend({**check, "host": host} for check in result["checks"])
         except ValueError as exc:
@@ -462,9 +475,14 @@ class Workbench:
         path = directory / "pgcluster.yaml"
         path.write_text(content)
         facts = validate_config(self.settings, path, target)
-        if any(node["host"] != spec.host for node in facts["nodes"]):
+        declared = (
+            {host["address"] for host in facts.get("hosts", {}).values()}
+            if spec.mode == "import"
+            else {spec.host} | {host.address for host in spec.hosts}
+        )
+        if any(node["host"] not in declared for node in facts["nodes"]):
             raise ValueError(
-                "首批工作台只支持同一目标主机，导入配置的主机必须与表单一致"
+                "节点主机必须在表单主机或已声明的主机资源中"
             )
         for name, text in auxiliary.items():
             if Path(name).name != name:
@@ -549,8 +567,12 @@ class Workbench:
                 for node in facts["nodes"]
             ]
         plan["limitations"] = [
-            "首批使用已有数据库安装和当前用户的本地／SSH 权限",
-            "这是新建或接管计划，不是现有集群修改的全量差异计划",
+            "使用已有数据库安装；远程主机通过声明的 SSH 凭据或当前用户 SSH 配置访问",
+            (
+                "差异计划仅自动执行追加流复制备库，其余差异如实列出但不执行"
+                if plan.get("mode") == "diff"
+                else "这是新建／接管计划，不是现有集群修改的全量差异计划"
+            ),
             "部署失败不会自动删除数据；重试需要重新检查",
         ]
         self.store._atomic_write(
