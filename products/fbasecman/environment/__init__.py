@@ -1,8 +1,7 @@
-"""fbasecman test-environment provider registration."""
+"""fbasecman environment helpers: node control and health probes.
 
-from platform_regress.environment import register_environment_provider
-from products.fbasecman.environment.provider import FbasecmanEnvironmentProvider
-
-register_environment_provider("fbasecman", FbasecmanEnvironmentProvider)
-
-__all__ = ["FbasecmanEnvironmentProvider"]
+The former env-provider layer (ClusterManager/EnvState/inventory/setup
+scripts) was retired: platform deployment owns environment lifecycle, and
+no production caller reached it. Remaining modules are consumed by the
+high_availability runtime (cluster_ops) and the stable suite (health).
+"""
