@@ -1,0 +1,81 @@
+"""License management routes."""
+
+from fastapi import HTTPException
+from fastapi.responses import Response
+
+from ..config import Settings
+from ..license import (
+    LicenseInput,
+    change_key_password,
+    delete_key,
+    generate,
+    generate_key,
+    key_metadata,
+    options,
+    revoke_key,
+)
+from .schemas import (
+    LicenseKeyCreateInput,
+    LicenseKeyDeleteInput,
+    LicenseKeyPasswordInput,
+)
+
+
+def register(app, settings: Settings) -> None:
+
+    @app.get("/api/v1/licenses/options")
+    def license_options():
+        return options(settings)
+
+    @app.get("/api/v1/licenses/keys/{version}")
+    def license_key_metadata(version: str):
+        try:
+            return key_metadata(settings, version)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys")
+    def license_key_generate(payload: LicenseKeyCreateInput):
+        try:
+            return generate_key(settings, payload.version, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys/{version}/password")
+    def license_key_password(version: str, payload: LicenseKeyPasswordInput):
+        try:
+            return change_key_password(settings, version, payload.old_password, payload.new_password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/licenses/keys/{version}")
+    def license_key_delete(version: str, payload: LicenseKeyDeleteInput):
+        try:
+            delete_key(settings, version, payload.password)
+            return {"deleted": version}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/keys/{version}/revoke")
+    def license_key_revoke(version: str, payload: LicenseKeyDeleteInput):
+        try:
+            return revoke_key(settings, version, payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/licenses/generate")
+    def generate_license(request: LicenseInput):
+        try:
+            content, license_id = generate(settings, request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": 'attachment; filename="license.dat"',
+                "X-License-Id": license_id,
+            },
+        )

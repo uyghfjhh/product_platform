@@ -460,7 +460,7 @@ def test_event_stream_drains_finish_racing_with_event_read(tmp_path, monkeypatch
         pass
 
     monkeypatch.setattr(store, "list_events", race)
-    monkeypatch.setattr("platform_app.api.asyncio.sleep", no_wait)
+    monkeypatch.setattr("asyncio.sleep", no_wait)
     endpoint = next(
         route.endpoint
         for route in app.routes
