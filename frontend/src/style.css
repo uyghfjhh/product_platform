@@ -1812,3 +1812,33 @@ button, input, textarea { font-family: inherit; }
 }
 /* Status lives above the topology, so banners cannot cover node controls. */
 .deployment-topology .topo-canvas-state-banner { display: none; }
+
+/* Prisma Studio 数据管理器：.ps 内部 h-full，需要定高父容器 */
+.database-studio {
+  position: relative;
+  height: 72vh;
+  min-height: 480px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.database-studio .ps,
+.database-studio .ps > div {
+  height: 100%;
+}
+.database-studio-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1090;
+  height: 100vh;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+.database-studio-toggle {
+  position: absolute;
+  top: 10px;
+  right: 52px;
+  z-index: 20;
+}

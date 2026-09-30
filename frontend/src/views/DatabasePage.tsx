@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Typography } from 'antd';
-import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined, StopOutlined, ExpandOutlined, CompressOutlined } from '@ant-design/icons';
 
 const StudioPanel = lazy(() => import('../components/StudioPanel'));
 
@@ -86,6 +86,16 @@ export default function DatabasePage({ environment, environments = [], onSelectE
   const [nodes, setNodes] = useState<TopologyNode[]>([]);
   const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
+  const [studioFullscreen, setStudioFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!studioFullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setStudioFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [studioFullscreen]);
   const [sessions, setSessions] = useState<Row[]>([]);
   const [locks, setLocks] = useState<Row[]>([]);
   const [replication, setReplication] = useState<ReplicationInfo>({ senders: [], receivers: [], slots: [] });
@@ -473,15 +483,25 @@ export default function DatabasePage({ environment, environments = [], onSelectE
               </Typography.Text>
             </div>
           </div>
-          <PlatformErrorBoundary>
-            <Suspense fallback={<Empty description="正在加载数据管理器…" />}>
-              <StudioPanel
-                key={`${environment.id}:${selectedPort || environment.port}`}
-                environmentId={environment.id}
-                port={selectedPort || environment.port}
-              />
-            </Suspense>
-          </PlatformErrorBoundary>
+          <div className={studioFullscreen ? 'database-studio database-studio-fullscreen' : 'database-studio'}>
+            <Button
+              className="database-studio-toggle"
+              size="small"
+              icon={studioFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+              onClick={() => setStudioFullscreen((v) => !v)}
+            >
+              {studioFullscreen ? '退出全屏' : '全屏'}
+            </Button>
+            <PlatformErrorBoundary>
+              <Suspense fallback={<Empty description="正在加载数据管理器…" />}>
+                <StudioPanel
+                  key={`${environment.id}:${selectedPort || environment.port}`}
+                  environmentId={environment.id}
+                  port={selectedPort || environment.port}
+                />
+              </Suspense>
+            </PlatformErrorBoundary>
+          </div>
         </section>
       </>}
     </>
