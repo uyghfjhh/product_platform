@@ -66,7 +66,7 @@ cd products/fbasecman
 ```text
 product_platform/
 ├── backend/platform_app/          # 平台服务(FastAPI + FileStore 文件存储 + Huey 文件队列)
-│   ├── api.py                      #   全部 HTTP API(待按领域拆分)
+│   ├── api/                        #   HTTP API 包(schemas + meta/licenses/environments/operations/results 五域路由)
 │   ├── actions.py                  #   任务执行器:环境锁/子进程/取消/事件/结果发布
 │   ├── providers.py                #   产品提供者分发(待全部迁入适配器)
 │   ├── filestore.py                #   文件元数据存储(环境/任务/事件/结果,原子写 + flock)
@@ -84,7 +84,7 @@ product_platform/
 │   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
 │   ├── fbasecman/                  # fbasecman 适配、CLI、用例和 regression/
 │   └── demo/                       # 无数据库依赖的产品接入样例
-├── tests/                          # 平台自身测试(250+ 项 pytest)
+├── tests/                          # 平台自身测试(340+ 项 pytest)
 ├── data/                           # 控制面状态：环境/任务/绑定/结果/诊断/profile（不可随意删除）
 │   ├── platform/                   # FileHuey 队列、锁、操作/Web 日志
 │   ├── environments/ + profiles/   # 环境记录与生成的部署方案
@@ -116,7 +116,8 @@ product_platform/
 1. 工作树有大量未提交修改与未跟踪产物;**禁止 `git reset`、批量清理、删除 core/锁文件**;只编辑明确涉及的文件,编辑前先核对当前内容。
 2. **目标产品代码归 `products/<product_id>/`**;平台核心不得新增产品分支。旧回归工程已归入对应产品的 `regression/`，不再保留顶层 `regress/` 或平台产品适配器目录；目标协议见 [docs/design.md](docs/design.md)。
 3. AI 不修改确定性测试判定;报告解析不从展示文本猜测结论。
-4. 回归测试、数据库集群部署和 License 通用能力归平台；迁移期可隔离调用旧资产，但新实现不继续复制旧框架。部署统一数据库集群引擎，不回退旧 `env setup/start/stop/heal`。
-5. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
-6. 可能有**并行会话**同时修改本仓库;编辑前重新读文件,以当前内容为准。
-7. 每完成一个阶段:更新 `docs/progress.md`,跑全量验证;文档主张必须与代码事实核对。
+4. **用例编写准则（重要）**：新用例必须用所在套件现有的领域动词编写（如 `ops.check`、`ops.psql` 四元组、`console_step`/`console_wait`、`assert_console_table`、`ops.summary`），不得回退"裸命令+手工断言+手工 add_step"的旧写法；改动既有用例时才顺手清理其周边的旧式写法，**不做全量重写**——复杂分支、并发与故障注入保持显式步骤，不为"声明式"抽象而牺牲可调试性。
+5. 回归测试、数据库集群部署和 License 通用能力归平台；迁移期可隔离调用旧资产，但新实现不继续复制旧框架。部署统一数据库集群引擎，不回退旧 `env setup/start/stop/heal`。
+6. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
+7. 可能有**并行会话**同时修改本仓库;编辑前重新读文件,以当前内容为准。
+8. 每完成一个阶段:更新 `docs/progress.md`,跑全量验证;文档主张必须与代码事实核对。

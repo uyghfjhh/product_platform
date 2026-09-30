@@ -263,6 +263,8 @@ runtime，`fbasecman_ops` 转发门面已删除；runtime 构造注入 resolver
 `env`/`context_data`，不再自行加载 legacy 配置、
 不再经过 suite `run_case`/runner/registry/framework）。executor 与 runtime
 方法库作为产品知识保留在 `products/fbasecman/` 内，其通用原语全部为平台件。
+用例编写准则：新用例一律使用所在套件现有领域动词，老用例仅在改动时顺手清理周边旧式写法，
+不做全量重写；复杂分支/并发/故障注入保持显式步骤。
 
 ### 5.1 RegressionEngine
 
