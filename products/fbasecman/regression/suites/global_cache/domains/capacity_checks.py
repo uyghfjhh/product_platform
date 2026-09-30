@@ -43,9 +43,6 @@ def assert_capacity_eviction_zero_ref(context, before_state, active_state, zero_
     capacity_exceed_lines = [line.strip() for line in log_text.splitlines() if "global ps cache exceeds capacity:" in line]
     eviction_lines = [line.strip() for line in log_text.splitlines() if "evict global prepared statement" in line]
     hold_after_rows = [row for row in matched if "gc_capacity_zero_ref_hold_01" in row]
-    trigger_a_after_rows = [row for row in matched if "gc_capacity_zero_ref_trigger_a" in row]
-    trigger_b_after_rows = [row for row in matched if "gc_capacity_zero_ref_trigger_b" in row]
-    zero_ref_after_rows = [row for row in matched if "gc_capacity_zero_ref_" in row and "trigger_" not in row and "hold" not in row]
     if not active_rows:
         ops.record_step("capacity zero-ref 检查失败", output="after_hold 快照里没有看到长连接 SQL `gc_capacity_zero_ref_hold_01`。")
         raise GlobalCacheFailure("capacity_eviction_zero_ref expects active long-connection entry after step 1")

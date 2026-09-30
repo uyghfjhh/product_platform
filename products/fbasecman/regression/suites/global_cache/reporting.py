@@ -3,9 +3,9 @@
 from pathlib import Path
 
 from suites.global_cache.reports.documents import (
-    _build_test_step_overview,
-    _record_or_text,
-    build_structured_report_document,
+    _build_test_step_overview as _build_test_step_overview,
+    _record_or_text as _record_or_text,
+    build_structured_report_document as build_structured_report_document,
 )
 import fbasecman_ops as ops
 

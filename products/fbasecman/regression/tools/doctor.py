@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from platform_regress.execution.shell import LoggedShellRunner

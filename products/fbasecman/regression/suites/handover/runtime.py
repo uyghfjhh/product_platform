@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from platform_regress.clients.psql import build_psql_command, parse_psql_table, assert_table_rows
+from platform_regress.clients.psql import build_psql_command, assert_table_rows
 from platform_regress.engine import CaseFailure
 
 from platform_regress.evidence.log_window import (

@@ -22,7 +22,6 @@ STRUCTURED_REPORT_CASES = {
 
 def _build_heartbeat_reclassify_document(case, summary, status, started_at, finished_at,
                                         pass_reason, failure_reason):
-    headers = ["global_name", "description", "sql_class", "has_bypass_response", "ref_count"]
     prepared_sql = summary.get("prepared_sql", "SELECT 124")
     verify_sql = summary.get("verify_sql", prepared_sql)
     before_entries = summary.get("matched_global_before", [])
@@ -273,7 +272,6 @@ def _build_generic_report_document(case, summary, status, started_at, finished_a
     for item in report_steps:
         details = []
         note = item.get("note", "")
-        has_driver_calls = note.startswith("driver 核心调用:")
         # report.txt is a product-behavior document. Raw executable paths,
         # classpaths and connection strings remain available in events/logs.
         if item.get("note"):

@@ -1,8 +1,6 @@
 """Executors for Chapter 10: fbasecman console commands and statistics."""
 
 import re
-import time
-from suites.handover.runtime import HandoverFailure
 import fbasecman_ops as ops
 
 

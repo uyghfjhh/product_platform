@@ -7,7 +7,6 @@ Strictly verified against doc/转测文档/fbasecman转测文档.md:
 - Clear expected and actual results for every step.
 """
 
-import re
 import time
 from suites.handover.runtime import HandoverFailure
 import fbasecman_ops as ops
@@ -44,7 +43,6 @@ def execute_ha_mmr(context):
     """8.2~8.6 MMR 故障切换、降级与备库排除"""
     db_ports = ops.env.config["database"]["ports"]
     write_leader_port = str(db_ports["mmr1"])
-    promoted_port = str(db_ports["mmr2"])
     write_replica_port = str(db_ports["mmr1_standby1"])
     promoted_replica_port = str(db_ports["mmr2_standby1"])
 

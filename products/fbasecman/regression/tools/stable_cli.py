@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from suites.stable.config import StableConfig, render_fbasecman_config
-from suites.stable.manifest import WORKLOADS, enabled_workloads, find_workload
+from suites.stable.manifest import enabled_workloads, find_workload
 from suites.stable.runtime import (
     StableFailure, StableRuntime, archive_run, choose_ports, core_files, displayed_pid,
     managed_pid, monitor_loop, run_progress,

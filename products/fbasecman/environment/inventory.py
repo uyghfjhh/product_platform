@@ -1,4 +1,3 @@
-from textwrap import dedent
 
 from cmanconf import RegressionConfig
 
@@ -53,7 +52,6 @@ def _parse_inventory(stdout):
 def collect_inventory(env: RegressionConfig, runner: LoggedShellRunner):
     cfg = env.config
     db = cfg["database"]
-    ports = db["ports"]
     mmr_dir = db["mmr_postgres_dir"]
     mmr_data_root = db.get("mmr_data_root", mmr_dir)
 

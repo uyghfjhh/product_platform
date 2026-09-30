@@ -1,66 +1,30 @@
 """Extracted domain helpers for global_cache."""
 
-import os
-import re
 import shutil
-from copy import copy
-from contextlib import contextmanager
 
 from platform_regress.evidence.assertions import stats_delta as _stats_delta
-from platform_regress.execution.phased_process import PhaseAction, observe_phases
-from platform_regress.evidence.log_checks import find_forbidden_log_patterns
+from platform_regress.execution.phased_process import PhaseAction
 from products.fbasecman.console import parse_pipe_rows
 from platform_regress.reporting import render_psql_table_from_pipe_text
-from platform_regress.configuration.reload import (
-    config_lines_by_keys as _conf_lines_by_keys,
-    install_reload_config as _install_reload_config,
-    record_config_transition as _record_reload_conf_steps,
-)
 from suites.global_cache.runtime import (
-    CaseRuntime,
     GlobalCacheFailure,
-    VerificationFailure,
-    _find_case,
-    _safe_name,
-    _validate_report_levels,
-    case_items,
-    show,
 )
 from products.fbasecman.config import extract_config_lines as _extract_conf_lines
-from suites.global_cache.reporting import (
-    _collect_capacity_shrink_failure_context,
-    _summary_set_log_window,
-    _summary_set_pg_log_verify,
-)
 from suites.global_cache.result import set_report_blocks as _summary_set_report_blocks
 from suites.global_cache.manifest import (
     BACKEND_PS_LIMIT_KEY,
     GLOBAL_PS_LIMIT_KEY,
-    NEGATIVE_LOG_PATTERNS,
-    NOISE_PATTERNS,
-    formal_case_items,
 )
 from suites.global_cache.drivers import (
     compile_java as _compile_java,
     build_libpq_asset as _build_libpq_asset,
     jdbc_url as _jdbc_url,
-    libpq_source as _driver_libpq_source,
-    stage_libpq_source as _driver_stage_libpq_source,
-    start_phased_libpq as _start_phased_libpq,
     run_libpq_asset as _run_libpq_asset,
-    run_jdbc_asset as _run_jdbc_asset,
-    run_jdbc_asset_phased as _run_jdbc_asset_phased,
-    jdbc_source_file as _driver_jdbc_source_file,
-    run_case_jdbc as _driver_run_case_jdbc,
-    record_driver_api_calls as _record_driver_api_calls,
-    libpq_prepared_operations as _libpq_prepared_operations,
 )
 from suites.global_cache.paths import asset_path as _global_cache_asset_path
 
-from suites.global_cache.domains.common_assertions import _stats_change_text
 from suites.global_cache.domains.driver_cases import (
     _run_libpq_case,
-    _append_driver_log,
     _assert_unnamed_overwrite,
 )
 from suites.global_cache.domains.capacity import ps_limit_replacements as _ps_limit_replacements

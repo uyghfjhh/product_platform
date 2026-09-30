@@ -4,7 +4,6 @@ from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep
 from suites.global_cache.reports.helpers import (
     check_actual as _check_actual,
     global_records_or_text as _global_records_or_text,
-    record_or_text as _record_or_text,
     sequence_calls_text as _sequence_calls_text,
     stats_record_or_text as _stats_record_or_text,
 )

@@ -3,7 +3,6 @@ from textwrap import dedent
 from cmanconf import RegressionConfig
 from .topology import standby_ports
 
-from platform_regress.execution.shell import LoggedShellRunner
 
 
 def build_replication_setup_script(env: RegressionConfig) -> str:

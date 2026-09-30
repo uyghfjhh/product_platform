@@ -1,17 +1,8 @@
 """HA console command executors: JDBC."""
 
-import time
-import os
-import stat
-import fcntl
-import re
-import sys
-import shlex
-from pathlib import Path
 
-from cmanconf import load_regression_config
 from platform_regress.clients import jdbc as jdbc_client
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
+from suites.ha_commands.runtime import HaCommandFailure
 from suites.ha_commands.helpers import *
 import fbasecman_ops as ops
 

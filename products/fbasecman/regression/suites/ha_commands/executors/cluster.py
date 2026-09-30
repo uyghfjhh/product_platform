@@ -1,18 +1,12 @@
 """HA console command executors: CLUSTER."""
 
 import time
-import os
 import re
 try:
     import fcntl
 except ImportError:
     fcntl = None
-import sys
-import shlex
-from pathlib import Path
 
-from cmanconf import load_regression_config
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
 from suites.ha_commands.helpers import *
 import fbasecman_ops as ops
 
@@ -557,7 +551,7 @@ def _run_refresh_cluster(context):
         time.sleep(1.1)
         ops.psql("REFRESH CLUSTER pg_cluster_1;", "%s：节点恢复后再次 REFRESH CLUSTER" % enabled,
                 "返回 REFRESH CLUSTER", lambda output: "REFRESH CLUSTER" in output)
-        recovered_output = wait_endpoint("%s：确认端点恢复已生效" % enabled,
+        wait_endpoint("%s：确认端点恢复已生效" % enabled,
                         "pg_3 probe_seq 递增、ONLINE、fault_flags={}、fault_count=0",
                         lambda output, s=failed_seq: check_endpoint(output, "pg_3", False, s))
         ops.psql_monitor("SHOW NODE_MONITOR;", "%s：确认节点恢复已生效" % enabled,

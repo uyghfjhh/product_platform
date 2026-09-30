@@ -1,8 +1,6 @@
 from textwrap import dedent
 
-from cmanconf import RegressionConfig
 
-from platform_regress.execution.shell import LoggedShellRunner
 from .topology import topology_nodes
 
 
@@ -45,10 +43,10 @@ def collect_test_context(env, runner):
     )
     lines = [line.strip() for line in remote.stdout.splitlines() if line.strip()]
 
-    mmr1_u3 = runner.run(
+    runner.run(
         f"""{local_pg}/bin/psql -p {ports['mmr1']} -h {db['mmr_host']} -d postgres -U {db['mmr_pg_user']} -t -c "SELECT rolpassword FROM pg_authid WHERE rolname = 'u3';" """,
         log_name="95_collect_local_mmr1_u3.log",
-    ).stdout.strip()
+    )
     def query_system_id(port: int, host: str, user: str, log_name: str) -> str:
         return runner.run(
             f"""{local_pg}/bin/psql -p {port} -h {host} -d postgres -U {user} -t -c "SELECT system_identifier FROM pg_control_system();" """,

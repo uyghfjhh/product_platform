@@ -6,12 +6,10 @@ import csv
 import json
 import os
 import signal
-import sys
-import time
 from collections import deque
 from pathlib import Path
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.containers import Grid, Vertical
 from textual.widgets import Static
 from textual_plotext import PlotextPlot

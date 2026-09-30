@@ -6,7 +6,6 @@ import re
 import shlex
 import shutil
 import socket
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -39,11 +38,7 @@ from suites.global_cache.state import capture_global_cache_state
 from suites.global_cache.errors import GlobalCacheFailure, VerificationFailure
 from suites.global_cache.paths import asset_path as global_cache_asset_path
 from suites.global_cache.manifest import (
-    BACKEND_PS_LIMIT_KEY,
     GLOBAL_CACHE_CASES,
-    GLOBAL_PS_LIMIT_KEY,
-    NEGATIVE_LOG_PATTERNS,
-    NOISE_PATTERNS,
     formal_case_items,
 )
 from suites.global_cache.reports.runtime import GlobalCacheReportMixin

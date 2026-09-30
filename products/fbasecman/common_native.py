@@ -1,7 +1,6 @@
 """Platform SDK hosts for the fbasecman common regression suite."""
 
 from __future__ import annotations
-import os
 
 import concurrent.futures
 import json

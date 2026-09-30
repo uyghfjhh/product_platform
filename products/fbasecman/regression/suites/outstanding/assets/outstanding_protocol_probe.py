@@ -9,7 +9,7 @@ import time
 from platform_regress.clients.pgwire import (
     ProtocolClient, bind_payload, close_portal_payload, data_rows,
     describe_portal_payload, error_fields, execute_payload, message,
-    parse_payload, response_summary, simple_query_message, sync_message,
+    parse_payload, response_summary, sync_message,
 )
 
 

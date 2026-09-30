@@ -612,8 +612,6 @@ def run_core_18_balance_single_failure(context):
 
     # 1. Stop B0 -> qa_bal_rw reselects A0
     ops.nodes.stop_node("B0", immediate=True)
-    stop_b0_cmd = ops.nodes.last_command
-    stop_b0_out = ops.nodes.last_output
     stop_b0_transcript = ops.nodes.last_operation_transcript
     _wait_candidate(context, "qa_bal_rw", "test_mmr2", present=False, timeout=15)
     snap_bal_rw = ops.admin_psql("SHOW GROUP_ROUTING qa_bal_rw;")
@@ -657,8 +655,6 @@ def run_core_18_balance_single_failure(context):
 
     # 2. Stop B1 (A1 still alive) -> qa_bal_ro MUST NOT fall back to primaries!
     ops.nodes.stop_node("B1", immediate=True)
-    stop_b1_cmd = ops.nodes.last_command
-    stop_b1_out = ops.nodes.last_output
     stop_b1_transcript = ops.nodes.last_operation_transcript
     _wait_candidate(context, "qa_bal_ro", "test_mmr2_s1", present=False, timeout=15)
     snap_bal_ro = ops.admin_psql("SHOW GROUP_ROUTING qa_bal_ro;")
@@ -690,8 +686,6 @@ def run_core_18_balance_single_failure(context):
 
     # 3. Stop A1 as well -> now all standbys are dead, falls back to primary
     ops.nodes.stop_node("A1", immediate=True)
-    stop_a1_cmd = ops.nodes.last_command
-    stop_a1_out = ops.nodes.last_output
     stop_a1_transcript = ops.nodes.last_operation_transcript
     _wait_candidate(context, "qa_bal_ro", "test_mmr1_s1", present=False, timeout=15)
     snap_all_dead = ops.admin_psql("SHOW GROUP_ROUTING qa_bal_ro;")

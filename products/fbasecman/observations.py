@@ -5,7 +5,7 @@ stores fields instead of scraping human-facing report text.
 """
 
 from platform_app.observations import ParsedObservation, parse_tsv_rows
-from products.pg_common.observations import parse_replication
+from products.pg_common.observations import parse_replication as parse_replication
 
 
 def parse_psql_rows(text: str, required: set[str]) -> list[dict[str, str]]:

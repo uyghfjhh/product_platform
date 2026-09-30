@@ -4,7 +4,6 @@ import os
 import re
 import time
 import hashlib
-from pathlib import Path
 
 from ..console_parser import ConsoleAssertionError
 import fbasecman_ops as ops
@@ -132,8 +131,8 @@ def run_core_19_set_node_atomicity(context):
                 actual="A0/A1 成员状态均为 parted，路由候选中均不存在", result="PASS")
 
     # Restore to active
-    restore_active = ops.admin_psql("SET NODE ACTIVE test_mmr1, test_mmr1_s1;")
-    restore_refresh = ops.admin_psql("REFRESH CLUSTER site_a;")
+    ops.admin_psql("SET NODE ACTIVE test_mmr1, test_mmr1_s1;")
+    ops.admin_psql("REFRESH CLUSTER site_a;")
     _wait_rep_route_ready(context)
 
     # Step 5: Batch atomicity check with invalid node

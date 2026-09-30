@@ -20,13 +20,11 @@ import difflib
 import re
 import shlex
 import time
-from pathlib import Path
 
 from platform_regress.clients.psql import build_psql_command
 from platform_regress.clients.psql import parse_expanded_rows
 from platform_regress.evidence.backup import (
-    BackupCheckpoint, backup_content_matches, backup_dir_path, backup_files,
-    created_backups, snapshot_backup,
+    backup_content_matches, backup_dir_path, created_backups, snapshot_backup,
 )
 from platform_regress.evidence.config_diff import (
     strip_inline_comment, parse_semantic_objects,

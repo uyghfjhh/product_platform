@@ -1,18 +1,35 @@
-"""Pure parsing helpers shared by the Web report and topology views."""
+"""Report parsing helpers for the fbasecman report dialog and topology view.
+
+Moved verbatim from the vendored ``tools/web_reports.py`` so the platform
+process can import the parser directly (no subprocess/sys.path juggling).
+Only the ``parse_report`` closure is kept; the old Web list-page helpers
+(``load_run_meta``/``case_status_meta``) had no consumers left.
+"""
 
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-def load_run_meta(root_dir):
-    """Read optional historical Web metadata without starting its task manager."""
-    path = Path(root_dir) / "output" / "runs" / ".web_meta.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+# Per-directory priority: most specific first (mirrors cmanconf layering).
+_CONFIG_NAMES = (
+    "regress.override.yaml",
+    "regress.local.yaml",
+    "regress.yaml",
+    "stable.local.yaml",
+    "stable.yaml",
+)
+
+
+def _deep_merge(base, override):
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def parse_psql_tables(raw_text: str) -> List[Tuple[List[str], List[Dict[str, str]]]]:
@@ -43,110 +60,28 @@ def parse_psql_tables(raw_text: str) -> List[Tuple[List[str], List[Dict[str, str
     return tables
 
 
-def load_runtime_config(root_dir):
-    """按优先级读取首个可用 yaml 配置，用于发现数据库端口与代理端口。"""
-    for cfg_name in ('regress.local.yaml', 'regress.yaml', 'stable.local.yaml', 'stable.yaml'):
-        p = Path(root_dir) / cfg_name
-        if p.is_file():
-            try:
-                import yaml
-                data = yaml.safe_load(p.read_text(encoding='utf-8'))
-                if isinstance(data, dict):
-                    return data
-            except Exception:
-                pass
-    return {}
-
-
-def case_status_meta(root_dir, suite_name, case_name, target, current_target=None):
-    """读取单个用例的执行状态/耗时/报告标记，供套件列表页展示。
-
-    状态来源按优先级：正在运行 > summary.json > report.txt 结论行 > web_meta 缓存。
-    """
-    if current_target and (current_target == target or current_target == suite_name):
-        return {
-            "status": "RUNNING",
-            "duration": "-",
-            "has_report": False,
-            "timestamp": "-",
-        }
-
-    run_dir = Path(root_dir) / "output" / "runs" / suite_name / case_name
-    meta_cache = load_run_meta(root_dir).get(target)
-
-    # 1. 优先读结构化 summary.json
-    summary_file = run_dir / "summary.json"
-    if summary_file.exists():
-        try:
-            data = json.loads(summary_file.read_text(encoding="utf-8"))
-            status = data.get("status", "PASS").upper()
-            duration = data.get("duration")
-            dur_str = f"{float(duration):.2f}s" if duration is not None else "-"
-            return {
-                "status": status,
-                "duration": dur_str,
-                "has_report": (run_dir / "report.txt").exists(),
-                "timestamp": data.get("start_time", "-"),
-            }
-        except Exception:
-            pass
-
-    # 2. 退化到解析 report.txt 文本（结论行 + 起止时间差）
-    report_file = run_dir / "report.txt"
-    if report_file.exists():
-        try:
-            content = report_file.read_text(encoding="utf-8", errors="replace")
-            status = "PASS"
-            st_match = re.search(r"^(?:结论|Status):\s*(PASS|FAIL)", content, re.M)
-            if st_match:
-                status = st_match.group(1).upper()
-
-            dur_str = "-"
-            if meta_cache and "duration" in meta_cache:
-                dur_str = meta_cache["duration"]
-            else:
-                t1_match = re.search(r"^测试开始时间:\s*(.*)$", content, re.M)
-                t2_match = re.search(r"^测试结束时间:\s*(.*)$", content, re.M)
-                if t1_match and t2_match:
-                    try:
-                        d1 = datetime.strptime(t1_match.group(1).strip(), "%Y-%m-%d %H:%M:%S")
-                        d2 = datetime.strptime(t2_match.group(1).strip(), "%Y-%m-%d %H:%M:%S")
-                        sec = abs((d2 - d1).total_seconds())
-                        dur_str = f"{sec:.2f}s" if sec > 0 else "<1s"
-                    except Exception:
-                        dur_str = "-"
-
-            timestamp = "-"
-            ts_match = re.search(r"^测试开始时间:\s*(.*)$", content, re.M)
-            if ts_match:
-                timestamp = ts_match.group(1).strip()
-            elif meta_cache and "timestamp" in meta_cache:
-                timestamp = meta_cache["timestamp"]
-
-            return {
-                "status": status,
-                "duration": dur_str,
-                "has_report": True,
-                "timestamp": timestamp,
-            }
-        except Exception:
-            pass
-
-    # 3. 最后兜底：web 任务元信息缓存（报告文件被清理时仍有上次执行状态）
-    if meta_cache:
-        return {
-            "status": meta_cache.get("status", "UNTESTED"),
-            "duration": meta_cache.get("duration", "-"),
-            "has_report": (run_dir / "report.txt").exists(),
-            "timestamp": meta_cache.get("timestamp", "-"),
-        }
-
-    return {
-        "status": "UNTESTED",
-        "duration": "-",
-        "has_report": False,
-        "timestamp": "-",
-    }
+def load_runtime_config(*root_dirs):
+    """按目录优先级读取并深合并 yaml 配置（靠前的目录覆盖靠后的），
+    用于发现数据库端口与代理端口。"""
+    layers = []
+    for root_dir in root_dirs:
+        if not root_dir:
+            continue
+        for cfg_name in _CONFIG_NAMES:
+            p = Path(root_dir) / cfg_name
+            if p.is_file():
+                try:
+                    import yaml
+                    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        layers.append(data)
+                        break
+                except Exception:
+                    pass
+    merged = {}
+    for layer in reversed(layers):
+        merged = _deep_merge(merged, layer)
+    return merged
 
 
 def build_step_topology_snapshots(
@@ -449,10 +384,12 @@ def build_step_topology_snapshots(
     return snapshots
 
 
-def extract_topology(root_dir, raw_text: str, suite_name: str, steps: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+def extract_topology(raw_text: str, suite_name: str,
+                     steps: Optional[List[Dict[str, Any]]] = None,
+                     config_dirs: Optional[List[Any]] = None) -> Optional[Dict[str, Any]]:
     """从报告文本中动态提取高可用集群拓扑（节点、角色、链路），供拓扑视图渲染。"""
     tables = parse_psql_tables(raw_text)
-    cfg = load_runtime_config(root_dir)
+    cfg = load_runtime_config(*(config_dirs or []))
     db_ports = cfg.get("database", {}).get("ports", {})
     fbasecman_cfg = cfg.get("fbasecman", {})
     proxy_write_port = fbasecman_cfg.get("write_port", 17432)
@@ -595,7 +532,7 @@ def extract_topology(root_dir, raw_text: str, suite_name: str, steps: Optional[L
     }
 
 
-def parse_report(target: str, root_dir) -> Dict[str, Any]:
+def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = None) -> Dict[str, Any]:
     """把 report.txt 及同目录工件解析成结构化数据，供报告弹窗渲染。"""
     suite_name, _, case_name = target.partition(".")
     if not case_name:
@@ -783,7 +720,8 @@ def parse_report(target: str, root_dir) -> Dict[str, Any]:
         for lf in sorted(logs_sub.glob("*.log")):
             logs.append(f"logs/{lf.name}")
 
-    topology = extract_topology(report_root, raw_text, suite_name, steps=steps)
+    topology = extract_topology(raw_text, suite_name, steps=steps,
+                                config_dirs=config_dirs or [report_root])
 
     return {
         "found": True,

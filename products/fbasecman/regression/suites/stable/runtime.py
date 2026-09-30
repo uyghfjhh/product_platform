@@ -1,7 +1,6 @@
 """Stable workload lifecycle, monitoring, diagnostics, and reporting."""
 
 import csv
-import json
 import os
 import re
 import shlex
@@ -21,7 +20,7 @@ from platform_regress.clients.psql import build_psql_command
 from cmanconf import validate_profile_isolation
 from products.fbasecman.process import FbasecmanProcess
 from suites.stable.config import StableConfig, render_fbasecman_config
-from suites.stable.manifest import WORKLOADS, find_workload
+from suites.stable.manifest import find_workload
 from suites.stable.state import StateStore
 from suites.stable.lifecycle import transition_status
 import fbasecman_ops as ops

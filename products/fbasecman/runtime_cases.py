@@ -4,7 +4,7 @@ The remaining suites keep their product knowledge (runtime fixture/assertion
 methods, executors, configuration transforms) while the platform engine owns
 verdict mapping and the ``CaseContext`` evidence surface.  The product run
 tree still lands under ``env.output_dir`` — the deployment profile points it
-at the legacy report root consumed by the product web UI, so
+at the product evidence root consumed by the product web UI, so
 ``output/runs/<suite>/<case>/{steps,summary,report}`` stays byte-identical.
 """
 
@@ -25,28 +25,15 @@ from platform_regress.suites.executor import RuntimeBinding, RuntimeExecutorCase
 PRODUCT_ROOT = Path(__file__).parent
 REPO_ROOT = PRODUCT_ROOT.parent.parent
 DEFAULT_REGRESS_ROOT = PRODUCT_ROOT / "regression"
-_EXTRA_CONFIGS = []
-_LOADER_PROFILED = False
 
 
 def _ensure_imports(source):
-    global _LOADER_PROFILED
+    """Put the vendored suite tree on sys.path for ``cmanconf``/``suites.*``."""
     for path in (REPO_ROOT, REPO_ROOT / "backend", source):
         value = str(path)
         while value in sys.path:
             sys.path.remove(value)
         sys.path.insert(0, value)
-    import cmanconf
-    if _LOADER_PROFILED:
-        return
-    original = cmanconf.load_regression_config
-
-    def load_with_profile(root_dir, extra_configs=None, validate=True):
-        extras = list(extra_configs or []) + list(_EXTRA_CONFIGS)
-        return original(root_dir, extra_configs=extras, validate=validate)
-
-    cmanconf.load_regression_config = load_with_profile
-    _LOADER_PROFILED = True
 
 
 def _environment(context):
@@ -61,10 +48,10 @@ def _environment(context):
         raise Blocked("fbasecman 用例来源或环境覆盖配置不存在")
     extras = [Path(path).resolve()
               for path in (environment.get("regress_extra_configs") or [])]
-    _EXTRA_CONFIGS[:] = [override] + extras
     _ensure_imports(source)
     import cmanconf
-    env = cmanconf.load_regression_config(source)
+    env = cmanconf.load_regression_config(
+        source, extra_configs=[override] + extras)
     cmanconf.validate_profile_isolation(env)
     return source, env
 
@@ -175,6 +162,31 @@ class _LockedHandoverRuntimeMixin:
         return False
 
 
+def _ops_context_executor(executor_fn):
+    """Bind ``fbasecman_ops`` to the per-case runtime while the executor runs."""
+    def context_executor(ctx, runtime):
+        ops = importlib.import_module("fbasecman_ops")
+        ops.bind(runtime)
+        try:
+            return executor_fn(ctx)
+        finally:
+            ops.unbind()
+    return context_executor
+
+
+def _binding(source, env, suite_id, spec, runtime_type, failure_class,
+             executor_fn, reason, **binding_kwargs):
+    return RuntimeBinding(
+        spec,
+        _guarded_factory(env, suite_id, failure_class,
+                         lambda ctx, case: runtime_type(
+                             source, case, env=env)),
+        None, reason,
+        context_executor=_ops_context_executor(executor_fn),
+        finalize=_finalize_run,
+        **binding_kwargs)
+
+
 def resolve_runtime_binding(context, suite_id, name):
     source, env = _environment(context)
     spec = _spec(source, suite_id, name)
@@ -184,101 +196,61 @@ def resolve_runtime_binding(context, suite_id, name):
         runtime_type = importlib.import_module(
             "suites.ha_commands.runtime").HaCommandRuntime
         failure_class = runtime_type.failure_class
-        ops = importlib.import_module("fbasecman_ops")
 
-        def context_executor(ctx, runtime):
-            ops.bind(runtime)
+        def execute(ctx):
             try:
-                try:
-                    function = executors[spec.executor]
-                except KeyError:
-                    raise failure_class("missing executor %s" % spec.executor)
-                return function(ctx)
-            finally:
-                ops.unbind()
+                function = executors[spec.executor]
+            except KeyError:
+                raise failure_class("missing executor %s" % spec.executor)
+            return function(ctx)
 
         reason = "命令输入输出及用例声明的配置、日志和运行态证据均符合预期。"
-        return RuntimeBinding(
-            spec,
-            _guarded_factory(env, suite_id, failure_class,
-                             lambda ctx, case: runtime_type(
-                                 source, case, env=env)),
-            None, reason,
-            context_executor=context_executor,
-            finalize=_finalize_run)
-    elif suite_id == "high_availability":
+        return _binding(source, env, suite_id, spec, runtime_type,
+                        failure_class, execute, reason)
+    if suite_id == "high_availability":
         executors = importlib.import_module(
             "suites.high_availability.dispatch").EXECUTORS
-        runtime_type = importlib.import_module(
-            "suites.high_availability.runtime").HighAvailabilityRuntime
-        failure_class = importlib.import_module(
-            "suites.high_availability.runtime").HighAvailabilityFailure
-        ops = importlib.import_module("fbasecman_ops")
+        runtime_module = importlib.import_module(
+            "suites.high_availability.runtime")
+        failure_class = runtime_module.HighAvailabilityFailure
 
-        def context_executor(ctx, runtime):
-            ops.bind(runtime)
-            try:
-                function = executors.get(spec.name)
-                if function is None:
-                    raise failure_class("Executor for %s not implemented" % spec.name)
-                return function(ctx)
-            finally:
-                ops.unbind()
+        def execute(ctx):
+            function = executors.get(spec.name)
+            if function is None:
+                raise failure_class("Executor for %s not implemented" % spec.name)
+            return function(ctx)
 
         reason = "%s；报告所列操作均执行成功，全部检测项符合预期。" % spec.summary
-        return RuntimeBinding(
-            spec,
-            _guarded_factory(env, suite_id, failure_class,
-                             lambda ctx, case: runtime_type(
-                                 source, case, env=env)),
-            None, reason,
-            on_failure=lambda runtime, exc: runtime.add_failure_diagnostic(exc),
-            context_executor=context_executor,
-            finalize=_finalize_run)
-    elif suite_id == "handover":
+        return _binding(
+            source, env, suite_id, spec, runtime_module.HighAvailabilityRuntime,
+            failure_class, execute, reason,
+            on_failure=lambda runtime, exc: runtime.add_failure_diagnostic(exc))
+    if suite_id == "handover":
         dispatch_executor = importlib.import_module(
             "suites.handover.executors").dispatch_executor
         importlib.import_module("suites.handover.manifest").validate_manifest()
+        runtime_module = importlib.import_module("suites.handover.runtime")
         runtime_type = type(
             "HandoverRuntimeLocked",
-            (_LockedHandoverRuntimeMixin,
-             importlib.import_module("suites.handover.runtime").HandoverRuntime),
+            (_LockedHandoverRuntimeMixin, runtime_module.HandoverRuntime),
             {},
         )
-        failure_class = importlib.import_module(
-            "suites.handover.runtime").HandoverFailure
-        ops = importlib.import_module("fbasecman_ops")
+        failure_class = runtime_module.HandoverFailure
 
-        def context_executor(ctx, runtime):
-            ops.bind(runtime)
+        def execute(ctx):
             try:
                 return dispatch_executor(spec)(ctx)
             except KeyError as exc:
                 raise failure_class(
                     "missing executor for %s: %s" % (spec.name, exc)) from exc
-            finally:
-                ops.unbind()
 
         reason = "文档规定的 SQL/JDBC 结果、路由、console 状态和业务统计均满足预期。"
         # Legacy run_case writes the FAIL report while the suite lock is still
         # held; teardown (stop + unlock) happens in ``finally`` afterwards.
-        return RuntimeBinding(
-            spec,
-            _guarded_factory(env, suite_id, failure_class,
-                             lambda ctx, case: runtime_type(
-                                 source, case, env=env)),
-            None, reason,
-            teardown_before_finish=False,
-            context_executor=context_executor,
-            finalize=_finalize_run)
-    else:
-        raise Blocked("套件 %s 尚未定义平台 RuntimeBinding" % suite_id)
-    return RuntimeBinding(
-        spec,
-        _guarded_factory(env, suite_id, failure_class,
-                         lambda ctx, case: runtime_type(source, case)),
-        executor, reason,
-        finalize=_finalize_run)
+        return _binding(source, env, suite_id, spec, runtime_type,
+                        failure_class, execute, reason,
+                        teardown_before_finish=False)
+    raise Blocked("套件 %s 尚未定义平台 RuntimeBinding" % suite_id)
 
 
 def global_cache_case(item, spec):

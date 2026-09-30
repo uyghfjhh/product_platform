@@ -1,17 +1,9 @@
 """Shared helper utilities for HA commands suite."""
 
-import time
-import os
-import stat
-import fcntl
-import re
 import sys
-import shlex
-from pathlib import Path
 from platform_regress.clients import jdbc as jdbc_client
 
-from cmanconf import load_regression_config
-from suites.ha_commands.runtime import HaCommandFailure, HaCommandRuntime
+from suites.ha_commands.runtime import HaCommandFailure
 import fbasecman_ops as ops
 
 __all__ = ['_add_30_cluster_datasources', '_add_34_mmr_groups', '_add_bulk_datasources', '_add_bulk_mmr_groups', '_add_groups_without_promoted', '_add_hash_inside_string', '_add_second_mmr_group', '_add_single_cluster_mmr_group', '_as_crlf', '_balance_read_only_transform', '_bulk_datasources_have_weight', '_bulk_groups_have', '_cluster_datasources_have_status', '_comprehensive_transform', '_datasource_block', '_group_fields_with_format', '_has_only_crlf', '_hint_transform', '_inject_after_start', '_mixed_topology_transform', '_node_has_weight', '_omit_group_defaults', '_pg3_as_single_line_block', '_port_transform', '_remove_test_path', '_rename_disk_datasource', '_route_user_scope', '_run_route_mode', '_run_sql_parse_heartbeat_bind_invalid', '_run_sql_parse_heartbeat_bind_normal', '_run_sql_parse_heartbeat_bind_unsupported', '_run_sql_parse_transactions', '_single_read_only', '_single_read_only_keep_scope', '_sql_parse_transform', '_status_with_format', '_wait_pg_cluster_ready', '_weight_with_format', '_without_final_newline', '_without_promoted']
@@ -397,7 +389,6 @@ def _comprehensive_transform(context):
         metadata = []
         for name, port_name, cluster, app_name in node_specs:
             host = db["mmr_host"]
-            user = db["mmr_pg_user"]
             identifier = ops._query_scalar(
                 configured_port(port_name), "SELECT system_identifier FROM pg_control_system();",
                 "comprehensive_%s_system_identifier.log" % name)

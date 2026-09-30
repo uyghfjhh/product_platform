@@ -20,7 +20,7 @@ from platform_regress.execution.ports import (
 from platform_regress.persistence.atomic import write_json
 from platform_regress.runtime import CaseRuntimeFailure
 from products.fbasecman.case_runtime import (
-    BackupCheckpoint, FbasecmanCaseRuntime,
+    FbasecmanCaseRuntime,
 )
 
 

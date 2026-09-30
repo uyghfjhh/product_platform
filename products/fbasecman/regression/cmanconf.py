@@ -1,30 +1,21 @@
-"""fbasecman regression profile machinery (product-private, not platform).
+"""fbasecman regression profile schema (product-private, not platform).
 
-Consolidates the former ``framework.configuration`` / ``framework.environment``
-glue: legacy YAML mapping, typed config validation, stable/regression
-isolation checks, the deployment preflight hook, and suite-registry defaults.
-Generic primitives live in ``platform_regress``; this module only carries
-fbasecman-specific semantics.
+Typed validation for ``regress.yaml`` + profile overrides, the legacy YAML
+key mapping, and the stable/regression resource-isolation check.  Generic
+loading primitives live in ``platform_regress``; this module only carries
+fbasecman-specific schema semantics.
 """
 
 from pathlib import Path
-from typing import Any, Dict
 
 import platform_regress.configuration.loader as _platform_loader
-import platform_regress.environment.sanitizer as _sanitizer
-import platform_regress.suites.registry as _suite_registry
-from platform_regress.configuration.loader import (  # noqa: F401
-    RegressionConfig, _deep_merge, _parse_legacy_config, _strip_legacy_value,
-)
+from platform_regress.configuration.loader import RegressionConfig  # noqa: F401
 from platform_regress.configuration.validation import (  # noqa: F401
     ConfigurationError,
     port_value as _port,
     reject_unknown as _reject_unknown,
     require_mapping as _require_mapping,
     require_text as _require_text,
-)
-from platform_regress.environment.registry import (  # noqa: F401
-    create_environment_provider, register_environment_provider,
 )
 
 
@@ -296,41 +287,3 @@ def validate_profile_isolation(environment):
     return _platform_loader.validate_profile_isolation(
         environment, loader=load_config, isolation_check=isolation_errors,
     )
-
-
-def _health_errors(health, config):
-    """Compare the baseline indicators used by the deployment health gate."""
-    ports = config["database"]["ports"]
-    expected_streaming = len(ports.get("mmr1_standbys", (
-        ports.get("mmr1_standby1"),
-        ports.get("mmr1_standby2"),
-        ports.get("mmr1_standby3"),
-    )))
-    expected = {
-        "mmr_non_active": {"0"},
-        "testdb_node1": {"ACTIVE"},
-        "testdb_node2": {"JOIN_START", "ACTIVE"},
-        "mmr_streaming": {str(expected_streaming)},
-    }
-    return [
-        "%s=%s (expected %s)" % (key, health.get(key, "<missing>"), "/".join(sorted(values)))
-        for key, values in expected.items()
-        if str(health.get(key, "<missing>")) not in values
-    ]
-
-
-def preflight_health_check(root_dir: Path, auto_heal: bool = True) -> Dict[str, Any]:
-    """Check the test environment and report failure without hiding its cause."""
-    return _sanitizer.preflight_health_check(
-        root_dir, "fbasecman", load_regression_config,
-        expected_errors=_health_errors, auto_heal=auto_heal,
-        provider_factory=create_environment_provider,
-    )
-
-
-def _preflight(root_dir):
-    return preflight_health_check(root_dir, auto_heal=True)
-
-
-_suite_registry.set_default_preflight_check(_preflight)
-_suite_registry.set_default_quiet_env_var("FBASECMAN_QUIET_ENV")

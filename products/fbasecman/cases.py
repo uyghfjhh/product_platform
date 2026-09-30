@@ -136,12 +136,11 @@ NATIVE_CASES = {
 
 # Suite manifests are static: they import cleanly before any environment
 # override exists (config values only matter when load_regression_config is
-# called, which reads _EXTRA_CONFIGS lazily).
+# called with the override paths at case setup time).
 _SUITE_SPECS = _suite_specs(DEFAULT_REGRESS_ROOT)
 
 
 def _migrating_case(item):
-    suite_id = item["target"].partition(".")[0]
     spec = _SUITE_SPECS.get(item["target"])
     return runtime_case(item, spec)
 

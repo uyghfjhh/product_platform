@@ -1,64 +1,24 @@
 """Extracted domain helpers for global_cache."""
 
-import os
 import re
-import shutil
-from copy import copy
-from contextlib import contextmanager
 
-from platform_regress.evidence.assertions import stats_delta as _stats_delta
-from platform_regress.execution.phased_process import PhaseAction, observe_phases
-from platform_regress.evidence.log_checks import find_forbidden_log_patterns
-from products.fbasecman.console import parse_pipe_rows
-from platform_regress.reporting import render_psql_table_from_pipe_text
+from platform_regress.execution.phased_process import PhaseAction
 from platform_regress.configuration.reload import (
-    config_lines_by_keys as _conf_lines_by_keys,
     install_reload_config as _install_reload_config,
     record_config_transition as _record_reload_conf_steps,
 )
 from suites.global_cache.runtime import (
-    CaseRuntime,
     GlobalCacheFailure,
-    VerificationFailure,
-    _find_case,
-    _safe_name,
-    _validate_report_levels,
-    case_items,
-    show,
 )
-from products.fbasecman.config import extract_config_lines as _extract_conf_lines
 from suites.global_cache.reporting import (
-    _collect_capacity_shrink_failure_context,
     _summary_set_log_window,
     _summary_set_pg_log_verify,
 )
-from suites.global_cache.result import set_report_blocks as _summary_set_report_blocks
-from suites.global_cache.manifest import (
-    BACKEND_PS_LIMIT_KEY,
-    GLOBAL_PS_LIMIT_KEY,
-    NEGATIVE_LOG_PATTERNS,
-    NOISE_PATTERNS,
-    formal_case_items,
-)
 from suites.global_cache.drivers import (
-    compile_java as _compile_java,
-    build_libpq_asset as _build_libpq_asset,
-    jdbc_url as _jdbc_url,
-    libpq_source as _driver_libpq_source,
-    stage_libpq_source as _driver_stage_libpq_source,
-    start_phased_libpq as _start_phased_libpq,
-    run_libpq_asset as _run_libpq_asset,
-    run_jdbc_asset as _run_jdbc_asset,
     run_jdbc_asset_phased as _run_jdbc_asset_phased,
-    jdbc_source_file as _driver_jdbc_source_file,
-    run_case_jdbc as _driver_run_case_jdbc,
-    record_driver_api_calls as _record_driver_api_calls,
-    libpq_prepared_operations as _libpq_prepared_operations,
 )
-from suites.global_cache.paths import asset_path as _global_cache_asset_path
 
-from suites.global_cache.domains.common_assertions import _stats_change_text
-from suites.global_cache.domains.driver_cases import _run_libpq_case, _run_jdbc_case
+from suites.global_cache.domains.driver_cases import _run_jdbc_case
 import fbasecman_ops as ops
 def _run_heartbeat_rule_precedence_case(context):
     global_heartbeat = ops.case.assertions.get("global_heartbeat", "select 999")
@@ -411,7 +371,6 @@ def _run_heartbeat_reclassify_case(context):
     heartbeat_after = ops.case.assertions.get("heartbeat_after", "select 124")
     prepared_sql = ops.case.assertions.get("prepared_sql", "SELECT 124")
     verify_sql = ops.case.assertions.get("verify_sql", prepared_sql)
-    verify_value = verify_sql.split()[-1].rstrip(";")
     start_conf = ops.render_runtime_conf(
         [('heartbeat_request "select 10086"', 'heartbeat_request "%s"' % heartbeat_before)],
         "heartbeat_reclassify_live.conf",

@@ -1308,8 +1308,8 @@ class GucSessionCase:
                              details={"expected": expected,
                                       "actual": "会话级复用由连接池承接 (pool=transaction)"})
                 continue
-            output = _expect(context, key, title, expected, predicate,
-                             lambda sql=sql: _business_query(context, psql, port, sql))
+            _expect(context, key, title, expected, predicate,
+                    lambda sql=sql: _business_query(context, psql, port, sql))
             context.attach_text("guc-log-%02d.txt" % index,
                                 _guc_log_evidence(context, config))
         if self.verify:

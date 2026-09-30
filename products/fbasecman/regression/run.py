@@ -38,18 +38,10 @@ def main() -> int:
             sys.path.remove(value)
         sys.path.insert(0, value)
     import cmanconf
-
-    original = cmanconf.load_regression_config
-
-    def load_with_profile(root_dir, extra_configs=None, validate=True):
-        extras = list(extra_configs or []) + [override]
-        return original(root_dir, extra_configs=extras, validate=validate)
-
-    cmanconf.load_regression_config = load_with_profile
-
     from cmanconf import validate_profile_isolation
 
-    validate_profile_isolation(load_with_profile(source))
+    validate_profile_isolation(
+        cmanconf.load_regression_config(source, extra_configs=[override]))
     if args.target not in suite_ids and args.target not in targets:
         print("未知测试目标: %s" % args.target, file=sys.stderr)
         return 2

@@ -439,7 +439,6 @@ def _phase_console_observation(context, phase):
 
 def _run_phased_case_jdbc(context, source, target, jar, command, url, title):
     actions = PHASED_JDBC_ACTIONS[ops.case.name]
-    sql_hint = ops.case.sql.get("statement", "") if isinstance(ops.case.sql, dict) else ""
     sql_operations = jdbc_prepared_operations(source)
     if ops.case.name == "parse_invalid_error_recovery_same_connection":
         sql_operations = [

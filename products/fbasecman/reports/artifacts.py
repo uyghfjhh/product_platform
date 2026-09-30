@@ -1,16 +1,14 @@
 """读取 fbasecman 回归产物；原始内容只做显示，不从文本猜测成功。"""
 
 import json
-import os
 import re
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
 from platform_app.config import Settings
 from platform_app.event_contracts import EntityDiscovered
 from products.fbasecman.deployment.profile import evidence_root
+from products.fbasecman.reports.parser import parse_report
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -55,21 +53,13 @@ def case_artifacts(settings: Settings, target: str, environment_id: str | None =
                 logs.append({"name": path.relative_to(directory).as_posix(), "size": path.stat().st_size})
     parsed = None
     if report_path.is_file():
-        # 复用迁入的报告解析器；隔离进程避免与平台的 framework 包冲突。
-        script = (
-            "import json,sys; from tools.web_reports import parse_report; "
-            "print(json.dumps(parse_report(sys.argv[1],sys.argv[2]),ensure_ascii=False))"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script, target, str(report_root(settings, environment_id))],
-            cwd=settings.product_regress_root("fbasecman"),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        if result.returncode == 0:
-            parsed = json.loads(result.stdout)
+        config_dirs = [settings.product_regress_root("fbasecman")]
+        if environment_id:
+            config_dirs.insert(
+                0, settings.data_dir / "profiles" / environment_id)
+        parsed = parse_report(
+            target, report_root(settings, environment_id),
+            config_dirs=config_dirs)
     return {
         "target": target,
         "available": directory.is_dir(),
@@ -270,29 +260,7 @@ def export_source_report(settings: Settings, environment_id: str, format_name: s
     if not root.is_dir():
         raise FileNotFoundError("当前环境尚无测试报告")
     if format_name == "junit":
-        script = (
-            "import sys; from pathlib import Path; "
-            "from platform_regress.reporting.junit import export_junit_from_runs; "
-            "print(export_junit_from_runs(Path(sys.argv[1])))"
-        )
-    else:
-        script = (
-            "import sys; from pathlib import Path; "
-            "from platform_regress.reporting.html import export_html_from_runs; "
-            "print(export_html_from_runs(Path(sys.argv[1])))"
-        )
-    env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "utf-8"
-    process = subprocess.run(
-        [sys.executable, "-c", script, str(root)],
-        cwd=settings.product_regress_root("fbasecman"),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        timeout=30,
-        check=False,
-    )
-    if process.returncode:
-        raise RuntimeError(process.stderr.strip() or "报告生成失败")
-    return process.stdout
+        from platform_regress.reporting.junit import export_junit_from_runs
+        return export_junit_from_runs(root)
+    from platform_regress.reporting.html import export_html_from_runs
+    return export_html_from_runs(root)

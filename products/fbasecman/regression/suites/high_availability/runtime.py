@@ -1,8 +1,6 @@
 """Runtime context, evidence collection, and lifecycle support for HA cases."""
 
 import difflib
-import json
-import os
 import shutil
 import socket
 import time
@@ -16,11 +14,10 @@ from platform_regress.evidence import EvidenceStep, StepJournal
 from platform_regress.execution.command import run_logged_command
 from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
 from platform_regress.reporting.renderer import render_psql_table_from_pipe_text
-from lib.report_utils import render_psql_expanded_from_pipe_text
-from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
+from products.fbasecman.process import FbasecmanProcess
 
 from products.fbasecman.environment.cluster_ops import NodeController
-from .console_parser import ConsoleSnapshot, parse_console_pipe_table
+from .console_parser import ConsoleSnapshot
 from platform_regress.execution.forensics import diagnose_crash
 import fbasecman_ops as ops
 

@@ -8,7 +8,6 @@
 """
 
 from __future__ import annotations
-import os
 
 import difflib
 import re
@@ -29,9 +28,6 @@ from products.fbasecman.native import (
 # ---------------------------------------------------------------------------
 
 from platform_regress.evidence.config_diff import (
-    strip_inline_comment as _strip_inline_comment,
-    parse_semantic_objects as _semantic_objects,
-    command_mutation_scope as _command_scope,
     semantic_config_diff as _semantic_config_diff,
 )
 
@@ -938,7 +934,7 @@ def exec_refresh_cluster(rt):
         rt.psql("REFRESH CLUSTER pg_cluster_1;",
                 "%s：节点恢复后再次 REFRESH CLUSTER" % enabled,
                 "返回 REFRESH CLUSTER", lambda output: "REFRESH CLUSTER" in output)
-        recovered_output = wait_endpoint(
+        wait_endpoint(
             "%s：确认端点恢复已生效" % enabled,
             "pg_3 probe_seq 递增、ONLINE、fault_flags={}、fault_count=0",
             lambda output, s=failed_seq: check_endpoint(output, "pg_3", False, s))

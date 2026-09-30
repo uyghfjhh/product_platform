@@ -1,6 +1,5 @@
-from cmanconf import RegressionConfig
 
-from platform_regress.execution.shell import LoggedShellRunner, ShellCommandError
+from platform_regress.execution.shell import ShellCommandError
 
 
 def _run_health_sql(runner, user, host, script, log_name):

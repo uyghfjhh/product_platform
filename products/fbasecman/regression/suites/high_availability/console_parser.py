@@ -1,6 +1,5 @@
 """Structured console output parser and semantic assertion library for fbasecman."""
 
-import re
 
 
 class ConsoleAssertionError(AssertionError):
