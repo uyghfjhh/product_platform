@@ -1,14 +1,11 @@
 """读取 fbasecman 回归产物；原始内容只做显示，不从文本猜测成功。"""
 
-import json
 import re
-from datetime import datetime
 from pathlib import Path
 
 from platform_app.config import Settings
-from platform_app.event_contracts import EntityDiscovered
+
 from products.fbasecman.deployment.profile import evidence_root
-from products.fbasecman.reports.parser import parse_report
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -18,8 +15,7 @@ from products.fbasecman.observations import (
     parse_node_status,
     parse_nodes,
 )
-from platform_app.scene import emit_observation
-from platform_app.filestore import FileStore
+from products.fbasecman.reports.parser import parse_report
 
 TARGET = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 
@@ -40,57 +36,19 @@ def case_directory(settings: Settings, target: str, environment_id: str | None =
 
 
 def case_artifacts(settings: Settings, target: str, environment_id: str | None = None) -> dict:
+    from platform_regress.evidence.artifacts import ArtifactRepository
     directory = case_directory(settings, target, environment_id)
-    summary_path = directory / "summary.json"
-    steps_path = directory / "steps.json"
-    report_path = directory / "report.txt"
-    summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else None
-    journal = json.loads(steps_path.read_text(encoding="utf-8")) if steps_path.is_file() else None
-    logs = []
-    if directory.is_dir():
-        for path in directory.rglob("*.log"):
-            if path.is_file() and len(path.relative_to(directory).parts) <= 3:
-                logs.append({"name": path.relative_to(directory).as_posix(), "size": path.stat().st_size})
-    parsed = None
-    if report_path.is_file():
-        config_dirs = [settings.product_regress_root("fbasecman")]
-        if environment_id:
-            config_dirs.insert(
-                0, settings.data_dir / "profiles" / environment_id)
-        parsed = parse_report(
-            target, report_root(settings, environment_id),
-            config_dirs=config_dirs)
-    return {
-        "target": target,
-        "available": directory.is_dir(),
-        "summary": summary,
-        "steps": journal.get("steps", []) if isinstance(journal, dict) else [],
-        "report": report_path.read_text(encoding="utf-8", errors="replace") if report_path.is_file() else None,
-        "parsed": parsed,
-        "logs": sorted(logs, key=lambda item: item["name"]),
-    }
+    config_dirs = [settings.product_regress_root("fbasecman")]
+    if environment_id:
+        config_dirs.insert(0, settings.data_dir / "profiles" / environment_id)
+    return ArtifactRepository(directory).describe(target, parsed=lambda: parse_report(
+        target, report_root(settings, environment_id), config_dirs=config_dirs))
 
 
 def recent_case_statuses(settings: Settings, environment_id: str | None = None) -> dict[str, dict]:
     root = report_root(settings, environment_id) / "output" / "runs"
-    found: dict[str, dict] = {}
-    if not root.is_dir():
-        return found
-    for summary in root.glob("*/*/summary.json"):
-        try:
-            value = json.loads(summary.read_text(encoding="utf-8"))
-            status = value.get("status")
-            if status in {"PASS", "FAIL", "RUNNING"}:
-                duration = value.get("duration")
-                dur_str = f"{float(duration):.2f}s" if duration is not None else "-"
-                found[summary.parent.parent.name + "." + summary.parent.name] = {
-                    "status": status,
-                    "duration": dur_str,
-                    "has_report": (summary.parent / "report.txt").exists(),
-                    "modified_at": summary.stat().st_mtime,
-                }
-        except (OSError, ValueError):
-            continue
+    from platform_regress.evidence.artifacts import scan_run_summaries
+    found = scan_run_summaries(root)
     for report in root.glob("*/*/report.txt"):
         target = report.parent.parent.name + "." + report.parent.name
         if target in found:
@@ -111,146 +69,40 @@ def recent_case_statuses(settings: Settings, environment_id: str | None = None) 
 
 
 class CaseProgressObserver:
-    """把当前运行写出的步骤日志转换为平台事件。"""
+    """Product observation rules; platform owns journal polling and events."""
+    def __init__(self, settings, environment_id, target, started_at):
+        from platform_app.artifact_progress import ArtifactProgressObserver
+        self.observer = ArtifactProgressObserver(
+            report_root(settings, environment_id) / "output" / "runs",
+            target, started_at, parse_observations=self.parse_observations)
 
-    def __init__(self, settings: Settings, environment_id: str, target: str,
-                 started_at: float):
-        self.root = report_root(settings, environment_id) / "output" / "runs"
-        self.target = target
-        self.started_at = started_at - 1
-        self.seen: dict[tuple[str, int], str] = {}
-        self.observed_steps: set[tuple[str, int]] = set()
-        self.discovered_entities: set[str] = set()
+    @staticmethod
+    def parse_observations(output):
+        command = output.splitlines()[0] if output else ""
+        for marker, parser in (
+            ("SHOW NODE_STATUS;", parse_node_status),
+            ("SHOW GROUP_ROUTING ", parse_group_routing),
+            ("SHOW NODE_MONITOR", parse_node_monitor),
+            ("SHOW MONITOR_CONFIG", parse_monitor_config),
+            ("SHOW GROUP_MEMBERS", parse_group_members),
+            ("SHOW NODES;", parse_nodes), ("SHOW GROUPS;", parse_groups),
+        ):
+            if marker in command:
+                return parser(output)
+        return []
 
-    def poll(self, store: FileStore, task_id: str) -> None:
-        if not self.root.is_dir():
-            return
-        for path in self.root.glob("*/*/steps.json"):
-            case = path.parent.parent.name + "." + path.parent.name
-            if self.target not in {"failed", case, case.split(".", 1)[0]}:
-                continue
-            try:
-                if path.stat().st_mtime < self.started_at:
-                    continue
-                steps = json.loads(path.read_text(encoding="utf-8")).get("steps", [])
-            except (OSError, ValueError, AttributeError):
-                continue
-            for index, step in enumerate(steps):
-                key = (case, index)
-                result = str(step.get("result") or step.get("status") or "RUNNING")
-                previous = self.seen.get(key)
-                if previous is None:
-                    store.add_event(task_id, "step.started", {
-                        "title": step.get("title") or f"步骤 {index + 1}",
-                        "target": case, "step_index": index,
-                        "expected": step.get("expected"),
-                        "artifact": str(path),
-                    })
-                if result in {"PASS", "FAIL"} and previous != result:
-                    store.add_event(task_id, "assertion.checked", {
-                        "title": step.get("title") or f"步骤 {index + 1}",
-                        "target": case, "step_index": index,
-                        "expected": step.get("expected"),
-                        "actual": step.get("actual"),
-                        "result": result,
-                        "artifact": str(path),
-                    })
-                if result == "PASS" and key not in self.observed_steps:
-                    for entry in step.get("execution") or []:
-                        output = entry.get("text", "")
-                        command = output.splitlines()[0] if output else ""
-                        if "SHOW NODE_STATUS;" in command:
-                            facts = parse_node_status(output)
-                        elif "SHOW GROUP_ROUTING " in command:
-                            facts = parse_group_routing(output)
-                        elif "SHOW NODE_MONITOR" in command:
-                            facts = parse_node_monitor(output)
-                        elif "SHOW MONITOR_CONFIG" in command:
-                            facts = parse_monitor_config(output)
-                        elif "SHOW GROUP_MEMBERS" in command:
-                            facts = parse_group_members(output)
-                        elif "SHOW NODES;" in command:
-                            facts = parse_nodes(output)
-                        elif "SHOW GROUPS;" in command:
-                            facts = parse_groups(output)
-                        else:
-                            continue
-                        for fact in facts:
-                            entity_id = fact.details["entity_id"]
-                            if entity_id not in self.discovered_entities:
-                                store.add_event(task_id, "scene.entity.discovered", EntityDiscovered(
-                                    id=entity_id, label=fact.details["label"], kind=fact.kind,
-                                    group=fact.details.get("group_name"),
-                                    details={"artifact": str(path)},
-                                ).model_dump())
-                                self.discovered_entities.add(entity_id)
-                            emit_observation(store, task_id, entity_id, fact.state,
-                                             fact.kind, {**fact.details, "artifact": str(path)})
-                    self.observed_steps.add(key)
-                self.seen[key] = result
+    def poll(self, store, task_id):
+        return self.observer.poll(store, task_id)
 
 
 def case_log(settings: Settings, target: str, filename: str, *,
              environment_id: str | None = None, last_lines: int = 500) -> dict:
-    directory = case_directory(settings, target, environment_id).resolve()
-    if not filename or Path(filename).is_absolute():
-        raise ValueError("日志文件名无效")
-    path = (directory / filename).resolve()
-    if not path.is_relative_to(directory) or path.suffix != ".log" or not path.is_file():
-        raise FileNotFoundError("日志文件不存在")
-    from collections import deque
-
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        lines = list(deque(handle, maxlen=last_lines))
-    return {"target": target, "name": filename, "lines": [line.rstrip("\n") for line in lines]}
+    from platform_regress.evidence.artifacts import ArtifactRepository
+    result = ArtifactRepository(case_directory(settings, target, environment_id)).log(filename, last_lines=last_lines)
+    result["target"] = target
+    return result
 
 
-def sync_current_results(store: FileStore, settings: Settings, environment: dict,
-                         target: str, started_at: str,
-                         operation_id: str | None = None) -> int:
-    """只同步本次更新的产物，避免把此前 PASS 当成本次结论。"""
-    started = datetime.fromisoformat(started_at).timestamp() - 1
-    count = 0
-    for case, info in recent_case_statuses(settings, environment["id"]).items():
-        if info["modified_at"] < started:
-            continue
-        if target not in {"failed", "all", case, case.split(".", 1)[0]}:
-            continue
-        status = info["status"] if info["status"] in {"PASS", "FAIL"} else "ERROR"
-        directory = case_directory(settings, case, environment["id"])
-        reason = None
-        summary = directory / "summary.json"
-        if summary.is_file():
-            try:
-                reason = json.loads(summary.read_text(encoding="utf-8")).get("reason")
-            except (OSError, ValueError):
-                pass
-        store.put_result(environment["product_id"], environment["id"], case,
-                         "default", status, reason, str(directory))
-        count += 1
-    # Native cases write the platform result model under
-    # data/regression/<env>/**/result.json instead of the legacy report tree.
-    platform_root = settings.output_dir / "regression" / environment["id"]
-    if platform_root.is_dir():
-        for result_path in sorted(platform_root.rglob("result.json")):
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if result.get("schema_version") != "1.0" or not result.get("target"):
-                continue
-            if operation_id and result.get("operation_id") != operation_id:
-                continue
-            if not operation_id and result_path.stat().st_mtime < started:
-                continue
-            case = result["target"]
-            if target not in {"failed", "all", case, case.split(".", 1)[0]}:
-                continue
-            store.put_result(environment["product_id"], environment["id"], case,
-                             "default", result.get("verdict", "ERROR"),
-                             result.get("reason"), str(result_path.parent))
-            count += 1
-    return count
 
 
 def export_source_report(settings: Settings, environment_id: str, format_name: str) -> str:

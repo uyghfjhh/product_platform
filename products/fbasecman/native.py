@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from platform_regress import Blocked, CaseContext
+from platform_regress.sdk import Blocked, CaseContext
 from platform_regress.clients import jdbc as jdbc_client
 
 

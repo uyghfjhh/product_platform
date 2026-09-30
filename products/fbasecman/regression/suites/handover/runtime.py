@@ -5,16 +5,12 @@ framework command/process/log primitives.  This deliberately does not import
 the legacy rw_toggle or global_cache suites.
 """
 
-import json
 import os
 import re
-import shutil
 import socket
 import time
 from datetime import datetime
 from pathlib import Path
-
-import yaml
 
 from platform_regress.clients.psql import build_psql_command, assert_table_rows
 from platform_regress.sdk import CaseFailure
@@ -26,14 +22,14 @@ from platform_regress.evidence.log_window import (
     remote_snapshot_script,
 )
 from platform_regress.evidence import (
-    EvidenceStep, StepJournal, render_jdbc_action, without_phase_markers,
+    EvidenceStep, render_jdbc_action, without_phase_markers,
 )
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.shell import LoggedShellRunner, quote_arguments
-from platform_regress.persistence.atomic import atomic_write_text
 from platform_regress.reporting import (
-    ReportCheck, ReportDocument, ReportStep, is_transport_only_success, render_report,
+    ReportCheck, ReportStep, is_transport_only_success,
 )
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
 from products.fbasecman.config import remove_config_block_line, set_config_block_line
 from suites.handover.manifest import HANDOVER_CASES
@@ -68,10 +64,6 @@ def _handover_port_pair(case_index, forbidden=()):
         if (port, port + 1) not in forbidden and _port_free(port) and _port_free(port + 1):
             return port, port + 1
     raise HandoverFailure("no free adjacent TCP port pair available for handover case")
-
-
-def _json_write(path, value):
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _relevant_proxy_lines(text, limit=24):
@@ -114,34 +106,25 @@ def _relevant_pg_lines(text, sql=None, limit=36):
     return "\n".join(selected)
 
 
-class HandoverRuntime(object):
+class HandoverRuntime(FbasecmanCaseRuntime):
+    """handover 套件运行时。
+
+    生命周期/报告管线由 ``FbasecmanCaseRuntime``（ReportRuntime）统一提供；
+    本类保留 handover 专属语义：按用例序号的独立端口对、window 证据采集
+    （proxy/PG 日志窗口）、console 断言助手、coverage 映射与增量报告刷新。
+    """
+
+    failure_class = HandoverFailure
+
     def __init__(self, root, case, env, context_data=None):
-        self.root = Path(root)
-        self.case = case
-        self.env = env
-        if not self.env.test_context_file.exists():
-            raise HandoverFailure("missing %s, run ./run.sh env setup first" % self.env.test_context_file)
-        self.context = (context_data if context_data is not None
-                        else yaml.safe_load(
-                            self.env.test_context_file.read_text(encoding="utf-8")) or {})
-        self.run_root = self.env.output_dir / "runs" / "handover" / case.name
-        self.workdir = self.run_root / "workdir"
-        self.logs_dir = self.run_root / "logs"
-        if self.run_root.exists():
-            shutil.rmtree(str(self.run_root))
-        self.logs_dir.mkdir(parents=True)
-        self.workdir.mkdir(parents=True)
-        self.started_at = datetime.now()
-        self.finished_at = None
-        self.steps = []
+        if not env.test_context_file.exists():
+            raise HandoverFailure("missing %s, run ./run.sh env setup first" % env.test_context_file)
+        super().__init__(root, case, env, context_data)
         self.checks = []
-        self._step_order = 0
-        self.step_journal = StepJournal(self.run_root / "steps.json", case.target)
         self._command_no = 0
         self._pg_marks = None
         self._pg_runner = LoggedShellRunner(self.logs_dir / "remote", verbose=False)
         self.local_windows = LocalLogWindow()
-        self.proxy_log = self.run_root / "fbasecman.log"
         self._last_evidence_windows = ("", "")
         # Cases are serial, but an aborted prior runner can leave a listener.
         # Use a fresh runner-local range instead of reusing fixed case ports.
@@ -149,7 +132,6 @@ class HandoverRuntime(object):
         self._port_pairs = []
         self.listen_port, self.read_port = _handover_port_pair(self.case_index)
         self._port_pairs.append((self.listen_port, self.read_port))
-        self.pid_file = self.workdir / "fbasecman.pid"
         self._new_process()
 
     def _new_process(self):
@@ -181,32 +163,6 @@ class HandoverRuntime(object):
                 return candidate
         raise HandoverFailure("no free TCP port available for handover prometheus endpoint")
 
-    def trace(self, message):
-        with (self.run_root / "events.log").open("a", encoding="utf-8") as handle:
-            handle.write("%s %s\n" % (datetime.now().strftime("%H:%M:%S"), message))
-
-    def run_command(self, command, logfile, cwd=None, env=None, echo=False,
-                    check=True, step_title=None, record=True):
-        result = run_logged_command(command, logfile, cwd=cwd or self.root, env=env, echo=echo)
-        if record:
-            self.record_step(step_title or "执行命令", command=result.command, actual=result.output,
-                             expected="命令执行完成", result="PASS" if result.returncode == 0 else "FAIL")
-        if check and result.returncode != 0:
-            raise HandoverFailure("command failed rc=%s: %s" % (result.returncode, result.command))
-        return result.returncode, result.output
-
-    def record_step(self, title, command=None, expected=None, actual=None, result=None, details=None):
-        item = {"title": title, "command": command, "expected": expected,
-                "actual": actual, "result": result, "details": details or [],
-                "order": self._next_step_order()}
-        self.steps.append(item)
-        self._write_report("RUNNING")
-        return item
-
-    def _next_step_order(self):
-        self._step_order += 1
-        return self._step_order
-
     def evidence_step(self, title, sql=None, console=False, expected=None,
                       collect_logs=False):
         """Create one immediately-persisted business action with optional logs.
@@ -215,14 +171,14 @@ class HandoverRuntime(object):
         business assertions.  A caller opts into log windows only when a
         conclusion specifically depends on proxy or PostgreSQL internals.
         """
-        order = self._next_step_order()
+        order = self._next_order()
 
         if not collect_logs:
             self._last_evidence_windows = ("", "")
             return EvidenceStep(
                 title, self.step_journal, expected=expected,
                 metadata={"order": order, "console": bool(console)},
-                on_change=lambda: self._write_report("RUNNING"),
+                on_change=lambda: self.write_report("RUNNING"),
             )
 
         def open_window():
@@ -244,7 +200,7 @@ class HandoverRuntime(object):
             title, self.step_journal, open_window=open_window,
             collect_window=collect_window, expected=expected,
             metadata={"order": order, "console": bool(console)},
-            on_change=lambda: self._write_report("RUNNING"),
+            on_change=lambda: self.write_report("RUNNING"),
         )
 
     def set_latest_evidence_outcome(self, expected, actual, passed):
@@ -256,13 +212,13 @@ class HandoverRuntime(object):
         step["actual"] = str(actual).strip()
         step["result"] = "PASS" if passed else "FAIL"
         self.step_journal.save()
-        self._write_report("RUNNING")
+        self.write_report("RUNNING")
 
     def check(self, title, expected, actual, passed):
         result = "PASS" if passed else "FAIL"
         check = ReportCheck(title, expected, actual, result)
         self.checks.append(check)
-        self._write_report("RUNNING")
+        self.write_report("RUNNING")
         if not passed:
             raise HandoverFailure("%s: expected %s, actual %s" % (title, expected, actual))
         return check
@@ -462,9 +418,6 @@ class HandoverRuntime(object):
                          actual="控制台连接成功", details=[("节点和路由配置", "拓扑=%s, 路由=%s, 写端口=%s, 读端口=%s" % (
                              self.case.topology, self.case.route_mode, self.listen_port, self.read_port))])
         return conf
-
-    def stop(self):
-        self.process.stop(best_effort=True, record=False)
 
     def restart_active_configuration(self, ready_timeout=30.0):
         """Restart fbasecman with the edited active configuration.
@@ -876,10 +829,8 @@ class HandoverRuntime(object):
             )
         return document_steps
 
-    def _write_report(self, status, reason=None):
-        finished_at = self.finished_at or datetime.now()
-        document_steps = []
-        document_steps.extend(self._document_steps())
+    def report_document_kwargs(self, status, reason):
+        document_steps = self._document_steps()
         if status == "FAIL":
             try:
                 start_ts = self.started_at.timestamp() if hasattr(self.started_at, "timestamp") else time.time() - 3600
@@ -921,27 +872,19 @@ class HandoverRuntime(object):
             (str(index), step.coverage, step.coverage_check)
             for index, step in enumerate(document_steps, 1)
         ]
-        document = ReportDocument(
-            self.case.target, status,
-            self.started_at.strftime("%Y-%m-%d %H:%M:%S"), finished_at.strftime("%Y-%m-%d %H:%M:%S"),
-            self.case.summary,
-            config_lines=["来源章节: %s" % ", ".join(self.case.source_sections),
-                          "拓扑: %s" % (self.case.topology or "独立配置"),
-                          "读写模式: %s" % (self.case.route_mode or "不适用")],
-            coverage_items=list(self.case.notes), coverage_mapping=resolved_mapping,
-            steps=document_steps,
-            pass_reason=reason if status == "PASS" else None,
-            failure_reason=reason if status == "FAIL" else None,
-        )
-        atomic_write_text(self.run_root / "report.txt", render_report(document))
-        return document
-
-    def finish(self, status, reason=None):
-        self.finished_at = datetime.now()
-        document = self._write_report(status, reason)
-        _json_write(self.run_root / "summary.json", {
-            "target": self.case.target, "status": status, "reason": reason,
-            "source_sections": self.case.source_sections,
-            "started_at": document.started_at, "finished_at": document.finished_at,
+        kwargs = super().report_document_kwargs(status, reason)
+        kwargs.update({
+            "config_lines": ["来源章节: %s" % ", ".join(self.case.source_sections),
+                             "拓扑: %s" % (self.case.topology or "独立配置"),
+                             "读写模式: %s" % (self.case.route_mode or "不适用")],
+            "coverage_items": list(self.case.notes),
+            "coverage_mapping": resolved_mapping,
+            "steps": document_steps,
         })
-        self.stop()
+        return kwargs
+
+    def summary_extra(self):
+        return {
+            "started_at": self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "finished_at": (self.finished_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+        }

@@ -7,7 +7,7 @@ import json
 import re
 import time
 
-from platform_regress import CaseContext
+from platform_regress.sdk import CaseContext
 from products.fbasecman.native import _business_query, _console_query, render_config
 
 

@@ -1,6 +1,7 @@
 id: fbasecman
 title: fbasecman
 plugin_api: v1
+regression_sdk: "2"
 provider: provider.py
 source:
   env: PRODUCT_PLATFORM_CMAN_SOURCE_ROOT

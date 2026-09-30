@@ -6,9 +6,7 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -75,38 +73,14 @@ def _run(host: str, port: int, database: str, user: str, statement: str) -> None
     _psql_exec(host, port, database, user, statement, tuples_only=False)
 
 
-def _local_fingerprint(path: str) -> dict:
-    """本地二进制指纹：sha256 + size + mtime。"""
-    p = Path(path)
-    if not p.is_file():
-        return {"path": path, "error": "not found"}
-    digest = hashlib.sha256(p.read_bytes()).hexdigest()
-    stat = p.stat()
-    return {"path": str(p), "sha256": digest, "size": stat.st_size,
-            "mtime": int(stat.st_mtime)}
+def _local_fingerprint(path):
+    from platform_regress.evidence.fingerprint import local_fingerprint
+    return local_fingerprint(path)
 
 
-def _remote_fingerprint(host: str, user: str, path: str) -> dict:
-    """远端二进制指纹：ssh sha256sum + stat；失败返回 error 字段。"""
-    quoted = shlex.quote(path)
-    cmd = (
-        f'sha256sum {quoted} 2>/dev/null | awk \'{{print $1}}\'; '
-        f'stat -c "%s %Y" {quoted} 2>/dev/null'
-    )
-    proc = subprocess.run(
-        ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-         f"{user}@{host}", cmd],
-        text=True, capture_output=True, timeout=30,
-    )
-    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    if proc.returncode != 0 or not lines:
-        return {"path": path, "error": proc.stderr.strip() or "unreachable"}
-    entry = {"path": path, "sha256": lines[0]}
-    if len(lines) > 1:
-        parts = lines[1].split()
-        if len(parts) == 2:
-            entry["size"], entry["mtime"] = int(parts[0]), int(parts[1])
-    return entry
+def _remote_fingerprint(host, user, path):
+    from platform_regress.evidence.fingerprint import remote_fingerprint
+    return remote_fingerprint(host, user, path, runner=subprocess.run)
 
 
 def _ensure_roles(host: str, port: int, user: str) -> None:

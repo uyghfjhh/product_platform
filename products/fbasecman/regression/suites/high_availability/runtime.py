@@ -2,7 +2,6 @@ import os
 """Runtime context, evidence collection, and lifecycle support for HA cases."""
 
 import difflib
-import shutil
 import socket
 import time
 from datetime import datetime
@@ -11,10 +10,11 @@ from pathlib import Path
 from platform_regress.clients.psql import build_psql_command
 from platform_regress.sdk import CaseFailure
 
-from platform_regress.evidence import EvidenceStep, StepJournal
+from platform_regress.evidence import EvidenceStep
 from platform_regress.execution.command import run_logged_command
-from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
+from platform_regress.reporting import ReportCheck, ReportStep
 from platform_regress.reporting.renderer import render_psql_table_from_pipe_text
+from products.fbasecman.case_runtime import FbasecmanCaseRuntime
 from products.fbasecman.process import FbasecmanProcess
 
 from products.fbasecman.environment.cluster_ops import NodeController
@@ -22,6 +22,8 @@ from .console_parser import ConsoleSnapshot
 from platform_regress.execution.forensics import diagnose_crash
 
 LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
+
+
 class HighAvailabilityFailure(CaseFailure):
     pass
 
@@ -41,46 +43,34 @@ def _port_free(port):
         sock.close()
 
 
-def _find_free_port(start=18000, max_port=25000):
-    for port in range(start, max_port):
-        if _port_free(port) and _port_free(port + 1) and _port_free(port + 2):
-            return port
-    raise HighAvailabilityFailure("No free ports available for fbasecman")
+class HighAvailabilityRuntime(FbasecmanCaseRuntime):
+    """Execution context and evidence harness for High Availability cases.
 
+    生命周期/报告管线由 ``FbasecmanCaseRuntime``（ReportRuntime）统一提供；
+    本类保留 HA 专属的节点编排、console 快照断言与富步骤装配
+    （``add_step`` 产出覆盖度/检测项完整的 ReportStep，经
+    ``report_document_kwargs`` 接管渲染步骤列表）。
+    """
 
-class HighAvailabilityRuntime(object):
-    """Execution context and evidence harness for High Availability cases."""
+    failure_class = HighAvailabilityFailure
 
     def __init__(self, root, case, env, context_data=None):
-        self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.root = Path(root)
-        self.case = case
-        self.env = env
-        self.run_root = self.env.output_dir / "runs" / "high_availability" / case.name
-        if self.run_root.exists():
-            shutil.rmtree(str(self.run_root))
-        self.workdir = self.run_root / "workdir"
-        self.logs_dir = self.run_root / "logs"
+        super().__init__(root, case, env, context_data)
+        self.journal = self.step_journal
         self.backup_dir = self.run_root / "backups"
-        self.workdir.mkdir(parents=True, exist_ok=True)
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
-
-        self.journal_path = self.run_root / "steps.json"
-        self.journal = StepJournal(self.journal_path, self.case.target)
-
-        self.listen_port = _find_free_port()
         self.prom_port = self.listen_port + 2
-        self.pid_file = self.workdir / "fbasecman.pid"
         self.locks_dir = self.workdir / "locks"
         self.locks_dir.mkdir(parents=True, exist_ok=True)
-        self.product_log = self.run_root / "fbasecman.log"
+        self.product_log = self.proxy_log
 
         self.timestamps = {}
         self.report_steps = []
         self._log_cursor = 0
 
         self.nodes = NodeController(self.env, self.logs_dir)
+        # HA 的进程动作不自动记步骤（用例自行 add_step），不能用会记账的
+        # ``run_command``，因此持有独立 FbasecmanProcess 实例。
         self.fbasecman = FbasecmanProcess(
             binary=self.env.config["fbasecman"]["fbasecman_bin"],
             postgres_dir=self.env.config["local"]["postgres_dir"],
@@ -94,7 +84,6 @@ class HighAvailabilityRuntime(object):
             trace=self._trace,
             port_is_free=_port_free,
         )
-        self.active_conf = None
 
     def _trace(self, message):
         pass
@@ -600,9 +589,6 @@ class HighAvailabilityRuntime(object):
         )
         return "\n".join(delta)
 
-    def __enter__(self):
-        return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         cleanup_errors = []
         try:
@@ -623,6 +609,7 @@ class HighAvailabilityRuntime(object):
             actual="；".join(cleanup_errors) if cleanup_errors else "fbasecman 已停止，四个核心节点均已检查并处于运行状态",
             result="FAIL" if cleanup_errors else "PASS",
         )
+        super().__exit__(exc_type, exc_val, exc_tb)
         if cleanup_errors and exc_type is None:
             raise HighAvailabilityFailure("; ".join(cleanup_errors))
 
@@ -638,7 +625,7 @@ class HighAvailabilityRuntime(object):
         try:
             bin_val = getattr(getattr(self, "fbasecman", None), "binary", None) or self.env.config["fbasecman"]["fbasecman_bin"]
             fbasecman_path = Path(bin_val)
-            retcode = getattr(getattr(self, "process", None), "returncode", None)
+            retcode = getattr(self.fbasecman, "returncode", None)
             start_ts = self.timestamps.get("started")
             crash_info = diagnose_crash(
                 binary_path=fbasecman_path,
@@ -670,12 +657,14 @@ class HighAvailabilityRuntime(object):
             result="FAIL",
         )
 
-    def finish(self, verdict, summary_text):
-        if verdict == "PASS":
-            self._validate_pass_report()
+    # ------------------------------------------------------------------
+    # 报告钩子（接管 ReportRuntime 渲染）
+    # ------------------------------------------------------------------
+
+    def report_config_lines(self):
         db_cfg = self.env.config["database"]
         ports = db_cfg["ports"]
-        config_lines = [
+        return [
             "监听端口: %d, 控制台端口: %d" % (self.listen_port, self.listen_port),
             "数据库集群与节点代号映射 (严格对应测试设计方案第四章):",
             "  - site_a: 主库 A0 (节点名: test_mmr1, %s:%d), 从库 A1 (节点名: test_mmr1_s1, %s:%d)" % (db_cfg["mmr_host"], ports["mmr1"], db_cfg["mmr_host"], ports["mmr1_standby1"]),
@@ -684,38 +673,31 @@ class HighAvailabilityRuntime(object):
             "探活周期: monitor_period=2s, 快速重试周期: monitor_retry_period_ms=1000ms, 故障判定重试阈值: 3 次, 恢复确认阈值: 3 次",
         ]
 
-        doc = ReportDocument(
-            target=self.case.target,
-            status=verdict,
-            started_at=getattr(self, "started_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            purpose=self.case.summary,
-            config_lines=config_lines,
-            coverage_items=getattr(self, "coverage_items", []),
-            coverage_mapping=getattr(self, "coverage_mapping", []),
-            coverage_title="测试内容",
-            overview_steps=getattr(self, "overview_steps", []),
-            pass_reason=summary_text if verdict == "PASS" else None,
-            failure_reason=summary_text if verdict != "PASS" else None,
-            steps=self.report_steps,
-        )
-        report_path = self.run_root / "report.txt"
-        rendered = render_report(doc)
-
-        # Append timestamps if present
-        if self.timestamps:
-            rendered += "\n\n=== 关键状态转换时间点 ===\n"
-            for k, v in sorted(self.timestamps.items()):
-                rendered += "%-32s: %s\n" % (k, v)
-
-        report_path.write_text(rendered, encoding="utf-8")
-
-        from platform_regress.persistence.atomic import write_json
-        write_json(self.run_root / "summary.json", {
-            "target": self.case.target,
-            "status": verdict,
-            "reason": summary_text,
+    def report_document_kwargs(self, status, reason):
+        kwargs = super().report_document_kwargs(status, reason)
+        kwargs.update({
+            "steps": self.report_steps,
+            "coverage_items": getattr(self, "coverage_items", []),
+            "coverage_mapping": getattr(self, "coverage_mapping", []),
+            "coverage_title": "测试内容",
+            "overview_steps": getattr(self, "overview_steps", []),
         })
+        return kwargs
+
+    def write_report(self, status, reason=None):
+        super().write_report(status, reason)
+        if self.timestamps:
+            path = self.run_root / "report.txt"
+            text = path.read_text(encoding="utf-8")
+            text += "\n\n=== 关键状态转换时间点 ===\n"
+            for key, value in sorted(self.timestamps.items()):
+                text += "%-32s: %s\n" % (key, value)
+            path.write_text(text, encoding="utf-8")
+
+    def finish(self, status, reason=None):
+        if status == "PASS":
+            self._validate_pass_report()
+        super().finish(status, reason)
 
     def _validate_pass_report(self):
         if not self.report_steps:

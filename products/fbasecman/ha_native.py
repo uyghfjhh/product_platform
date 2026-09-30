@@ -15,7 +15,7 @@ import shlex
 import time
 from pathlib import Path
 
-from platform_regress import Blocked, CaseContext
+from platform_regress.sdk import Blocked, CaseContext
 from platform_regress.clients.psql import assert_table_rows
 
 from products.fbasecman.native import (

@@ -15,37 +15,52 @@ suite 运行时按需继承本类，只补充自己的用例级逻辑，例如
 ``suites.ha_commands.runtime.HaCommandRuntime``。
 """
 
-import os
 import difflib
+import os
 import re
 import shlex
 import time
+from pathlib import Path
 
-from platform_regress.clients.psql import build_psql_command
-from platform_regress.clients.psql import parse_expanded_rows
+from platform_regress.clients.psql import build_psql_command, parse_expanded_rows
 from platform_regress.evidence.backup import (
-    backup_content_matches, backup_dir_path, created_backups, snapshot_backup,
+    backup_content_matches,
+    backup_dir_path,
+    created_backups,
+    snapshot_backup,
 )
 from platform_regress.evidence.config_diff import (
-    strip_inline_comment, parse_semantic_objects,
-    command_mutation_scope, semantic_config_diff,
+    command_mutation_scope,
+    parse_semantic_objects,
+    semantic_config_diff,
+    strip_inline_comment,
 )
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.ports import free_port_block, port_is_free
 from platform_regress.reporting.model import ReportStep
-from platform_regress.runtime import CaseRuntime
+from platform_regress.sdk import ReportRuntime, ReportSpec
+
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
 
 
-class FbasecmanCaseRuntime(CaseRuntime):
+class FbasecmanCaseRuntime(ReportRuntime):
     """fbasecman 回归用例运行时：进程 + 配置模板 + console/业务断言助手。"""
 
     # 所有 fbasecman 用例共享同一批后端数据库，必须串行执行，共用一把锁。
     lock_name = "fbasecman_cases"
 
     def __init__(self, root, case, env, context_data=None):
-        super(FbasecmanCaseRuntime, self).__init__(
-            root, case, env=env, context_data=context_data)
+        self.env = env
+        self.case = case
+        if context_data is None:
+            import yaml
+            path = env.test_context_file
+            context_data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        spec = ReportSpec(case.name, case.target, case.summary,
+                          getattr(case, "suite_name", None) or getattr(case, "suite_id", "suite"),
+                          tuple(getattr(case, "source_sections", ())))
+        super().__init__(Path(root), spec, output_root=env.output_dir,
+                         context_data=context_data or {})
         self.proxy_log = self.run_root / "fbasecman.log"
         self._port_seed = 1
         self.listen_port = free_port_block(1, 3)

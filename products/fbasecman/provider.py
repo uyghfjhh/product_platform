@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 
 import yaml
-
 from platform_app.product_catalog import discover_products
 from platform_app.providers import CommandSpec
-from platform_regress.clients import jdbc as jdbc_client
 from platform_app.topology import configured_topology
+from platform_regress.clients import jdbc as jdbc_client
+
+from products.fbasecman.deployment.profile import evidence_root, profile_paths
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -22,9 +23,7 @@ from products.fbasecman.observations import (
     parse_nodes,
     parse_replication,
 )
-from products.fbasecman.deployment.profile import evidence_root, profile_paths
-from products.fbasecman.reports.artifacts import CaseProgressObserver, sync_current_results
-
+from products.fbasecman.reports.artifacts import CaseProgressObserver
 
 CASE_TARGETS = frozenset(
     item["target"] for item in json.loads(
@@ -156,65 +155,13 @@ class FbasecmanProvider:
         return CaseProgressObserver(settings, environment["id"], target, started_at)
 
     def publish_result(self, store, settings, environment, task, terminal, reason):
-        """Publish only reports updated by this execution before task terminal."""
         if task["action"] != "tests.fbasecman":
             return terminal, reason
-        if "." not in task["target"] and task["target"] not in {"all", "failed"}:
-            aggregate = settings.output_dir / "regression" / environment["id"] / task["target"] / "suite-result.json"
-            try:
-                payload = json.loads(aggregate.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                payload = {}
-            rows = payload.get("results") if isinstance(payload, dict) else None
-            matched = 0
-            if isinstance(rows, list):
-                for row in rows:
-                    target = row.get("target")
-                    if target not in CASE_TARGETS or row.get("operation_id") != task["id"]:
-                        continue
-                    matched += 1
-                    artifact = settings.output_dir / "regression" / environment["id"] / target
-                    store.put_result(environment["product_id"], environment["id"], target,
-                                     "default", row.get("verdict", "ERROR"), row.get("reason"), str(artifact))
-            if not matched:
-                fallback = "批量回归未生成可归因到本次执行的聚合结果"
-                store.put_result(environment["product_id"], environment["id"], task["target"],
-                                 "default", "ERROR", fallback,
-                                 str(settings.platform_dir / "operations" / (task["id"] + ".log")))
-                return ("FAILED" if terminal == "SUCCEEDED" else terminal), fallback
-            failed = payload.get("counts", {}).get("FAIL", 0) + payload.get("counts", {}).get("ERROR", 0)
-            return ("FAILED" if failed else terminal), reason
-        if task["target"] in CASE_TARGETS:
-            output = settings.output_dir / "regression" / environment["id"] / task["target"]
-            result_path = output / "result.json"
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                result = {}
-            if result.get("target") != task["target"] or result.get("operation_id") != task["id"]:
-                reason = "本次没有生成可核对的平台回归结果；见命令日志"
-                store.put_result(environment["product_id"], environment["id"], task["target"],
-                                 "default", "ERROR", reason,
-                                 str(settings.platform_dir / "operations" / (task["id"] + ".log")))
-                return ("FAILED" if terminal == "SUCCEEDED" else terminal), reason
-            reason = result.get("reason") or reason
-            store.put_result(environment["product_id"], environment["id"], task["target"],
-                             "default", result["verdict"], reason, str(output))
-            return terminal, reason
-        count = sync_current_results(
-            store, settings, environment, task["target"],
-            task["started_at"] or task["created_at"],
-            operation_id=task["id"],
-        )
-        if count:
-            return terminal, reason
-        reason = "本次没有生成可核对的用例报告；见命令日志"
-        store.put_result(
-            environment["product_id"], environment["id"], task["target"],
-            "default", "ERROR", reason,
-                str(settings.platform_dir / "operations" / (task["id"] + ".log")),
-        )
-        return ("FAILED" if terminal == "SUCCEEDED" else terminal), reason
+        from platform_app.result_publication import publish_regression_results
+        parameters = json.loads(task["parameters"])
+        return publish_regression_results(store, settings, environment, task, terminal, reason,
+                                          case_targets=CASE_TARGETS,
+                                          profile=parameters.get("profile", "default"))
 
     def parse_runtime(self, name, text):
         parsers = {

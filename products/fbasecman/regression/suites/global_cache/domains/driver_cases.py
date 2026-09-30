@@ -14,6 +14,7 @@ from suites.global_cache.manifest import (
     BACKEND_PS_LIMIT_KEY,
     NOISE_PATTERNS,
 )
+from suites.global_cache.domains.capacity import case_ps_limit as _case_ps_limit
 from suites.global_cache.drivers import (
     libpq_source as _driver_libpq_source,
     stage_libpq_source as _driver_stage_libpq_source,
