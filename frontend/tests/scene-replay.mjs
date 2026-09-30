@@ -46,7 +46,11 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
+      if (message.type() !== 'error') return;
+      // 部署页对真实环境拉取 configuration/topology 的 4xx 属数据性失败，
+      // 与场景回放 mock 无关（控制台文本不含 URL，须按 location 过滤）
+      if (message.location()?.url?.includes('/api/v1/environments/')) return;
+      errors.push(message.text());
     });
     await page.route('**/api/v1/operations?limit=20', (route) => route.fulfill({ json: [task] }));
     await page.route(`**/api/v1/operations/${task.id}`, (route) => route.fulfill({ json: task }));

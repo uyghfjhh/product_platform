@@ -227,6 +227,8 @@ export default function DeploymentPage({
           </Space>
           <Segmented
             size="middle"
+            // 窄视口下环境枚举个数多时允许横向滚动，不撑破 body 宽度
+            style={{ maxWidth: '100%', overflowX: 'auto' }}
             value={environment?.id}
             onChange={(val) => onSelectEnvironment?.(String(val))}
             options={environments.map((env) => {

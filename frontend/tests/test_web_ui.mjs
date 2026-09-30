@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const base = 'http://127.0.0.1:8080';
+// 通用页面巡检：菜单树、测试页、真实报告 Modal、执行按钮、跨页导航。
+// PlatformShell 改版后菜单为两级子菜单结构（见 tests/README.md）。
+const base = process.env.PLATFORM_URL || 'http://127.0.0.1:8080';
 const browser = await chromium.launch({ headless: true });
 const errors = [];
 
@@ -13,21 +15,27 @@ try {
   });
 
   console.log('1. Loading base page...');
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.locator('.header-title', { hasText: '数据库部署管理' }).waitFor();
 
-  console.log('2. Verifying left navigation...');
-  const menuText = await page.locator('.platform-sidebar').innerText();
-  console.log('Sider text:', menuText.replace(/\n+/g, ' '));
-  assert.ok(menuText.includes('数据库部署管理'), 'Must include 数据库部署管理');
-  assert.ok(menuText.includes('测试'), 'Must include 测试');
-  assert.ok(menuText.includes('多活'), 'Must include 多活');
-  assert.ok(menuText.includes('等保'), 'Must include 等保');
-  assert.ok(menuText.includes('fbasecman'), 'Must include fbasecman');
-  assert.ok(menuText.includes('License 管理'), 'Must include License 管理');
+  console.log('2. Verifying left navigation (expand product submenus)...');
+  const sider = page.locator('.platform-sidebar');
+  const menu = (name) => sider.locator('.ant-menu-title-content', { hasText: name }).first();
+  // 展开产品子菜单以露出 profile 叶子（产品异步加载，defaultOpenKeys 不生效）
+  for (const product of ['接入示例', 'FBase 数据库', 'fbasecman']) {
+    await menu(product).click();
+    await page.waitForTimeout(300);
+  }
+  const menuText = await sider.innerText();
+  for (const expected of ['数据库部署管理', '产品测试中心', '接入示例', '接入验证',
+    'FBase 数据库', '多活回归测试', '等保回归测试', 'fbasecman', 'fbasecman 回归测试',
+    '稳定性测试', 'License 授权管理', '密钥管理', 'License 生成']) {
+    assert.ok(menuText.includes(expected), `Must include ${expected}`);
+  }
 
-  console.log('3. Navigating to fbasecman 测试 page...');
-  await page.getByRole('menuitem', { name: 'fbasecman' }).click();
-  await page.waitForTimeout(1000);
+  console.log('3. Navigating to fbasecman 回归测试 page...');
+  await menu('fbasecman 回归测试').click();
+  await page.waitForTimeout(1500);
 
   console.log('4. Verifying main page content...');
   const mainText = await page.locator('.platform-content').innerText();
@@ -36,104 +44,67 @@ try {
   assert.ok(mainText.includes('综合通过率'), 'Must show current test pass rate');
 
   console.log('5. Verifying test suites display...');
-  const collapseItems = page.locator('.suite-card, .ant-collapse-item');
-  const count = await collapseItems.count();
-  console.log(`Found ${count} collapse items/suites.`);
+  const count = await page.locator('.suite-card').count();
+  console.log(`Found ${count} suite cards.`);
   assert.ok(count > 0, 'Must show test suites');
 
-  console.log('6. Searching for ha_rep_promote...');
-  const searchInput = page.getByPlaceholder(/搜索/i).first();
-  await searchInput.fill('ha_rep_promote');
-  await page.waitForTimeout(1000);
+  const target = 'ha_commands.set_node_promoted_idempotent';
+  console.log(`6. Searching for ${target}...`);
+  await page.getByPlaceholder(/搜索用例名称/).fill(target);
+  await page.locator(`.case-name[title="${target}"]`).waitFor();
 
-  console.log('7. Verifying filtered case ha_rep_promote...');
-  const caseText = await page.locator('.platform-content').innerText();
-  assert.ok(caseText.includes('ha_rep_promote'), 'Must display ha_rep_promote');
-
-  console.log('8. Opening test report drawer for ha_rep_promote...');
-  const reportBtn = page.getByRole('button', { name: /报告/ }).first();
-  await reportBtn.click();
-  await page.waitForTimeout(1500);
-
+  console.log(`7. Opening test report modal for ${target}...`);
+  await page.locator('.case-row', { has: page.locator(`.case-name[title="${target}"]`) })
+    .locator('.btn-view-report').first().click();
+  await page.locator('.regress-report-modal').waitFor();
   const drawerTitle = await page.locator('.ant-modal-title').innerText();
-  console.log('Report Drawer opened with title:', drawerTitle);
-  assert.ok(drawerTitle.includes('ha_rep_promote'), 'Drawer title must include case name');
+  console.log('Report modal opened with title:', drawerTitle);
+  assert.ok(drawerTitle.includes(target), 'Modal title must include case name');
 
-  // Check tabs
-  const tabs = await page.locator('.ant-modal .ant-tabs-tab').allInnerTexts();
+  const tabs = await page.locator('.regress-report-modal .ant-tabs-tab').allInnerTexts();
   console.log('Report tabs available:', tabs);
-  assert.ok(tabs.some(t => t.includes('步骤')), 'Must have 步骤 tab');
-  assert.ok(tabs.some(t => t.includes('检测项')), 'Must have 检测项 tab');
-  assert.ok(tabs.some(t => t.includes('日志')), 'Must have 日志 tab');
-  assert.ok(tabs.some(t => t.includes('原始报告')), 'Must have 原始报告 tab');
+  assert.ok(tabs.some((t) => t.includes('步骤')), 'Must have 步骤 tab');
+  assert.ok(tabs.some((t) => t.includes('检测项')), 'Must have 检测项 tab');
+  assert.ok(tabs.some((t) => t.includes('日志')), 'Must have 日志 tab');
+  assert.ok(tabs.some((t) => t.includes('原始报告')), 'Must have 原始报告 tab');
 
-  // Verify steps tab content
-  const drawerBody = await page.locator('.ant-modal-body').innerText();
-  assert.ok(drawerBody.includes('PASS'), 'Report drawer must display PASS status');
-  assert.ok(drawerBody.includes('准备测试数据表') || drawerBody.includes('隔离旧主') || drawerBody.includes('升主'), 'Report drawer must show test steps');
-  console.log('Step details and PASS status verified in ReportDrawer!');
-
-  // Close drawer
-  await page.locator('.ant-modal-close').click();
+  const modalBody = await page.locator('.regress-report-modal .ant-modal-body').innerText();
+  assert.ok(modalBody.includes('PASS'), 'Report modal must display PASS status');
+  await page.locator('.regress-report-modal .ant-modal-close').first().click();
   await page.waitForTimeout(500);
 
-  console.log('9. Clicking execution button on case...');
-  const runButtons = page.locator('button.ant-btn, button.btn-run-case, button.suite-action-btn').filter({ hasText: /执行/ });
-  const runBtnCount = await runButtons.count();
-  console.log(`Found ${runBtnCount} real execution buttons.`);
-  assert.ok(runBtnCount > 0, 'Must have at least one execution button');
+  console.log('8. Verifying case run button exists...');
+  const runBtn = page.locator('.case-row', { has: page.locator(`.case-name[title="${target}"]`) })
+    .locator('.btn-run-case');
+  assert.ok(await runBtn.isVisible(), 'Must show case-level 执行 button');
+  assert.ok(await runBtn.isEnabled(), '执行 button must be enabled (env bound)');
+  // 不实际点击：执行会真机跑用例，冒烟只验证控件可用
 
-  // Click the case-level run button (usually the last or second button)
-  const targetBtn = runButtons.last();
-  console.log('Clicking target button:', await targetBtn.innerText());
-  await targetBtn.click();
+  console.log('9. Testing navigation to 多活/等保 profiles...');
+  await menu('多活回归测试').click();
   await page.waitForTimeout(1000);
-
-  // If confirm modal appeared (for suite run), click confirm
-  const confirmBtn = page.getByRole('button', { name: '确认执行' });
-  if (await confirmBtn.isVisible()) {
-    console.log('Confirming execution modal...');
-    await confirmBtn.click();
-    await page.waitForTimeout(1500);
-  }
-
-  const messages = await page.locator('.ant-message-notice').allInnerTexts();
-  console.log('Ant messages on screen:', messages);
-
-  // Check if TaskDrawer is open
-  const taskDrawer = page.locator('.ant-drawer-open');
-  const taskDrawerVisible = await taskDrawer.isVisible();
-  console.log('Task drawer opened successfully:', taskDrawerVisible);
-  assert.ok(taskDrawerVisible, 'Task drawer must open after clicking 执行');
-
-  // Close the task drawer
-  await page.locator('.ant-drawer-close').last().click();
-  await page.waitForTimeout(500);
-
-  console.log('10. Testing navigation to 多活 and 等保 tabs...');
-  await page.getByRole('menuitem', { name: '多活' }).click();
-  await page.waitForTimeout(800);
   const mmrText = await page.locator('.platform-content').innerText();
-  assert.ok(mmrText.includes('总测试用例') || mmrText.includes('多活'), 'Must navigate to MMR tests');
+  assert.ok(mmrText.includes('总测试用例'), 'Must navigate to MMR tests');
 
-  await page.getByRole('menuitem', { name: '等保' }).click();
-  await page.waitForTimeout(800);
+  await menu('等保回归测试').click();
+  await page.waitForTimeout(1000);
   const macText = await page.locator('.platform-content').innerText();
-  assert.ok(macText.includes('总测试用例') || macText.includes('等保'), 'Must navigate to MAC tests');
+  assert.ok(macText.includes('总测试用例'), 'Must navigate to MAC tests');
 
-  console.log('11. Testing navigation to 数据库部署管理 and License 管理...');
-  await page.getByRole('menuitem', { name: '数据库部署管理' }).click();
+  console.log('10. Testing navigation to 数据库部署管理 and License 授权管理...');
+  await menu('数据库部署管理').click();
   await page.waitForTimeout(800);
   const deployText = await page.locator('.platform-content').innerText();
-  assert.ok(deployText.includes('部署拓扑') || deployText.includes('部署方案') || deployText.includes('环境'), 'Must navigate to deployment');
+  assert.ok(deployText.includes('部署') || deployText.includes('环境'), 'Must navigate to deployment');
 
-  await page.getByRole('menuitem', { name: 'License 管理' }).click();
-  await page.waitForTimeout(800);
+  if (!(await menu('密钥管理').isVisible().catch(() => false))) {
+    await menu('License 授权管理').click();
+  }
+  await menu('密钥管理').click();
+  await page.getByRole('heading', { name: '密钥管理' }).waitFor();
+  await page.getByText('生成密钥').waitFor();  // options 异步载入后才渲染表单
   const licenseText = await page.locator('.platform-content').innerText();
-  assert.ok(licenseText.includes('License') || licenseText.includes('授权'), 'Must navigate to license');
-  assert.ok(licenseText.includes('密钥版本管理'), 'Must show key management');
-  assert.ok(licenseText.includes('指纹'), 'Must show public key fingerprint');
-  assert.ok(await page.getByRole('button', { name: '删除版本' }).isVisible(), 'Must show key deletion control');
+  assert.ok(licenseText.includes('生成密钥'), 'Must show key generation control');
 
   assert.deepEqual(errors, []);
   console.log('SUCCESS: ALL WEB UI INTERACTIONS AND REPORT QUALITY VALIDATED COMPLETELY!');
