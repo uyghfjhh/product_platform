@@ -3,26 +3,78 @@
 import glob
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import socket
 import subprocess
 import sys
+from pathlib import Path
 
 
 def inspect_installation(home, sources):
     root = Path(home)
-    tools = {name: (root / "bin" / name).is_file() and os.access(root / "bin" / name, os.X_OK)
-             for name in ("postgres", "pg_ctl", "psql", "pg_basebackup", "pg_config")}
+    tools = {
+        name: (root / "bin" / name).is_file()
+        and os.access(root / "bin" / name, os.X_OK)
+        for name in ("postgres", "pg_ctl", "psql", "pg_basebackup", "pg_config")
+    }
     version = ""
     if tools["postgres"]:
-        result = subprocess.run([str(root / "bin/postgres"), "--version"], capture_output=True, text=True, timeout=3)
+        result = subprocess.run(
+            [str(root / "bin/postgres"), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
         if result.returncode == 0:
             version = result.stdout.strip()
-    return {"home": str(root), "sources": sources, "version": version, "tools": tools,
-            "complete": all(tools.values()) and bool(version)}
+    versions = {}
+    for name, exists in tools.items():
+        if exists:
+            output = subprocess.run(
+                [str(root / "bin" / name), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            match = (
+                re.search(r"(\d+)\.\d+", output.stdout)
+                if output.returncode == 0
+                else None
+            )
+            versions[name] = match.group(1) if match else None
+    complete = (
+        all(tools.values())
+        and bool(version)
+        and len(set(versions.values())) == 1
+        and None not in versions.values()
+    )
+    locations = {}
+    if tools["pg_config"]:
+        for field, flag in (
+            ("bin_dir", "--bindir"),
+            ("shared_dir", "--sharedir"),
+            ("library_dir", "--pkglibdir"),
+        ):
+            output = subprocess.run(
+                [str(root / "bin/pg_config"), flag],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            value = output.stdout.strip()
+            if output.returncode == 0 and value.startswith("/"):
+                locations[field] = value
+    return {
+        "home": str(root),
+        "sources": sources,
+        "version": version,
+        "tools": tools,
+        "tool_major_versions": versions,
+        "complete": complete,
+        **locations,
+    }
 
 
 def run(request):
@@ -40,7 +92,11 @@ def run(request):
         binary = shutil.which("postgres")
         if binary:
             candidate(binary, "PATH")
-        for pattern in ("/usr/local/*/bin/postgres", "/opt/*/bin/postgres", "/usr/lib/postgresql/*/bin/postgres"):
+        for pattern in (
+            "/usr/local/*/bin/postgres",
+            "/opt/*/bin/postgres",
+            "/usr/lib/postgresql/*/bin/postgres",
+        ):
             for binary in glob.glob(pattern)[:16]:
                 candidate(binary, "常见安装目录")
         for path in glob.glob("/proc/[0-9]*/exe"):
@@ -61,34 +117,80 @@ def run(request):
             try:
                 installations.append(inspect_installation(home, sorted(set(sources))))
             except (OSError, subprocess.TimeoutExpired) as exc:
-                installations.append({"home": home, "sources": sources, "version": "", "complete": False, "error": str(exc)})
+                installations.append(
+                    {
+                        "home": home,
+                        "sources": sources,
+                        "version": "",
+                        "complete": False,
+                        "error": str(exc),
+                    }
+                )
         return {"installations": installations}
 
     checks = []
     install = request["installation"]
     installation = inspect_installation(install["home"], ["当前方案"])
-    checks.append({"title": "数据库工具完整性", "ok": installation["complete"], "detail": installation})
+    checks.append(
+        {
+            "title": "数据库工具完整性",
+            "ok": installation["complete"],
+            "detail": installation,
+        }
+    )
     root = Path(install["home"])
     for plugin in install.get("plugins", {}):
         required = install["plugins"][plugin]
         extension = required.get("extension", plugin)
         library = required.get("preload_library")
-        available = (root / "share/extension" / (extension + ".control")).is_file()
+        available = (
+            Path(installation.get("shared_dir", str(root / "share")))
+            / "extension"
+            / (extension + ".control")
+        ).is_file()
         if library:
-            available = available and (root / "lib" / (library + ".so")).is_file()
+            available = (
+                available
+                and (
+                    Path(installation.get("library_dir", str(root / "lib")))
+                    / (library + ".so")
+                ).is_file()
+            )
         checks.append({"title": "扩展 " + plugin, "ok": available, "detail": str(root)})
     license_file = (install.get("license") or {}).get("source_file")
     if license_file:
-        checks.append({"title": "License 文件", "ok": Path(license_file).is_file() and os.access(license_file, os.R_OK), "detail": license_file})
+        checks.append(
+            {
+                "title": "License 文件",
+                "ok": Path(license_file).is_file() and os.access(license_file, os.R_OK),
+                "detail": license_file,
+            }
+        )
     match = re.search(r"(\d+)\.\d+", installation["version"])
     major = match.group(1) if match else None
     for node in request["nodes"]:
         path = Path(node["data_dir"])
-        nonempty = path.exists() and (not path.is_dir() or next(path.iterdir(), None) is not None)
-        pg_version = (path / "PG_VERSION").read_text().strip() if (path / "PG_VERSION").is_file() else None
+        nonempty = path.exists() and (
+            not path.is_dir() or next(path.iterdir(), None) is not None
+        )
+        pg_version = (
+            (path / "PG_VERSION").read_text().strip()
+            if (path / "PG_VERSION").is_file()
+            else None
+        )
         existing = request["mode"] != "new"
-        checks.append({"title": node["name"] + " 数据目录", "ok": bool(pg_version == major) if existing else not nonempty,
-                       "detail": {"path": str(path), "canonical_path": str(path.resolve()), "nonempty": nonempty, "pg_version": pg_version}})
+        checks.append(
+            {
+                "title": node["name"] + " 数据目录",
+                "ok": bool(pg_version == major) if existing else not nonempty,
+                "detail": {
+                    "path": str(path),
+                    "canonical_path": str(path.resolve()),
+                    "nonempty": nonempty,
+                    "pg_version": pg_version,
+                },
+            }
+        )
         if not existing:
             probe = socket.socket()
             try:
@@ -98,11 +200,23 @@ def run(request):
                 ok, detail = False, str(exc)
             finally:
                 probe.close()
-            checks.append({"title": node["name"] + " 端口 " + str(node["port"]), "ok": ok, "detail": detail})
+            checks.append(
+                {
+                    "title": node["name"] + " 端口 " + str(node["port"]),
+                    "ok": ok,
+                    "detail": detail,
+                }
+            )
             parent = path.parent
             while not parent.exists() and parent != parent.parent:
                 parent = parent.parent
-            checks.append({"title": node["name"] + " 目录权限", "ok": parent.is_dir() and os.access(parent, os.W_OK | os.X_OK), "detail": str(parent)})
+            checks.append(
+                {
+                    "title": node["name"] + " 目录权限",
+                    "ok": parent.is_dir() and os.access(parent, os.W_OK | os.X_OK),
+                    "detail": str(parent),
+                }
+            )
     return {"checks": checks}
 
 

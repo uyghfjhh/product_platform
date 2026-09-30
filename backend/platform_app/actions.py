@@ -338,6 +338,11 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
                 except Exception:
                     emit_action(store, task_id, environment, action.id, task["target"], "finished")
                     raise
+                if success and parameters.get("_deployment_snapshot") and action.id == "deployment.create":
+                    store.add_event(task_id, "step.started", {"title": "部署后健康验收"})
+                    health_command, health_cwd = command_for_task(settings, environment, "deployment.health", task["target"], {})
+                    success, health_reason = _run_command(store, task_id, health_command, health_cwd, False)
+                    reason = "部署及健康验收完成" if success else "部署命令完成，但健康验收失败：" + health_reason
                 emit_action(store, task_id, environment, action.id, task["target"], "finished", success)
                 after_command = getattr(provider, "after_command", None)
                 if callable(after_command):

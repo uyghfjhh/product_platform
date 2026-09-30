@@ -44,15 +44,17 @@ try {
   await page.getByText('浏览器验收环境').first().waitFor();
   await page.getByText('浏览器验收环境').first().click();
 
-  // 部署向导 → 生成 pgcluster 回归部署方案 → 14 节点拓扑
-  // 必填项显式填写：表单默认值依赖 profile 接口异步预取，点快了会空值校验失败
-  await page.getByRole('button', { name: '部署向导' }).click();
-  await page.getByText('生成 pgcluster 回归部署方案').waitFor();
-  await page.locator('.ant-form-item', { hasText: '远端 PGDATA' }).locator('input')
-    .fill('/home/postgres/fbasecman_regress_v2_mmr/browser-cman');
-  await page.locator('.ant-form-item', { hasText: 'License 文件' }).locator('input')
-    .fill('/home/postgres/license/license.dat');
-  await page.getByRole('button', { name: '生成并校验' }).click();
+  // Existing product profile API remains compatible; seed only configuration,
+  // then verify the new workbench can reopen it without database operations.
+  const profileResponse = await page.request.post(`${base}/api/v1/environments/${environment.id}/fbasecman-profile`, {
+    data: { mmr1_port: environment.port, data_root: '/home/postgres/fbasecman_regress_v2_mmr/browser-cman',
+      license_file: '/home/postgres/license/license.dat' },
+  });
+  assert.equal(profileResponse.status(), 200, await profileResponse.text());
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: '配置部署方案', exact: true }).click();
+  await page.getByText('部署方案工作台', { exact: true }).waitFor();
+  await page.getByRole('dialog').locator('.ant-modal-close').click();
   await page.locator('.topo-node').first().waitFor({ timeout: 20000 });
   assert.equal(await page.locator('.topo-node').count(), 14);
   await page.locator('.topo-node').first().click();

@@ -182,6 +182,9 @@ class FbaseProvider:
     def compile_deployment(self, settings, spec, environment_id):
         return importlib.import_module("products.fbase-database.deployment.templates").compile_template(settings, spec, environment_id)
 
+    def deployment_import_files(self, settings, facts, target):
+        return importlib.import_module("products.fbase-database.deployment.templates").import_files(settings, facts, target)
+
     def validate_target(self, settings, target):
         targets = {case["target"] for case in exported_cases()}
         return target == "all" or target in targets or any(item.startswith(target + ".") for item in targets)
@@ -283,7 +286,9 @@ class FbaseProvider:
                         for name in ("mmr1", "mmr2", "mmr3") if name in primary
                     }
                 else:
-                    primary = [node for node in topology["nodes"] if node.get("role") == "primary"]
+                    publishers = {edge["source"] for edge in topology.get("edges", []) if edge.get("kind") == "logical"}
+                    primary = [node for node in topology["nodes"] if node.get("role") == "primary"
+                               and (not publishers or node["id"] in publishers)]
                     if len(primary) != 1:
                         raise ValueError("等保测试需要唯一的可写主节点")
                     nodes = {"primary": {"host": primary[0]["host"], "port": primary[0]["port"]}}

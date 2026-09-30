@@ -13,7 +13,11 @@ class NodeOverride(BaseModel):
     @field_validator("data_dir")
     @classmethod
     def absolute_path(cls, value):
-        if not value.startswith("/") or ".." in PurePosixPath(value).parts or value == "/":
+        if (
+            not value.startswith("/")
+            or ".." in PurePosixPath(value).parts
+            or value == "/"
+        ):
             raise ValueError("需要非根绝对路径，不能包含 ..")
         return value.rstrip("/")
 

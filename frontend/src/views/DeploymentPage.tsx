@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Segmented, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Drawer, Dropdown, Empty, Segmented, Space, Tag, Typography } from 'antd';
 import {
   CloudServerOutlined, ReloadOutlined, CodeOutlined, CopyOutlined, MoreOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
@@ -8,6 +8,7 @@ import { api, operationRequest, type Action, type Environment, type Product } fr
 import type { TopologyData, TopologyNode } from '../components/ThreeTopologyView';
 import SharedDeploymentCanvas from '../components/DeploymentCanvas';
 import EnvironmentModal from '../components/EnvironmentModal';
+import DeploymentWizard from '../components/DeploymentWizard';
 import SqlWorkbenchDrawer from '../components/SqlWorkbenchDrawer';
 import { deploymentAdapter, deploymentFrontend } from '../products/deploymentRegistry';
 
@@ -43,10 +44,10 @@ export default function DeploymentPage({
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
   const [sqlNode, setSqlNode] = useState<TopologyNode | null>(null);
   const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardEnvironment, setWizardEnvironment] = useState<Environment | undefined>();
   const [envEditing, setEnvEditing] = useState<Environment | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [profileForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   // adapter 工厂每次调用返回新对象——必须 memo，否则下方 effect 依赖每轮渲染都变，
   // 造成 topology/status 无限 refetch 且 setObserved(null) 把已取回的状态清空。
@@ -90,39 +91,6 @@ export default function DeploymentPage({
     const timer = window.setInterval(() => void refreshStatus(true), 15000);
     return () => window.clearInterval(timer);
   }, [environment?.id, environment?.deployment_config]);
-
-  async function createProfile() {
-    if (!environment) return;
-    try {
-      const values = await profileForm.validateFields();
-      const saved = await api<Profile>(productAdapter.profilePath!(environment.id), {
-        method: 'POST', body: JSON.stringify(values),
-      });
-      setProfile(saved);
-      setProfileOpen(false);
-      await reload();
-      message.success('已生成并校验 pgcluster 部署方案');
-    } catch (error) {
-      if (error instanceof Error) message.error(error.message);
-    }
-  }
-
-  function openProfileWizard() {
-    if (!environment) return;
-    profileForm.setFieldsValue({
-      // 默认值从当前环境派生：端口取环境登记端口，License 取部署配置同目录或留空必填。
-      mmr1_port: environment.port,
-      data_root: profile?.defaults?.data_root
-        ? `${profile.defaults.data_root}/${environment.id}`
-        : '',
-      license_file: environment.deployment_config
-        ? `${environment.deployment_config.replace(/\/[^/]*$/, '')}/license.dat`
-        : (profile?.defaults?.license_file ?? ''),
-    });
-    setProfileOpen(true);
-  }
-
-
 
   async function run(action: Action, target?: string) {
     if (!environment) return;
@@ -184,7 +152,9 @@ export default function DeploymentPage({
               </Typography.Text>
             </div>
           </div>
-          <Space size={8}>
+          <Space size={8} wrap>
+            <Button type="primary" size="small" onClick={() => { setWizardEnvironment(undefined); setWizardOpen(true); }}>新建部署方案</Button>
+            {environment && <Button size="small" onClick={() => { setWizardEnvironment(environment); setWizardOpen(true); }}>配置部署方案</Button>}
             <Button size="small" onClick={() => { setEnvEditing(null); setEnvModalOpen(true); }}>
               新增环境
             </Button>
@@ -222,18 +192,18 @@ export default function DeploymentPage({
         <section className="cman-deploy-toolbar" aria-label="集群部署操作" style={{ marginBottom: 16 }}>
           <div className="cman-deploy-actions">
             {([
-              ['create', '⚡ 一键部署'], ['start', '▶ 启动'], ['stop', '⏹ 停止'],
+              ['create', '部署方案'], ['start', '▶ 启动'], ['stop', '⏹ 停止'],
               ['restart', '🔄 重启'],
             ] as const).map(([name, label]) => {
               const action = actions.find((item) => item.id === `deployment.${name}`);
               return <Button key={name} type={name === 'create' ? 'primary' : 'default'}
                 danger={name === 'stop'} disabled={!action || loading}
-                onClick={() => action && void run(action)}>{label}</Button>;
+                onClick={() => { if (name === 'create') { setWizardEnvironment(environment); setWizardOpen(true); } else if (action) void run(action); }}>{label}</Button>;
             })}
           </div>
           <div className="cman-deploy-actions">
             {productAdapter.hasProfileWizard && <>
-              <Button onClick={openProfileWizard}>📐 部署向导</Button>
+              <Button onClick={() => { setWizardEnvironment(environment); setWizardOpen(true); }}>部署向导</Button>
               <Button disabled={!profile?.generated || loading} title={profile?.context_ready ? '测试夹具已生成，可重新准备' : '部署并启动集群后准备测试夹具'}
                 onClick={() => productAdapter.fixtureAction && void run(productAdapter.fixtureAction)}>
                 🧪 准备测试夹具
@@ -253,7 +223,7 @@ export default function DeploymentPage({
         </section>
 
         {!environment.deployment_config ? (
-          <Alert type="info" showIcon message="该环境尚未关联部署配置" description="编辑当前环境并关联现有部署配置后，即可查看拓扑和管理集群。" />
+          <Alert type="info" showIcon message="该环境尚未关联部署配置" description="点击“配置部署方案”生成或导入配置，系统会自动关联当前环境。" />
         ) : <>
           <section className="work-section cman-topology-section deployment-topology">
             <div className="deployment-topology-heading">
@@ -273,30 +243,12 @@ export default function DeploymentPage({
               const Canvas = ProductCanvas ?? SharedDeploymentCanvas;
               return <Canvas topology={topology} observed={observed}
                 onSelectNode={setSelectedNode} onOpenSql={handleOpenSqlWorkbench}
-                onDeploy={() => {
-                  const action = actions.find((item) => item.id === 'deployment.create');
-                  if (action) void run(action);
-                }} />;
+                onDeploy={() => { setWizardEnvironment(environment); setWizardOpen(true); }} />;
             })() : <Alert type="warning" showIcon message="拓扑暂不可显示"
               description={topologyError || '检查部署配置和目标名称'} />}
           </section>
         </>}
       </>}
-
-      {/* Profile Form Modal */}
-      <Modal title="生成 pgcluster 回归部署方案" open={profileOpen} onOk={() => void createProfile()} onCancel={() => setProfileOpen(false)} okText="生成并校验" width={570} destroyOnHidden>
-        <Form form={profileForm} layout="vertical">
-          <Form.Item label="MMR1 主节点起始端口" name="mmr1_port" rules={[{ required: true }]} extra="系统将基于此端口依次自动规划全部 14 个主从节点端口">
-            <InputNumber min={1024} max={65500} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="远端 PGDATA 数据存储根目录" name="data_root" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="远端 License 文件绝对路径" name="license_file" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
 
       {/* Node Inspector Drawer */}
       <Drawer
@@ -415,6 +367,8 @@ export default function DeploymentPage({
         node={sqlNode}
         onClose={() => setSqlNode(null)}
       />
+      <DeploymentWizard open={wizardOpen} environment={wizardEnvironment} onClose={() => setWizardOpen(false)}
+        openTask={openTask} onSaved={async (id) => { await reload(); onSelectEnvironment?.(id); }} />
       <EnvironmentModal
         open={envModalOpen}
         editing={envEditing}
