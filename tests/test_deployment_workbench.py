@@ -14,6 +14,7 @@ from platform_app.deployment.probe_agent import run as probe_run
 from platform_app.deployment.workbench import (
     Workbench,
     compile_spec,
+    inspect_plan,
     worker_environment,
 )
 from test_api import settings_for
@@ -896,6 +897,59 @@ def test_diff_plan_structural_and_parameter_changes_blocked(workbench, tmp_path)
     plan = _import_plan(client, spec, "fbase-edit", edited)
     assert plan["mode"] == "diff" and not plan["executable"]
     assert any(op["kind"] == "parameters" for op in plan["operations"])
+
+
+def test_partially_applied_plan_resumes_via_managed_markers(workbench, tmp_path):
+    client, service, spec, queued = workbench
+    draft, plan = create_plan(workbench, spec)
+    assert plan["ready"] and plan["action"] == "deployment.create"
+    # 第一次 apply：任务排队后被标记失败，模拟 create 中途失败
+    applied = client.post(
+        f"/api/v1/deployment/plans/{plan['id']}/apply",
+        json={"acknowledge_change": True},
+    )
+    assert applied.status_code == 202, applied.text
+    first_task = applied.json()["id"]
+    service.store.transition_task(first_task, ("QUEUED",), "RUNNING")
+    service.store.finish_task(first_task, ("RUNNING",), "FAILED", "simulated")
+    # 部分节点已被 pgcluster 创建（受管标记 + PG_VERSION）
+    facts = client.get(f"/api/v1/deployment/plans/{plan['id']}").json()["facts"]
+    partial = facts["nodes"][0]
+    path = Path(partial["data_dir"])
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "PG_VERSION").write_text("15")
+    (path / ".pgcluster-managed").write_text('{"node": "%s"}' % partial["name"])
+    # 重新检查：受管节点按既有口径通过，其余仍要求空目录
+    fresh = inspect_plan(service.plan(plan["id"]))
+    assert all(check["ok"] for check in fresh), fresh
+    # 重放同一计划 → 新的尝试任务而非去重返回旧任务
+    replayed = client.post(
+        f"/api/v1/deployment/plans/{plan['id']}/apply",
+        json={"acknowledge_change": True},
+    )
+    assert replayed.status_code == 202, replayed.text
+    assert replayed.json()["id"] != first_task
+    assert queued  # tasks were enqueued
+    detail = client.get(f"/api/v1/deployment/plans/{plan['id']}").json()
+    assert len(detail["attempts"]) == 2
+
+
+def test_foreign_managed_dir_does_not_count_as_resume_checkpoint(workbench):
+    _, service, spec, _ = workbench
+    draft, plan = create_plan(workbench, spec)
+    facts = service.plan(plan["id"])["facts"]
+    node = facts["nodes"][0]
+    path = Path(node["data_dir"])
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "PG_VERSION").write_text("15")
+    # 标记声明属于别的节点——不算本计划的断点
+    (path / ".pgcluster-managed").write_text('{"node": "other_cluster_node"}')
+    checks = [
+        check
+        for check in inspect_plan(service.plan(plan["id"]))
+        if check["title"].startswith(node["name"] + " 数据目录")
+    ]
+    assert checks and not checks[0]["ok"]
 
 
 def test_preload_library_file_must_exist(workbench):

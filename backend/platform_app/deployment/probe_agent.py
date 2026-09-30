@@ -178,7 +178,18 @@ def run(request):
             if (path / "PG_VERSION").is_file()
             else None
         )
-        existing = node.get("existing", request["mode"] != "new")
+        # .pgcluster-managed 是引擎写下的受管断点：部分完成的部署可重放幂等
+        # create 恢复，受管节点按既有实例口径校验而不是当作待创建空目录。
+        # 标记内容为 {"node": 名称}，归属不匹配时按未受管处理。
+        managed = False
+        marker = path / ".pgcluster-managed"
+        if marker.is_file():
+            try:
+                claim = json.loads(marker.read_text() or "{}").get("node")
+            except (OSError, ValueError):
+                claim = None
+            managed = claim in (None, node["name"])
+        existing = managed or node.get("existing", request["mode"] != "new")
         checks.append(
             {
                 "title": node["name"] + " 数据目录",
@@ -187,6 +198,7 @@ def run(request):
                     "path": str(path),
                     "canonical_path": str(path.resolve()),
                     "nonempty": nonempty,
+                    "managed": managed,
                     "pg_version": pg_version,
                 },
             }

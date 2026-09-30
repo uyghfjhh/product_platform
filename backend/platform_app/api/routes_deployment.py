@@ -99,7 +99,24 @@ def register(app, settings, store):
 
     @app.get("/api/v1/deployment/plans/{plan_id}")
     def plan(plan_id: str):
-        return call(service.plan, plan_id)
+        row = call(service.plan, plan_id)
+        attempts = []
+        for task in store.list_tasks(500):
+            try:
+                snapshot = json.loads(task["parameters"]).get("_deployment_snapshot")
+            except (KeyError, ValueError):
+                continue
+            if snapshot and snapshot.get("plan_id") == plan_id:
+                attempts.append(
+                    {
+                        "task_id": task["id"],
+                        "status": task["status"],
+                        "created_at": task["created_at"],
+                        "finished_at": task.get("finished_at"),
+                    }
+                )
+        row["attempts"] = attempts
+        return row
 
     @app.get("/api/v1/deployment/plans/{plan_id}/files/{name}")
     def plan_file(plan_id: str, name: str):
@@ -125,6 +142,17 @@ def register(app, settings, store):
         if row["action"] == "deployment.create" and not item.acknowledge_change:
             raise HTTPException(422, "请确认此方案将初始化并部署新实例")
         call(service.associate, plan_id)
+        # 同一计划可重放恢复：每次 apply 是独立尝试；仍在进行中的重复提交由
+        # associate 的活动任务检查拦截，已终结的尝试不阻塞恢复重放。
+        base_key = "deployment-plan:" + plan_id
+        prior = [
+            task
+            for task in store.list_tasks(500)
+            if (task.get("submission_key") or "").startswith(base_key)
+        ]
+        submission_key = (
+            base_key if not prior else f"{base_key}:attempt-{len(prior) + 1}"
+        )
         return app.state.start_operation(
             OperationInput(
                 environment_id=row["environment_id"],
@@ -132,6 +160,6 @@ def register(app, settings, store):
                 target=row["target"],
                 acknowledge_change=item.acknowledge_change,
                 deployment_plan_id=plan_id,
-                submission_key="deployment-plan:" + plan_id,
+                submission_key=submission_key,
             )
         )

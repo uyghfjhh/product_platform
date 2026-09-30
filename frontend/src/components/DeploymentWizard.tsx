@@ -14,6 +14,7 @@ type Draft = { id: string; revision: number; spec: Spec };
 type Check = { title: string; host: string; ok: boolean; detail: unknown };
 type Plan = { id: string; ready: boolean; checks: Check[]; target: string; files: Record<string, string>;
   action: string | null; mode?: string; executable?: boolean;
+  attempts?: Array<{ task_id: string; status: string; created_at: string }>;
   limitations: string[]; operations: Array<Node & { node: string; operation: string; kind?: string; executable?: boolean }> };
 type Installation = { home: string; version: string; complete: boolean; sources: string[]; error?: string };
 type FormValues = Omit<Spec, 'parameters' | 'nodes'> & { template_key: string; parameters_text: string; probe_data_dir?: string };
@@ -236,6 +237,11 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         {Object.keys(plan.files).map((name) => <Button key={name} href={`/api/v1/deployment/plans/${plan.id}/files/${encodeURIComponent(name)}`}>下载 {name}</Button>)}</Space>
       {preview && <pre className="raw-report" style={{ maxHeight: 300, overflow: 'auto' }}>{preview}</pre>}
       {plan.action === 'deployment.create' && <div style={{ marginTop: 16 }}><Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}>{plan.mode === 'diff' ? '确认按上述方案在既有集群上新增节点，并在完成后进行健康验收' : '确认按上述方案初始化新实例，并在完成后进行健康验收'}</Checkbox></div>}
+      {Boolean(plan.attempts?.length) && (
+        <Alert type="warning" style={{ marginTop: 12 }}
+          message={`该计划已有 ${plan.attempts!.length} 次执行尝试；已受管节点会按断点幂等跳过`}
+          description={<Space wrap>{plan.attempts!.map((attempt) => <Tag key={attempt.task_id} color={attempt.status === 'SUCCEEDED' ? 'success' : attempt.status === 'FAILED' ? 'error' : 'processing'}>{attempt.status}</Tag>)}</Space>} />
+      )}
     </>}
     <Space wrap style={{ marginTop: 24 }}>
       <Button disabled={busy || step === 0} onClick={() => { setStep((prev) => prev - 1); setPlan(null); setConfirmed(false); }}>上一步</Button>
