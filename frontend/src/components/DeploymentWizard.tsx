@@ -12,7 +12,8 @@ type Spec = {
 type Draft = { id: string; revision: number; spec: Spec };
 type Check = { title: string; host: string; ok: boolean; detail: unknown };
 type Plan = { id: string; ready: boolean; checks: Check[]; target: string; files: Record<string, string>;
-  action: string; limitations: string[]; operations: Array<Node & { node: string; operation: string }> };
+  action: string | null; mode?: string; executable?: boolean;
+  limitations: string[]; operations: Array<Node & { node: string; operation: string; kind?: string; executable?: boolean }> };
 type Installation = { home: string; version: string; complete: boolean; sources: string[]; error?: string };
 type FormValues = Omit<Spec, 'parameters' | 'nodes'> & { template_key: string; parameters_text: string; probe_data_dir?: string };
 
@@ -196,22 +197,31 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         { title: '结果', render: (_, check) => <Tag color={check.ok ? 'success' : 'error'}>{check.ok ? '通过' : '失败'}</Tag> },
         { title: '详情', render: (_, check) => <Typography.Text style={{ overflowWrap: 'anywhere' }}>{typeof check.detail === 'string' ? check.detail : JSON.stringify(check.detail)}</Typography.Text> },
       ]} />
+      {plan.mode === 'diff' && (
+        <Alert
+          type={plan.executable ? 'warning' : 'error'}
+          message={plan.executable ? '集群差异计划：将向既有集群新增节点' : '差异包含暂不支持自动执行的操作，请调整方案'}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Typography.Title level={5}>操作预览 · {plan.target}</Typography.Title>
       <Table rowKey="node" size="small" pagination={false} dataSource={plan.operations} scroll={{ x: 650 }} columns={[
+        ...(plan.mode === 'diff' ? [{ title: '类型', render: (_: unknown, op: { kind?: string }) => <Tag>{({ add_standby: '扩容', add_node: '新增', remove_node: '缩容', change_node: '变更', parameters: '参数', topology: '拓扑' } as Record<string, string>)[op.kind || ''] || '操作'}</Tag> }] : []),
         { title: '节点', dataIndex: 'node' }, { title: '端口', dataIndex: 'port' }, { title: '数据目录', dataIndex: 'data_dir' }, { title: '将执行', dataIndex: 'operation' },
+        ...(plan.mode === 'diff' ? [{ title: '可执行', render: (_: unknown, op: { executable?: boolean }) => <Tag color={op.executable ? 'success' : 'default'}>{op.executable ? '是' : '暂不支持'}</Tag> }] : []),
       ]} />
       <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>{plan.limitations.join('；')}</Typography.Paragraph>
       <Space wrap><Button onClick={() => void perform(previewFiles)}>查看生成 YAML</Button>
         {Object.keys(plan.files).map((name) => <Button key={name} href={`/api/v1/deployment/plans/${plan.id}/files/${encodeURIComponent(name)}`}>下载 {name}</Button>)}</Space>
       {preview && <pre className="raw-report" style={{ maxHeight: 300, overflow: 'auto' }}>{preview}</pre>}
-      {plan.action === 'deployment.create' && <div style={{ marginTop: 16 }}><Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}>确认按上述方案初始化新实例，并在完成后进行健康验收</Checkbox></div>}
+      {plan.action === 'deployment.create' && <div style={{ marginTop: 16 }}><Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}>{plan.mode === 'diff' ? '确认按上述方案在既有集群上新增节点，并在完成后进行健康验收' : '确认按上述方案初始化新实例，并在完成后进行健康验收'}</Checkbox></div>}
     </>}
     <Space wrap style={{ marginTop: 24 }}>
       <Button disabled={busy || step === 0} onClick={() => { setStep((prev) => prev - 1); setPlan(null); setConfirmed(false); }}>上一步</Button>
       {step < 3 && <Button disabled={busy} onClick={() => void perform(async () => { await save(); message.success('草稿已保存'); })}>保存草稿</Button>}
       {step < 3 ? <Button type="primary" loading={busy} onClick={() => void perform(next)}>{step === 2 ? '检查并生成部署计划' : '下一步'}</Button> : <>
-        <Button disabled={!plan?.ready || busy} onClick={() => void perform(() => apply(false))}>仅关联环境</Button>
-        <Button type="primary" loading={busy} disabled={!plan?.ready || (plan?.action === 'deployment.create' && !confirmed)} onClick={() => void perform(() => apply(true))}>{plan?.action === 'deployment.create' ? '按计划部署并验收' : '接管并检查健康'}</Button>
+        <Button disabled={!plan?.ready || plan?.executable === false || busy} onClick={() => void perform(() => apply(false))}>仅关联环境</Button>
+        <Button type="primary" loading={busy} disabled={!plan?.ready || plan?.executable === false || (plan?.action === 'deployment.create' && !confirmed)} onClick={() => void perform(() => apply(true))}>{plan?.action === 'deployment.create' ? '按计划部署并验收' : '接管并检查健康'}</Button>
       </>}
     </Space>
   </Modal>;

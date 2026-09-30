@@ -471,7 +471,7 @@ def _register_imported_environment(service, client, config, environment_id):
     return path
 
 
-def test_associate_invalidates_stale_test_context(workbench, tmp_path):
+def test_drifted_import_is_blocked_and_context_preserved(workbench, tmp_path):
     client, service, spec, _ = workbench
     config, _ = _cman_compiled(service, spec, tmp_path, 45680)
     _register_imported_environment(service, client, config, "cman-imported")
@@ -486,7 +486,8 @@ def test_associate_invalidates_stale_test_context(workbench, tmp_path):
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("stale identifiers")
     client.post("/api/v1/environments/cman-imported/deployment-draft")
-    # 把草稿里的拓扑改到另一组端口——导入的是不同集群，旧上下文必须作废。
+    # 把草稿里的拓扑改到另一组端口——差异计划会如实列出，但不可执行，
+    # 不允许把平台无法落地的配置发布为环境当前配置。
     moved = dict(config)
     moved["instances"] = dict(config["instances"])
     moved["instances"]["test_mmr1"] = {
@@ -505,7 +506,60 @@ def test_associate_invalidates_stale_test_context(workbench, tmp_path):
     result = client.post("/api/v1/deployment/drafts/cman-imported/plan")
     assert result.status_code == 200, result.text
     plan = result.json()
+    assert plan["mode"] == "diff" and not plan["executable"]
     assert plan["ready"], plan["checks"]
+    assert (
+        client.post(f"/api/v1/deployment/plans/{plan['id']}/associate").status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/api/v1/deployment/plans/{plan['id']}/apply",
+            json={"acknowledge_change": True},
+        ).status_code
+        == 422
+    )
+    # 未发布任何变更，旧回归上下文保持有效。
+    assert stale.read_text() == "stale identifiers"
+
+
+def test_associate_invalidates_context_on_republished_canonical_config(
+    workbench, tmp_path
+):
+    client, service, spec, _ = workbench
+    config, _ = _cman_compiled(service, spec, tmp_path, 45690)
+    environment_id = "cman-canonical"
+    path = Path(service.settings.data_dir) / (environment_id + ".yaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 语义相同但文本不同的旧配置文件（注释、键序差异）：关联会重发规范形式，
+    # 摘要随之变化，旧上下文必须作废。
+    path.write_text("# 既有部署配置\n" + yaml.safe_dump(config, allow_unicode=True))
+    service.store.put_environment(
+        {
+            "id": environment_id,
+            "product_id": "fbasecman",
+            "title": "既有集群",
+            "host": "127.0.0.1",
+            "port": config["instances"]["test_mmr1"]["port"],
+            "database_name": "postgres",
+            "database_user": "postgres",
+            "deployment_config": str(path),
+            "deployment_target": "mmr.fbasecman_regress",
+        }
+    )
+    stale = (
+        service.settings.output_dir
+        / "fbasecman"
+        / environment_id
+        / "output"
+        / "env"
+        / "test_context.yaml"
+    )
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale identifiers")
+    client.post(f"/api/v1/environments/{environment_id}/deployment-draft")
+    plan = client.post(f"/api/v1/deployment/drafts/{environment_id}/plan").json()
+    assert plan.get("mode") != "diff"  # 语义无差异，是纯接管计划
     linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
     assert linked.status_code == 200, linked.text
     assert not stale.exists()
@@ -585,6 +639,138 @@ def test_mixed_tool_versions_make_installation_incomplete(workbench):
         check for check in plan["checks"] if check["title"] == "数据库工具完整性"
     )
     assert not tool_check["ok"]
+
+
+def _register_fbase_environment(service, config, environment_id):
+    path = Path(service.settings.data_dir) / (environment_id + ".yaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+    service.store.put_environment(
+        {
+            "id": environment_id,
+            "product_id": "fbase-database",
+            "title": "既有 FBase 集群",
+            "host": "127.0.0.1",
+            "port": config["instances"]["mac_primary"]["port"],
+            "database_name": "postgres",
+            "database_user": "postgres",
+            "deployment_config": str(path),
+            "deployment_target": "logical.fbase_regress",
+        }
+    )
+
+
+def _import_plan(client, spec, environment_id, edited_config):
+    client.post(f"/api/v1/environments/{environment_id}/deployment-draft")
+    draft = client.get(f"/api/v1/deployment/drafts/{environment_id}").json()
+    updated = client.put(
+        f"/api/v1/deployment/drafts/{environment_id}",
+        json={
+            "expected_revision": draft["revision"],
+            "spec": {**draft["spec"], "source_yaml": yaml.safe_dump(edited_config)},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    result = client.post(f"/api/v1/deployment/drafts/{environment_id}/plan")
+    assert result.status_code == 200, result.text
+    return result.json()
+
+
+def _materialize_cluster(config, major="15"):
+    for node in config["instances"].values():
+        path = Path(node["data_dir"])
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "PG_VERSION").write_text(major)
+
+
+def test_diff_plan_scale_out_new_standby_is_executable(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "fixture"
+    )
+    _materialize_cluster(config)
+    _register_fbase_environment(service, config, "fbase-scale")
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["instances"]["mac_s2"] = {
+        **config["instances"]["mac_standby"],
+        "port": spec["base_port"] + 90,
+        "data_dir": str(Path(spec["data_root"]) / "mac_s2"),
+    }
+    standbys = edited["streaming_clusters"]["mac"]["standbys"]
+    standbys.append({"instance": "mac_s2"})
+    plan = _import_plan(client, spec, "fbase-scale", edited)
+    assert plan["mode"] == "diff"
+    assert plan["executable"], plan["operations"]
+    kinds = {op["kind"] for op in plan["operations"]}
+    assert kinds == {"add_standby"}
+    assert plan["action"] == "deployment.create"
+    assert plan["ready"], plan["checks"]
+    # 新节点按"新实例"探测（空目录+端口可用），既有节点按接管口径探测。
+    linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
+    assert linked.status_code == 200, linked.text
+    applied = client.post(
+        f"/api/v1/deployment/plans/{plan['id']}/apply",
+        json={"acknowledge_change": True},
+    )
+    assert applied.status_code == 202, applied.text
+
+
+def test_diff_plan_scale_in_is_listed_but_blocked(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "fixture"
+    )
+    # 当前环境带一个回归拓扑之外的额外备库；导入配置把它移除。
+    # （移除产品声明节点会在更早的拓扑校验阶段被拒绝，这里覆盖的是差异计划层。）
+    current = yaml.safe_load(yaml.safe_dump(config))
+    current["instances"]["mac_s2"] = {
+        **config["instances"]["mac_standby"],
+        "port": spec["base_port"] + 90,
+        "data_dir": str(Path(spec["data_root"]) / "mac_s2"),
+    }
+    current["streaming_clusters"]["mac"]["standbys"].append(
+        {"instance": "mac_s2"}
+    )
+    _materialize_cluster(current)
+    _register_fbase_environment(service, current, "fbase-shrink")
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    plan = _import_plan(client, spec, "fbase-shrink", edited)
+    assert plan["mode"] == "diff"
+    assert not plan["executable"]
+    assert any(
+        op["kind"] == "remove_node" and op["node"] == "mac_s2"
+        for op in plan["operations"]
+    )
+    assert (
+        client.post(f"/api/v1/deployment/plans/{plan['id']}/associate").status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/api/v1/deployment/plans/{plan['id']}/apply",
+            json={"acknowledge_change": True},
+        ).status_code
+        == 422
+    )
+
+
+def test_diff_plan_structural_and_parameter_changes_blocked(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**spec), "fixture"
+    )
+    _materialize_cluster(config)
+    _register_fbase_environment(service, config, "fbase-edit")
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["instances"]["mac_standby"]["port"] += 500
+    plan = _import_plan(client, spec, "fbase-edit", edited)
+    assert plan["mode"] == "diff" and not plan["executable"]
+    assert any(op["kind"] == "change_node" for op in plan["operations"])
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["postgresql_config"]["parameters"]["max_connections"] = 500
+    plan = _import_plan(client, spec, "fbase-edit", edited)
+    assert plan["mode"] == "diff" and not plan["executable"]
+    assert any(op["kind"] == "parameters" for op in plan["operations"])
 
 
 def test_preload_library_file_must_exist(workbench):

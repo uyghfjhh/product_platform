@@ -178,7 +178,7 @@ def run(request):
             if (path / "PG_VERSION").is_file()
             else None
         )
-        existing = request["mode"] != "new"
+        existing = node.get("existing", request["mode"] != "new")
         checks.append(
             {
                 "title": node["name"] + " 数据目录",

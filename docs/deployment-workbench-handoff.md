@@ -24,7 +24,7 @@
 3. ~~符号链接进入平台项目目录阻断规则的专门测试。~~ **已完成**：两条专项用例（data_root 符号链接入平台目录、两节点目录经符号链接解析到同一实际目录）。
 4. ~~再跑最终全量与更新后的 browser-smoke~~。**已完成**：全量 385 项通过；browser-smoke 修正节点点击落点（卡片中心命中 SQL 快捷行是既有设计，详情抽屉须点标题区）；部署工作台隔离浏览器验收通过。远程失败与安装工具混版本路径仍未覆盖。
 5. ~~重启运行平台加载新 API，核验既有环境。~~ **已完成**：机器重启后的空闲窗口启动服务，模板目录（mac/mmr/cman）与三环境拓扑核验正常（fbase-mmr 6、fbase-mac 3、cman-lab 14）。真机部署仍需用户审阅方案。
-6. B 批次：多主机／凭据资源、现有集群修改的真实差异计划、分阶段恢复与 React Flow 自由拓扑编辑。
+6. B 批次：~~现有集群修改的真实差异计划~~（已完成，见下）、多主机／凭据资源、分阶段恢复与 React Flow 自由拓扑编辑。
 
 ## 后续批次进展（2026-09-30 续）
 
@@ -35,6 +35,16 @@
 - **平台钩子契约**：`deployment_import_files(settings, facts, target, environment_id)` 增加 environment_id 参数（fbase-database 透传兼容）；新增 `deployment_invalidate(settings, environment)` 可选钩子。
 - **浏览器冒烟修正**：`browser-smoke.mjs` 节点点击改点 `.node-label-text`——卡片几何中心命中"💻 SQL 控制台"行是设计行为（遗留语义：DB 节点主击区进 SQL），详情抽屉走标题区。README 备忘已更新。
 - 验证：全量 385 passed（新增 11 项）；tsc/Vite build 通过；`deployment-workbench.mjs` 隔离验收通过；`browser-smoke.mjs` 对运行中实例通过。
+
+## B 批次进展：真实差异计划（已完成第一项）
+
+- **语义差异检测**（`workbench.py::diff_configs/diff_operations`）：导入模式下草稿 YAML 与当前 `deployment_config` 语义不一致时，计划切换为 `mode="diff"`——逐实例对比 host/installation/port/data_dir、参数集、四类拓扑段，忽略文本格式与键序。
+- **唯一可自动执行操作**：向既有流复制集群追加备库（`add_standby`）——pgcluster `create_streaming`/`create_mmr` 幂等，发布配置后重放 `create <target>` 只物化缺失节点。判据：新实例仅出现在既有 `streaming_clusters` 的 standbys 追加项中，且追加项全部属于本批新增实例。
+- **显式拦截**：删节点（实例级 clean 不卸复制槽，pgcluster 缺口）、改端口/目录/主机/安装（重建级）、postgresql 参数差异（无应用原语）、其它拓扑段变更 → 如实列出 `executable=False` 操作，`verify()` 与 apply/operations 双入口 422，前端按钮禁用。
+- **逐节点探测语义**：diff 计划把新增节点标记 `existing=False`（空目录+端口可分配+父目录可写），既有节点按接管口径（PG_VERSION 匹配）。`inspect_plan` 与 worker 执行前重检共用该语义。
+- **前端**：差异计划横幅（可执行=警告/不可执行=错误）、操作表新增类型与可执行列、确认框文案区分扩容与初始化。
+- **验证**：新增 5 项专项（扩容可执行端到端含 apply 202、缩容列出但双入口 422、端口/参数变更拦截、规范重发仍触发上下文失效、漂移导入被拒且上下文保留）；工作台专项 27 passed，全量 392 passed；真机 fbase-mac 三场景实测通过（原样=纯接管、+备库=可执行 diff、改端口=422）。
+- **已知边界**：cman/MMR 加成员暂不支持自动执行（`create_mmr` 虽幂等但 join 语义与流复制不同，保守拦截）；移除节点需 pgcluster 补实例级元数据卸载原语后才有安全缩容路径。
 
 ## 继续工作定位
 

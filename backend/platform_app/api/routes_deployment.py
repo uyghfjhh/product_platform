@@ -118,6 +118,8 @@ def register(app, settings, store):
     @app.post("/api/v1/deployment/plans/{plan_id}/apply", status_code=202)
     def apply(plan_id: str, item: ApplyInput):
         row = call(service.verify, plan_id)
+        if not row["action"]:
+            raise HTTPException(422, "该方案没有可自动执行的操作")
         if row["action"] == "deployment.create" and not item.acknowledge_change:
             raise HTTPException(422, "请确认此方案将初始化并部署新实例")
         call(service.associate, plan_id)

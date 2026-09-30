@@ -139,11 +139,171 @@ def validate_config(settings, path, target):
     return facts
 
 
+def diff_configs(current, desired):
+    """Semantic diff between two pgcluster configs (order/formatting ignored)."""
+    cur_instances = current.get("instances") or {}
+    new_instances = desired.get("instances") or {}
+    added = sorted(set(new_instances) - set(cur_instances))
+    removed = sorted(set(cur_instances) - set(new_instances))
+    changed = []
+    for name in sorted(set(cur_instances) & set(new_instances)):
+        old, new = cur_instances[name], new_instances[name]
+        fields = {
+            field: {"from": old.get(field), "to": new.get(field)}
+            for field in ("host", "installation", "port", "data_dir")
+            if old.get(field) != new.get(field)
+        }
+        if fields:
+            changed.append({"name": name, "fields": fields})
+    cur_params = (current.get("postgresql_config") or {}).get("parameters") or {}
+    new_params = (desired.get("postgresql_config") or {}).get("parameters") or {}
+    parameters = {
+        key: {"from": cur_params.get(key), "to": new_params.get(key)}
+        for key in sorted(set(cur_params) | set(new_params))
+        if cur_params.get(key) != new_params.get(key)
+    }
+    topology = {}
+    for section in ("streaming_clusters", "mmr_clusters", "logical_replications",
+                    "citus_clusters"):
+        before = current.get(section) or {}
+        after = desired.get(section) or {}
+        if before != after:
+            topology[section] = {
+                "added": sorted(set(after) - set(before)),
+                "removed": sorted(set(before) - set(after)),
+                "changed": sorted(
+                    name for name in set(before) & set(after)
+                    if before[name] != after[name]
+                ),
+            }
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "parameters": parameters,
+        "topology": topology,
+    }
+
+
+def _added_node_executable(current, desired, name):
+    """A new instance is executable only as a standby of an existing
+    streaming cluster — idempotent `create <target>` materializes just it."""
+    for cname, cluster in (desired.get("streaming_clusters") or {}).items():
+        members = [cluster.get("primary")] + [
+            row.get("instance") for row in cluster.get("standbys") or []
+        ]
+        if name not in members:
+            continue
+        if name == cluster.get("primary"):
+            return False  # adding a primary to an existing cluster is invalid
+        return cname in (current.get("streaming_clusters") or {})
+    return False
+
+
+def diff_operations(current, desired):
+    """Turn a config diff into ordered operations with executability flags."""
+    diff = diff_configs(current, desired)
+    operations = []
+    executable = True
+    for name in diff["added"]:
+        if _added_node_executable(current, desired, name):
+            operations.append(
+                {
+                    "kind": "add_standby",
+                    "node": name,
+                    "executable": True,
+                    "operation": "扩容新增备库（发布配置后重放幂等 create，仅创建该节点）",
+                }
+            )
+        else:
+            executable = False
+            operations.append(
+                {
+                    "kind": "add_node",
+                    "node": name,
+                    "executable": False,
+                    "operation": "新增节点未接入既有流复制集群，暂不支持自动执行",
+                }
+            )
+    for name in diff["removed"]:
+        executable = False
+        operations.append(
+            {
+                "kind": "remove_node",
+                "node": name,
+                "executable": False,
+                "operation": "缩容移除节点需先清理其复制槽，暂不支持自动执行",
+            }
+        )
+    for row in diff["changed"]:
+        executable = False
+        fields = "、".join(sorted(row["fields"]))
+        operations.append(
+            {
+                "kind": "change_node",
+                "node": row["name"],
+                "executable": False,
+                "operation": f"结构字段变更（{fields}）需要重建节点，暂不支持自动执行",
+                "detail": row["fields"],
+            }
+        )
+    if diff["parameters"]:
+        executable = False
+        operations.append(
+            {
+                "kind": "parameters",
+                "executable": False,
+                "operation": "postgresql 参数差异 %d 项需重启/热加载，暂不支持自动应用"
+                % len(diff["parameters"]),
+                "detail": diff["parameters"],
+            }
+        )
+    streaming_changes = diff["topology"].get("streaming_clusters")
+    covered = set()
+    if streaming_changes:
+        for name in streaming_changes["changed"]:
+            before = dict(current["streaming_clusters"][name])
+            after = dict(desired["streaming_clusters"][name])
+            b_standbys = before.pop("standbys") or []
+            a_standbys = after.pop("standbys") or []
+            # 仅追加备库条目且新增成员全部属于本批新增实例，由幂等 create 覆盖。
+            if before == after and a_standbys[: len(b_standbys)] == b_standbys and all(
+                row.get("instance") in diff["added"]
+                for row in a_standbys[len(b_standbys):]
+            ):
+                covered.add(name)
+    for section, change in diff["topology"].items():
+        change = dict(change)
+        if section == "streaming_clusters":
+            change["changed"] = [
+                name for name in change["changed"] if name not in covered
+            ]
+            if not any(change.values()):
+                continue
+        executable = False
+        operations.append(
+            {
+                "kind": "topology",
+                "executable": False,
+                "operation": (
+                    f"拓扑段 {section} 变化：新增 {change['added'] or '∅'}、"
+                    f"移除 {change['removed'] or '∅'}、修改 {change['changed'] or '∅'}，"
+                    "暂不支持自动执行"
+                ),
+                "detail": change,
+            }
+        )
+    return diff, operations, executable
+
+
 def inspect_plan(plan):
     facts = plan["facts"]
     checks = []
     groups = {}
+    added = set((plan.get("diff") or {}).get("added") or [])
     for node in facts["nodes"]:
+        if added:
+            node = {**node, "existing": node["name"] not in added}
         groups.setdefault((node["host"], node["installation"]), []).append(node)
     for (host, installation), nodes in groups.items():
         try:
@@ -347,25 +507,47 @@ class Workbench:
                 if file.is_file()
             },
         }
+        # 导入草稿的 YAML 与当前部署配置出现语义差异时，这是集群修改计划，
+        # 不再是纯接管登记。逐项差异映射为可执行/不可执行操作。
+        current_config = None
+        if spec.mode == "import" and previous and previous.get("deployment_config"):
+            try:
+                current_config = yaml.safe_load(
+                    Path(previous["deployment_config"]).read_text()
+                )
+            except (OSError, yaml.YAMLError):
+                current_config = None
+        if current_config is not None and current_config != config:
+            diff, operations, executable = diff_operations(current_config, config)
+            plan["mode"] = "diff"
+            plan["diff"] = diff
+            plan["executable"] = executable
+            plan["operations"] = operations
         plan["checks"] = inspect_plan(plan)
         plan["ready"] = bool(plan["checks"]) and all(
             check["ok"] for check in plan["checks"]
         )
-        plan["action"] = (
-            "deployment.create" if spec.mode == "new" else "deployment.health"
-        )
-        plan["operations"] = [
-            {
-                "node": node["name"],
-                "host": node["host"],
-                "port": node["port"],
-                "data_dir": node["data_dir"],
-                "operation": "初始化、启动并建立复制关系"
-                if spec.mode == "new"
-                else "接管登记并检查健康（不初始化）",
-            }
-            for node in facts["nodes"]
-        ]
+        if plan.get("mode") == "diff":
+            plan["action"] = (
+                "deployment.create" if plan["executable"] else None
+            )
+        else:
+            plan["action"] = (
+                "deployment.create" if spec.mode == "new" else "deployment.health"
+            )
+        if "operations" not in plan:
+            plan["operations"] = [
+                {
+                    "node": node["name"],
+                    "host": node["host"],
+                    "port": node["port"],
+                    "data_dir": node["data_dir"],
+                    "operation": "初始化、启动并建立复制关系"
+                    if spec.mode == "new"
+                    else "接管登记并检查健康（不初始化）",
+                }
+                for node in facts["nodes"]
+            ]
         plan["limitations"] = [
             "首批使用已有数据库安装和当前用户的本地／SSH 权限",
             "这是新建或接管计划，不是现有集群修改的全量差异计划",
@@ -417,6 +599,8 @@ class Workbench:
             current and all(current.get(k) == v for k, v in expected.items())
         ):
             raise ConflictError("环境配置已变化，请重新生成计划")
+        if plan.get("mode") == "diff" and not plan["executable"]:
+            raise ValueError("差异包含暂不支持自动执行的操作，请调整方案")
         if not plan["ready"]:
             raise ValueError("方案有未通过的检查，不能应用")
         if inspect:
