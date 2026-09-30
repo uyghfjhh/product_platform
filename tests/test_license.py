@@ -221,7 +221,7 @@ def test_uninstalled_product_cannot_be_signed(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     manifest = package / "product.yaml"
     manifest.write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  license: fd-licenser\n"
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  license: fd-licenser\n"
         "license:\n  product_code: demo\n  allowed_versions: ['1.0']\n",
         encoding="utf-8",
     )

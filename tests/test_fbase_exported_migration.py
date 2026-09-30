@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from platform_regress import CaseContext, RegressionEngine
-from platform_regress.engine import resolve_selector
+from platform_regress.sdk import CaseContext, RegressionEngine
+from platform_regress.sdk import resolve_selector
 from platform_regress.steps import (
     StepExecutionResult, evaluate_assertion, execute_psql,
     meaningful_lines, format_psql_output,

@@ -6,14 +6,12 @@ import time
 import hashlib
 
 from ..console_parser import ConsoleAssertionError
-import fbasecman_ops as ops
-
-
 def _digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _wait_rep_route_ready(context, timeout=15):
+    ops = context.ops
     deadline = time.time() + timeout
     snapshot = None
     while time.time() < deadline:
@@ -34,6 +32,7 @@ def _wait_rep_route_ready(context, timeout=15):
 
 
 def _wait_mmr_candidate(context, node_name, write_target=False, timeout=20):
+    ops = context.ops
     deadline = time.monotonic() + timeout
     snapshot = None
     while time.monotonic() < deadline:
@@ -51,6 +50,7 @@ def _wait_mmr_candidate(context, node_name, write_target=False, timeout=20):
 
 
 def _wait_mmr_endpoint_ready(context, node_name, timeout=20):
+    ops = context.ops
     deadline = time.monotonic() + timeout
     snapshot = None
     while time.monotonic() < deadline:
@@ -68,6 +68,7 @@ def _wait_mmr_endpoint_ready(context, node_name, timeout=20):
 
 def run_core_19_set_node_atomicity(context):
     """CORE-19: SET NODE single, batch atomicity, and restart persistence."""
+    ops = context.ops
     conf = ops.start()
 
     # Step 1: Initial state check
@@ -227,6 +228,7 @@ def run_core_19_set_node_atomicity(context):
 
 def run_core_20_write_promoted_refresh_show(context):
     """CORE-20: Role commands, refresh, and comprehensive show output audit."""
+    ops = context.ops
     conf = ops.start()
     snap_ready = _wait_mmr_candidate(context, "test_mmr2")
     endpoint_ready = _wait_mmr_endpoint_ready(context, "test_mmr2")
@@ -364,6 +366,7 @@ def run_core_20_write_promoted_refresh_show(context):
 
 def run_core_21_reload_parameters_and_structure(context):
     """CORE-21: Reload no change, runtime parameters, and structural changes."""
+    ops = context.ops
     conf = ops.start()
     pid_before = ops.pid_file.read_text(encoding="utf-8").strip()
 
@@ -489,6 +492,7 @@ def run_core_21_reload_parameters_and_structure(context):
 
 def run_core_22_reload_failure_protection(context):
     """CORE-22: Reload syntax error protection and read-only persistence directory."""
+    ops = context.ops
     conf = ops.start()
     before_status = ops.admin_psql("SHOW CONFIG_STATUS;")
     before_generation = before_status.records[0]["config_generation"]

@@ -26,12 +26,12 @@ def test_local_fingerprint_missing_file():
 def test_remote_fingerprint_parses_sha256_and_stat():
     class Proc:
         returncode = 0
-        stdout = "deadbeef\n42107688 1750324115\n"
+        stdout = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n42107688 1750324115\n"
         stderr = ""
 
     with patch.object(fixture.subprocess, "run", return_value=Proc()) as run:
         entry = fixture._remote_fingerprint("192.168.1.24", "postgres", "/pg/bin/postgres")
-    assert entry["sha256"] == "deadbeef"
+    assert entry["sha256"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert entry["size"] == 42107688
     assert entry["mtime"] == 1750324115
     argv = run.call_args[0][0]

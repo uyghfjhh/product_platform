@@ -1,12 +1,12 @@
+import os
 """Pure helper functions and parsers for handover suite operations and tests."""
 
 import re
 import time
 from platform_regress.clients.psql import parse_psql_table, build_psql_command
 from platform_regress.execution.shell import quote_arguments
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def _pgbench_transactions(output):
     if "process group terminated" in output or "timeout after" in output:
         return 0
@@ -126,8 +126,9 @@ def _thread_ratio_actual(records):
 
 def _wait_for_thread_statistics_profile(context, timeout_seconds):
     """Wait for all clients and the document's 3:2 workload ratio to settle."""
+    ops = context.ops
     command = build_psql_command(
-        ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
+        ops.env.config["local"]["postgres_dir"], LOCAL_HOST, ops.listen_port,
         "admin", "console", "SHOW THREAD_STATUS;",
     )
     deadline = time.time() + timeout_seconds
@@ -434,12 +435,13 @@ def _global_ps_phase_validator(first_run, write_port):
 
 def _phase_console_observation(context, phase, queries, log_prefix):
     """Run console queries while a JDBC driver is paused at a phase marker."""
+    ops = context.ops
     observations = []
     query_results = {}
     passed = True
     for index, sql in enumerate(queries, 1):
         command = build_psql_command(
-            ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
+            ops.env.config["local"]["postgres_dir"], LOCAL_HOST, ops.listen_port,
             "admin", "console", sql,
         )
         logfile = ops.logs_dir / ("%s_%s_%02d.log" % (log_prefix, phase.lower(), index))

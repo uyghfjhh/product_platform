@@ -1,11 +1,12 @@
+import os
 """Shared helper utilities for HA commands suite."""
 
 import sys
 from platform_regress.clients import jdbc as jdbc_client
 
 from suites.ha_commands.runtime import HaCommandFailure
-import fbasecman_ops as ops
 
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 __all__ = ['_add_30_cluster_datasources', '_add_34_mmr_groups', '_add_bulk_datasources', '_add_bulk_mmr_groups', '_add_groups_without_promoted', '_add_hash_inside_string', '_add_second_mmr_group', '_add_single_cluster_mmr_group', '_as_crlf', '_balance_read_only_transform', '_bulk_datasources_have_weight', '_bulk_groups_have', '_cluster_datasources_have_status', '_comprehensive_transform', '_datasource_block', '_group_fields_with_format', '_has_only_crlf', '_hint_transform', '_inject_after_start', '_mixed_topology_transform', '_node_has_weight', '_omit_group_defaults', '_pg3_as_single_line_block', '_port_transform', '_remove_test_path', '_rename_disk_datasource', '_route_user_scope', '_run_route_mode', '_run_sql_parse_heartbeat_bind_invalid', '_run_sql_parse_heartbeat_bind_normal', '_run_sql_parse_heartbeat_bind_unsupported', '_run_sql_parse_transactions', '_single_read_only', '_single_read_only_keep_scope', '_sql_parse_transform', '_status_with_format', '_wait_pg_cluster_ready', '_weight_with_format', '_without_final_newline', '_without_promoted']
 
 
@@ -30,6 +31,7 @@ def _add_second_mmr_group(content):
 
 
 def _balance_read_only_transform(context):
+    ops = context.ops
     standby_port = ops.env.config["database"]["ports"]["mmr1_standby2"]
     system_identifier = ops._query_scalar(
         standby_port, "SELECT system_identifier FROM pg_control_system();",
@@ -98,6 +100,7 @@ def _add_30_cluster_datasources(content):
 
 
 def _port_transform(context, group):
+    ops = context.ops
     def transform(content):
         content = _route_user_scope(content, group)
         content = content.replace('ports "%s"' % ops.listen_port,
@@ -129,6 +132,7 @@ def _hint_transform(group):
 
 def _run_route_mode(context, group, mode, sql, expected_text, predicate,
                     transform=None, port=None):
+    ops = context.ops
     title = "%s (%s)" % (group, mode)
     ops.start(transform=transform)
     ops.psql(
@@ -142,6 +146,7 @@ def _run_route_mode(context, group, mode, sql, expected_text, predicate,
 
 
 def _run_sql_parse_heartbeat_bind_invalid(context):
+    ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
     ops.check(
@@ -203,6 +208,7 @@ def _datasource_block(text, name):
 
 
 def _run_sql_parse_heartbeat_bind_normal(context):
+    ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
     ops.check(
@@ -222,7 +228,7 @@ def _run_sql_parse_heartbeat_bind_normal(context):
         ["javac", "-cp", str(jar), "-d", str(ops.workdir), str(source)],
         ops.logs_dir / "HeartbeatBindNormal.javac.log", cwd=ops.workdir,
         step_title="编译 SQL_PARSE heartbeat JDBC 测试")
-    jdbc_url = ("jdbc:postgresql://" + ops.LOCAL_HOST + ":%s/mmr_group?"
+    jdbc_url = ("jdbc:postgresql://" + LOCAL_HOST + ":%s/mmr_group?"
                 "prepareThreshold=1&preferQueryMode=extended&"
                 "binaryTransfer=false") % ops.listen_port
     _, output = ops.run_command(
@@ -320,6 +326,7 @@ def _add_bulk_mmr_groups(content):
 
 
 def _run_sql_parse_heartbeat_bind_unsupported(context):
+    ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
     ops.check(
@@ -358,6 +365,7 @@ def _without_final_newline(content):
 
 def _comprehensive_transform(context):
     """Add production-style formatting and legal pool/method combinations."""
+    ops = context.ops
     def transform(content):
         db = ops.env.config["database"]
         ports = db["ports"]
@@ -657,6 +665,7 @@ def _remove_test_path(path):
 
 
 def _run_sql_parse_transactions(context, group, mode, read_ports, write_port):
+    ops = context.ops
     ops.start(transform=_sql_parse_transform(group))
     ops.psql('SHOW GROUP_ROUTING %s;' % group,
             "%s sql_parse：查看运行态路由" % group,
@@ -691,6 +700,7 @@ def _status_with_format(content):
 
 def _wait_pg_cluster_ready(context, cluster_name, primary, replicas=(), title=None):
     """等待 ACTIVE 触发的即时探测形成可信 cluster 路由投影。"""
+    ops = context.ops
     expected = {
         primary: {
             "config_status": "active", "probe_state": "READY",
@@ -710,6 +720,7 @@ def _wait_pg_cluster_ready(context, cluster_name, primary, replicas=(), title=No
 
 
 def _mixed_topology_transform(context):
+    ops = context.ops
     def transform(content):
         content = content.replace(
             'user "postgres" {', groups + '\n' + users + '\nuser "postgres" {', 1)

@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> int:
     if not (product_dir / "product.yaml").is_file() or not module_path.is_file():
         parser.error("产品包缺少 product.yaml 或 cases.py")
 
+    import yaml
+    from .sdk import SDK_VERSION
+    manifest = yaml.safe_load((product_dir / "product.yaml").read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("regression_sdk") != SDK_VERSION:
+        parser.error(f"product requires regression_sdk={SDK_VERSION}")
+
     # Product code is trusted installed code, but the module path is derived
     # solely from the selected package and never from a client-supplied import.
     spec = importlib.util.spec_from_file_location("_platform_regression_cases", module_path)

@@ -10,6 +10,8 @@
 | --- | --- |
 | [docs/design.md](docs/design.md) | v3 目标架构:平台公共部署/回归/License 内核、单目录产品包、数据与事件契约、实施路线 |
 | [docs/progress.md](docs/progress.md) | 当前代码进度、旧方案历史记录与工作区约束;旧 P1–P8 不再是实施路线 |
+| [docs/platform-v2-capabilities.md](docs/platform-v2-capabilities.md) | v2 公共能力、产品调用迁移、行为变化与验收边界 |
+| [backend/platform_regress/SDK.md](backend/platform_regress/SDK.md) | 回归 SDK v2 公开接口、生命周期、SQL 会话与产品迁移 |
 | [products/demo/README.md](products/demo/README.md) | 最小产品接入样例:manifest、Provider、SDK 用例和前端注册 |
 
 ## 核心特性
@@ -98,11 +100,12 @@ product_platform/
 ## 开发与构建
 
 ```bash
-.venv/bin/python -m pytest tests/
+./cli/check.sh quick     # 日常反馈：七项 review 回归 + SDK 公共能力/存储/执行器
+./cli/check.sh full      # 完整 pytest（包含 License、产品接入与子进程路径）
 (cd frontend && npm run build)
 ```
 
-全量验证 = 平台测试 + 前端构建 + `git diff --check`。
+全量验证 = `./cli/check.sh full` + 前端构建 + `git diff --check`。quick 是明确的针对性子集，不替代发布前完整验收；直接运行 `pytest tests/` 仍执行全部测试。
 
 - 脚本向下兼容探测虚拟环境与 python3.12→3.8;业务夹具用系统 `psql` 管道,避免驱动冲突。
 - 前端改动需在 `frontend/` 执行 `npm run build`,产物输出 `frontend/dist/` 由 FastAPI 静态托管。

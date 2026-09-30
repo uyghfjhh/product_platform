@@ -15,7 +15,7 @@ def test_discovers_product_manifest(tmp_path: Path):
     package = tmp_path / "demo"
     package.mkdir()
     (package / "product.yaml").write_text(
-        """id: demo\ntitle: Demo\nplugin_api: v1\nversions:\n  - id: '1.0'\ncapabilities:\n  tests: demo-tests\nlicense:\n  product_code: demo\n""",
+        """id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\nversions:\n  - id: '1.0'\ncapabilities:\n  tests: demo-tests\nlicense:\n  product_code: demo\n""",
         encoding="utf-8",
     )
     found = discover_products(tmp_path)
@@ -26,7 +26,7 @@ def test_discovers_product_manifest(tmp_path: Path):
 def test_rejects_invalid_manifest(tmp_path: Path):
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: Demo\ntitle: Demo\nplugin_api: v1\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: Demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\n", encoding="utf-8")
     with pytest.raises(ProductManifestError, match="id must match"):
         load_manifest(package)
 
@@ -36,13 +36,13 @@ def test_cli_entry_must_stay_inside_product_package(tmp_path: Path):
     package.mkdir()
     (package / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (package / "product.yaml").write_text(
-        """id: demo\ntitle: Demo\nplugin_api: v1\ncli:\n  run: run.sh\n""",
+        """id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncli:\n  run: run.sh\n""",
         encoding="utf-8",
     )
     assert load_manifest(package).cli["run"].as_posix() == "run.sh"
 
     (package / "product.yaml").write_text(
-        """id: demo\ntitle: Demo\nplugin_api: v1\ncli:\n  run: ../run.sh\n""",
+        """id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncli:\n  run: ../run.sh\n""",
         encoding="utf-8",
     )
     with pytest.raises(ProductManifestError, match="relative product path"):
@@ -73,7 +73,7 @@ def test_removed_package_disables_new_work_but_preserves_environment(tmp_path, m
     package.mkdir(parents=True)
     manifest = package / "product.yaml"
     manifest.write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  database: demo\n"
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  database: demo\n"
         "actions:\n  - id: database.check\n    title: Check database\n    capability: database\n",
         encoding="utf-8",
     )
@@ -96,7 +96,7 @@ def test_rejects_duplicate_license_codes(tmp_path):
         package = tmp_path / name
         package.mkdir()
         (package / "product.yaml").write_text(
-            f"id: {name}\ntitle: {name}\nplugin_api: v1\n"
+            f"id: {name}\ntitle: {name}\nplugin_api: v1\nregression_sdk: '2'\n"
             "license:\n  product_code: shared\n  allowed_versions: ['1.0']\n",
             encoding="utf-8",
         )
@@ -109,7 +109,7 @@ def test_new_product_provider_loads_from_its_directory(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     manifest = package / "product.yaml"
     manifest.write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  tests: demo\n"
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  tests: demo\n"
         "actions:\n  - id: tests.demo\n    title: Run demo\n    capability: tests\n",
         encoding="utf-8",
     )
@@ -138,7 +138,7 @@ def test_removed_product_cannot_execute_queued_deployment(tmp_path, monkeypatch)
     package = tmp_path / "products" / "demo"
     package.mkdir(parents=True)
     (package / "product.yaml").write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  deployment: database-cluster\n",
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  deployment: database-cluster\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(Settings, "products_root", property(lambda self: package.parent))
@@ -152,7 +152,7 @@ def test_product_router_is_registered_only_while_installed(tmp_path, monkeypatch
     package = tmp_path / "products" / "demo"
     package.mkdir(parents=True)
     manifest = package / "product.yaml"
-    manifest.write_text("id: demo\ntitle: Demo\nplugin_api: v1\n", encoding="utf-8")
+    manifest.write_text("id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\n", encoding="utf-8")
     (package / "router.py").write_text(
         "from fastapi import APIRouter\n"
         "def create_router(settings, store):\n"
@@ -176,7 +176,7 @@ def test_new_product_action_runs_through_api_and_worker(tmp_path, monkeypatch):
     package = tmp_path / "products" / "demo"
     package.mkdir(parents=True)
     (package / "product.yaml").write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  tests: demo\n"
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  tests: demo\n"
         "actions:\n  - id: tests.demo\n    title: Run demo\n"
         "    capability: tests\n    changes_environment: true\n",
         encoding="utf-8",

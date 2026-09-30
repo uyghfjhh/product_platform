@@ -24,10 +24,8 @@ from suites.global_cache.waits import (
     wait_target_entries_released,
     wait_target_entries_unref,
 )
-import fbasecman_ops as ops
-
-
 def run_capacity_eviction_zero_ref_case(context):
+    ops = context.ops
     capacity_limit = int(ops.case.reload.get("capacity_limit", 3))
     seed_count = int(ops.case.reload.get("seed_count", 3))
     server_lifetime = int(ops.case.reload.get("server_lifetime", 10))
@@ -182,6 +180,7 @@ def run_capacity_eviction_zero_ref_case(context):
 
 
 def run_capacity_mixed_bypass_response_and_zero_ref_shortage_case(context):
+    ops = context.ops
     capacity_limit = int(ops.case.reload.get("capacity_limit", 3))
     zero_ref_count = int(ops.case.reload.get("zero_ref_count", 4))
     server_lifetime = int(ops.case.reload.get("server_lifetime", 10))
@@ -264,6 +263,7 @@ def run_capacity_mixed_bypass_response_and_zero_ref_shortage_case(context):
 
 
 def run_ref_count_protects_active_entries_case(context):
+    ops = context.ops
     capacity_limit = int(ops.case.reload.get("capacity_limit", 2))
     active_count = int(ops.case.reload.get("active_count", 4))
     prefix = "gc_capacity_active_ref"

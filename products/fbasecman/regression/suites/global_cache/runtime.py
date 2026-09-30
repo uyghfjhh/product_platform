@@ -9,10 +9,12 @@ import socket
 from datetime import datetime
 from pathlib import Path
 
-from platform_regress.execution.command import run_logged_command
-from platform_regress.execution.phased_process import PhasedProcess
+from platform_regress.clients.psql import build_psql_command
 from platform_regress.evidence import (
-    EvidenceStep, StepJournal, render_jdbc_action, without_phase_markers,
+    EvidenceStep,
+    StepJournal,
+    render_jdbc_action,
+    without_phase_markers,
 )
 from platform_regress.evidence.log_window import (
     LocalLogWindow,
@@ -20,30 +22,35 @@ from platform_regress.evidence.log_window import (
     remote_collect_script,
     remote_snapshot_script,
 )
-from platform_regress.clients.psql import build_psql_command
-from products.fbasecman.console import ConsoleQueryError, parse_pipe_rows
+from platform_regress.execution.command import run_logged_command
+from platform_regress.execution.phased_process import PhasedProcess
+from platform_regress.execution.shell import quote_arguments
+from platform_regress.persistence.atomic import atomic_write_text
+from platform_regress.reporting import (
+    ReportDocument,
+    ReportStep,
+    is_transport_only_success,
+    render_psql_table_from_pipe_text,
+    render_report,
+)
+from suites.global_cache.errors import GlobalCacheFailure, VerificationFailure
+from suites.global_cache.manifest import (
+    GLOBAL_CACHE_CASES,
+    formal_case_items,
+)
+from suites.global_cache.paths import asset_path as global_cache_asset_path
+from suites.global_cache.reports.runtime import GlobalCacheReportMixin
+from suites.global_cache.state import capture_global_cache_state
+
 from products.fbasecman.config import (
     apply_datasource_runtime,
     extract_config_lines,
     set_or_append_config_line,
 )
+from products.fbasecman.console import ConsoleQueryError, parse_pipe_rows
 from products.fbasecman.process import FbasecmanProcess
-from platform_regress.execution.shell import quote_arguments
-from platform_regress.persistence.atomic import atomic_write_text
-from platform_regress.reporting import (
-    ReportDocument, ReportStep, is_transport_only_success, render_report,
-    render_psql_table_from_pipe_text,
-)
-from suites.global_cache.state import capture_global_cache_state
-from suites.global_cache.errors import GlobalCacheFailure, VerificationFailure
-from suites.global_cache.paths import asset_path as global_cache_asset_path
-from suites.global_cache.manifest import (
-    GLOBAL_CACHE_CASES,
-    formal_case_items,
-)
-from suites.global_cache.reports.runtime import GlobalCacheReportMixin
-import fbasecman_ops as ops
 
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 DEFAULT_FBASECMAN_LOG_LEVEL = os.environ.get("FBASECMAN_LOG_LEVEL", "debug1")
 REPORT_FBASECMAN_CONFIG_PREFIXES = (
     "enable_guc_sync",
@@ -133,7 +140,7 @@ def _is_local_tcp_port_free(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((ops.LOCAL_HOST, port))
+        sock.bind((LOCAL_HOST, port))
         return True
     except OSError:
         return False
@@ -409,18 +416,10 @@ class CaseRuntime(GlobalCacheReportMixin):
         return text, []
 
     def _run_remote_log_script(self, host, user, script, logfile):
-        cmd = [
-            "ssh",
-            "-F",
-            "/dev/null",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=no",
-            "%s@%s" % (user, host),
-            "bash -lc %s" % shlex.quote(script),
-        ]
-        return self.run_command(cmd, logfile, check=True, record=False)
+        from platform_regress.execution.remote import RemoteTarget, ssh_command
+        command = ssh_command(RemoteTarget(host, user), script, login_shell=True,
+                              strict_host_keys=False)
+        return self.run_command(command, logfile, check=False, record=False)
 
     def begin_pg_log_window(self, stem):
         host, user, log_dirs = self._pg_log_source()
@@ -474,7 +473,8 @@ class CaseRuntime(GlobalCacheReportMixin):
             "  done\n"
             "done\n"
         ) % dir_args
-        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        from platform_regress.execution.remote import RemoteTarget, ssh_command
+        cmd = ssh_command(RemoteTarget(host, user), script, login_shell=True, strict_host_keys=False)
         rc, _ = self.run_command(cmd, pg_snapshot, check=False, record=False)
         self.summary["log_evidence"] = {
             "fbasecman": str(self.fbasecman_log),
@@ -499,7 +499,8 @@ class CaseRuntime(GlobalCacheReportMixin):
             "done\n"
             "echo \"$count\"\n"
         ) % (dir_args, grep_pattern)
-        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        from platform_regress.execution.remote import RemoteTarget, ssh_command
+        cmd = ssh_command(RemoteTarget(host, user), script, login_shell=True, strict_host_keys=False)
         _, output = self.run_command(cmd, logfile, step_title=step_title, check=True)
         text = output.strip()
         try:
@@ -540,7 +541,8 @@ class CaseRuntime(GlobalCacheReportMixin):
             "  grep -r -h -E %s \"$dir\"/* 2>/dev/null || true\n"
             "done | tail -n %d\n"
         ) % (dir_args, grep_pattern, max_lines)
-        cmd = ["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "%s@%s" % (user, host), "bash -lc %s" % shlex.quote(script)]
+        from platform_regress.execution.remote import RemoteTarget, ssh_command
+        cmd = ssh_command(RemoteTarget(host, user), script, login_shell=True, strict_host_keys=False)
         _, output = self.run_command(cmd, logfile, step_title=step_title, check=True)
         lines = [line.rstrip() for line in output.splitlines() if line.strip()]
         if self.step_records and self.step_records[-1].get("title") == step_title:

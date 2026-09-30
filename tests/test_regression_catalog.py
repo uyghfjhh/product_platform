@@ -1,6 +1,6 @@
 import pytest
 
-from platform_regress import CaseCatalog, CaseContractError
+from platform_regress.sdk import CaseCatalog, CaseContractError
 
 
 def case(target="sample.case"):

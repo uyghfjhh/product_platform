@@ -9,7 +9,6 @@ from products.fbasecman.reports.artifacts import (
     CaseProgressObserver,
     case_artifacts,
     case_log,
-    sync_current_results,
 )
 from products.fbasecman.deployment.profile import evidence_root
 
@@ -68,7 +67,13 @@ def test_current_result_sync_keeps_other_environment_and_rejects_old_fallback(tm
     store = create_app(settings, enqueuer=lambda task_id: None).state.store
     _write_case(settings, "lab-a", "guc.case_one", "PASS")
     environment = {"id": "lab-a", "product_id": "fbasecman"}
-    assert sync_current_results(store, settings, environment, "guc", "2020-01-01T00:00:00+00:00") == 1
+    from platform_app.result_publication import publish_regression_results
+    fact_dir = settings.output_dir / "regression" / "lab-a" / "guc.case_one"
+    fact_dir.mkdir(parents=True)
+    (fact_dir / "result.json").write_text(json.dumps({"target": "guc.case_one", "verdict": "PASS", "operation_id": "run-1"}))
+    assert publish_regression_results(store, settings, environment,
+        {"id": "run-1", "target": "guc.case_one"}, "SUCCEEDED", "done",
+        case_targets={"guc.case_one"})[0] == "SUCCEEDED"
     assert store.list_results("lab-a")[0]["status"] == "PASS"
     assert case_artifacts(settings, "guc.case_one", "lab-b")["available"] is False
     assert case_log(settings, "guc.case_one", "logs/case.log", environment_id="lab-a")["lines"][-1] == "ERROR failure"

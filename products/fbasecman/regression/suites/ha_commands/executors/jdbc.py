@@ -1,15 +1,17 @@
+import os
 """HA console command executors: JDBC."""
 
 
 from platform_regress.clients import jdbc as jdbc_client
 from suites.ha_commands.runtime import HaCommandFailure
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
 
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 __all__ = ['_run_jdbc_console_ha_commands']
 
 
 def _run_jdbc_console_ha_commands(context):
+    ops = context.ops
     conf = ops.start(transform=_without_promoted)
     before = conf.read_bytes()
     jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
@@ -21,11 +23,11 @@ def _run_jdbc_console_ha_commands(context):
         ops.logs_dir / "HaConsoleCommands.javac.log", cwd=ops.workdir,
         step_title="编译 JDBC 控制台高可用命令 driver")
     jdbc_url = jdbc_client.build_url(
-        ops.LOCAL_HOST, ops.listen_port, "console", {"preferQueryMode": "simple"})
+        LOCAL_HOST, ops.listen_port, "console", {"preferQueryMode": "simple"})
     business_url = jdbc_client.build_url(
-        ops.LOCAL_HOST, ops.listen_port, "mmr_group", {"preferQueryMode": "simple"})
+        LOCAL_HOST, ops.listen_port, "mmr_group", {"preferQueryMode": "simple"})
     single_url = jdbc_client.build_url(
-        ops.LOCAL_HOST, ops.listen_port, "single_group", {"preferQueryMode": "simple"})
+        LOCAL_HOST, ops.listen_port, "single_group", {"preferQueryMode": "simple"})
     snapshots = ops.workdir / "jdbc-config-snapshots"
     ports = ops.env.config["database"]["ports"]
     _, output = ops.run_command(

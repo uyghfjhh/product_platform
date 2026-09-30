@@ -1,9 +1,6 @@
 """Declarative JDBC sequences for GUC scenarios."""
 
 from suites.global_cache.drivers import run_prepared_sequence
-import fbasecman_ops as ops
-
-
 def _sequence_value(output, key):
     prefix = key + "="
     for line in output.splitlines():
@@ -13,6 +10,7 @@ def _sequence_value(output, key):
 
 
 def run_guc_set_report_case(context):
+    ops = context.ops
     guc_sql = ops.case.assertions.get("guc_sql", "SET application_name = 'gc_guc_report'")
     _, output = run_prepared_sequence(context, [
         ("guc_set_execute", "execute", guc_sql),
@@ -28,6 +26,7 @@ def run_guc_set_report_case(context):
 
 
 def run_guc_reset_all_bypass_case(context):
+    ops = context.ops
     report_guc_sql = ops.case.assertions.get("report_guc_sql", "SET application_name = 'gc_reset_all_case'")
     noreport_guc_sql = ops.case.assertions.get("noreport_guc_sql", "SET extra_float_digits = 2")
     reset_all_sql = ops.case.assertions.get("reset_all_sql", "RESET ALL")

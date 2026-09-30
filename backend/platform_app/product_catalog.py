@@ -56,6 +56,7 @@ class ProductManifest:
     id: str
     title: str
     plugin_api: str
+    regression_sdk: str | None
     package_root: Path
     versions: tuple[str, ...]
     capabilities: dict[str, str]
@@ -165,6 +166,11 @@ def load_manifest(package_root: Path) -> ProductManifest:
         for key, value in capabilities_raw.items()
     }
 
+    if "tests" in capabilities:
+        from platform_regress.sdk import SDK_VERSION
+        if raw.get("regression_sdk") != SDK_VERSION:
+            raise ProductManifestError(f"unsupported regression_sdk: {raw.get('regression_sdk')}")
+
     actions_raw = raw.get("actions", [])
     if not isinstance(actions_raw, list):
         raise ProductManifestError("actions must be a list")
@@ -266,6 +272,7 @@ def load_manifest(package_root: Path) -> ProductManifest:
         id=product_id,
         title=title,
         plugin_api=plugin_api,
+        regression_sdk=raw.get("regression_sdk"),
         package_root=package_root,
         versions=tuple(versions),
         capabilities=capabilities,

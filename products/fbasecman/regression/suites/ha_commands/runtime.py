@@ -18,13 +18,13 @@ from platform_regress.execution.ports import (
     free_port_block, non_ephemeral_port_range, port_is_free,
 )
 from platform_regress.persistence.atomic import write_json
-from platform_regress.runtime import CaseRuntimeFailure
+from platform_regress.sdk import CaseFailure
 from products.fbasecman.case_runtime import (
     FbasecmanCaseRuntime,
 )
 
 
-class HaCommandFailure(CaseRuntimeFailure):
+class HaCommandFailure(CaseFailure):
     """HA 命令用例失败；同时是各套件通用的"用例失败"异常兼容名。"""
 
 

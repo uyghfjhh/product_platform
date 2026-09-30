@@ -1,3 +1,4 @@
+import os
 """Runtime context, evidence collection, and lifecycle support for HA cases."""
 
 import difflib
@@ -8,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from platform_regress.clients.psql import build_psql_command
-from platform_regress.engine import CaseFailure
+from platform_regress.sdk import CaseFailure
 
 from platform_regress.evidence import EvidenceStep, StepJournal
 from platform_regress.execution.command import run_logged_command
@@ -19,9 +20,8 @@ from products.fbasecman.process import FbasecmanProcess
 from products.fbasecman.environment.cluster_ops import NodeController
 from .console_parser import ConsoleSnapshot
 from platform_regress.execution.forensics import diagnose_crash
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 class HighAvailabilityFailure(CaseFailure):
     pass
 
@@ -33,7 +33,7 @@ def _port_free(port):
         return True
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((ops.LOCAL_HOST, int(port)))
+        sock.bind((LOCAL_HOST, int(port)))
         return True
     except (PermissionError, OSError):
         return False
@@ -283,7 +283,7 @@ class HighAvailabilityRuntime(object):
             title="启动 fbasecman 与探活初始化",
             action="启动 fbasecman 代理并等待 Monitor 完成首轮探活与拓扑发布",
             command="$ %s %s" % (self.fbasecman.binary, conf),
-            intermediate=("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c 'SHOW CLUSTERS;'\n%s") % (
+            intermediate=("$ %s/bin/psql -h " + LOCAL_HOST + " -p %d -U qa_admin -d console -c 'SHOW CLUSTERS;'\n%s") % (
                 pg_bin, self.listen_port, snap_text
             ),
             evidence="\n".join(self.extract_log_lines(["monitor", "cluster", "listen", "ready"], max_lines=4)),
@@ -336,7 +336,7 @@ class HighAvailabilityRuntime(object):
         """Execute query on console database and return a ConsoleSnapshot."""
         cmd = build_psql_command(
             postgres_dir=self.env.config["local"]["postgres_dir"],
-            host=ops.LOCAL_HOST,
+            host=LOCAL_HOST,
             port=self.listen_port,
             user="qa_admin",
             database="console",
@@ -344,7 +344,7 @@ class HighAvailabilityRuntime(object):
             tuples_only=False,
         )
         pg_bin = self.env.config["local"]["postgres_dir"]
-        cmd_str = ("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U qa_admin -d console -c %s") % (
+        cmd_str = ("$ %s/bin/psql -h " + LOCAL_HOST + " -p %d -U qa_admin -d console -c %s") % (
             pg_bin,
             self.listen_port,
             repr(sql),
@@ -376,7 +376,7 @@ class HighAvailabilityRuntime(object):
         """Execute SQL through client proxy port."""
         cmd = build_psql_command(
             postgres_dir=self.env.config["local"]["postgres_dir"],
-            host=ops.LOCAL_HOST,
+            host=LOCAL_HOST,
             port=self.listen_port,
             user=user,
             database=db,
@@ -384,7 +384,7 @@ class HighAvailabilityRuntime(object):
             tuples_only=True,
         )
         pg_bin = self.env.config["local"]["postgres_dir"]
-        cmd_str = ("$ %s/bin/psql -h " + ops.LOCAL_HOST + " -p %d -U %s -d %s -c %s") % (
+        cmd_str = ("$ %s/bin/psql -h " + LOCAL_HOST + " -p %d -U %s -d %s -c %s") % (
             pg_bin,
             self.listen_port,
             user,
@@ -403,7 +403,7 @@ class HighAvailabilityRuntime(object):
         """Send separate Simple Query messages on one client connection."""
         command = build_psql_command(
             postgres_dir=self.env.config["local"]["postgres_dir"],
-            host=ops.LOCAL_HOST, port=self.listen_port, user=user,
+            host=LOCAL_HOST, port=self.listen_port, user=user,
             database=db, sql=statements[0], tuples_only=True,
         )
         for statement in statements[1:]:

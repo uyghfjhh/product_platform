@@ -1,5 +1,37 @@
 # 实现进度
 
+## 2026-09-30:七项 review 修复与验证提速
+
+- 修复清理路径 `..`/父 symlink 越界；只删除最终链接本身。长跑 cleanup 异常、False 资源结果或 errors 均导致 failed。
+- stdin 改用同时收发的 communicate，输入期间可超时/取消；后台输入异步处理，finish 和清理负责回收，保留 timeout=124/部分输出契约。
+- 结果发布合并聚合与本次逐用例事实，避免旧/部分聚合隐藏新结论。本地日志保存 inode/原句柄，远端以 device/inode 找回旧日志，完整采集同名轮转前后内容；缺失时报采集错误。
+- lsof 缺失/超时/权限错误保持 Blocked，不认作已释放端口。
+- FileStore 状态与事件在单个 meta.json 原子提交；pending_events 是已提交事实，JSONL 为可恢复投影。覆盖追加失败、半条 UTF8、投影完成后清除失败、重启重放和 cursor 顺序，目录同步持久化。排队取消和恢复终态也走此路径，SSE 先读取状态再读取事件，防止结束竞态漏通知。
+- FBase catalog 每次模块加载只解析一次，四个用例族共用同次声明快照；测试共用声明加载但深复制执行用例，避免共享运行状态。新增 27 项失败路径回归。
+- 新入口 `cli/check.sh quick`：83 项针对性测试，实测 5.34 秒；`cli/check.sh full`：348 项全部通过，实测 28.58 秒。基线 321 项 35.61 秒；测试数量增加同时全量时间减少约 20%。quick 不替代完整验收，没有降低断言、密码学参数或业务超时。
+- 前端构建、改动模块的 F/I 检查、脚本语法与 git diff --check 通过。本轮没有执行真实数据库回归或重启平台进程。
+
+## 2026-09-30:平台 v2 公共能力收敛
+
+- 三个产品 Provider 的结果发布统一到 platform_app.result_publication，按本次 operation_id/catalog/verdict 归因；删除 fbasecman 非权威旧同步路径，缺失结果不再回填 PASS。
+- 远程执行、PG 日志窗口/关闭文件归档、FBase server log 采集移入公共能力；FBase 远端 snapshot 跳过问题修复。generic archive 默认保留源文件，stable 显式声明自己的归档策略。
+- stable 长跑的状态存储、状态机、负载组、完成观察/claim/finalization、进程归属与 CSV 监控由平台实现。产品保留负载、健康、路由、协议与报告判定。
+- FBase 通用 SQL 夹具、节点动作、文件/系统时间恢复、隔离目录/端口/监听者/死 owner 回收移入公共接口；SQL 创建失败不删除既有对象，资源删除前确认归属和进程退出。
+- pgbench argv/标准统计/输出过滤、指纹、证据保留/报告访问/进度与 PG 复制解析提取到平台并接入调用方；产品 pg_common 和 stable.lifecycle 公共实现退役。SDK 主类型统一公开，不保留旧结果发布兼容分支。
+- 修复 SDK runtime 的业务+清理双失败归因、ReportSpec 路径穿越/symlink 删除风险、set_setting reload 失败无恢复与 RESET 缺参数问题。大型日志改为派生预览，不再破坏原始证据。
+- 新增 30 项公共能力验收测试（含实际 shell/tar 的 open-file 保护）；最终全量 **321 passed**，前端构建、改动公共模块的 F/I/RUF022 检查与 git diff --check 通过。真实远端日志、数据库套件与长期压测本轮未执行。
+- 设计与使用边界见 docs/platform-v2-capabilities.md 和 backend/platform_regress/SDK.md。
+
+## 2026-09-30:回归 SDK v2 契约重设计
+
+- **公开 API 与版本**：`platform_regress.sdk` 成为唯一核心契约入口；产品 manifest 声明 `regression_sdk: "2"`，发现与 CLI 精确校验。移除根包重复导出、ProductCase 重复协议、tcp_probe 别名、全局 register_requirement、runtime 双 executor 入口与 EnvironmentRef/RegressionContext。全部仓库调用同步迁移，无 v1 兼容层。
+- **职责与类型**：CaseContext 组合 EvidenceRecorder/CommandExecutor/FixtureManager/EnvironmentResolver/SqlExecutor；事件、操作编号、进程句柄与清理队列由对应组件拥有。新增环境/节点类型、输入校验、SetupCase/CleanupCase、Verdict/CleanupStatus；context 单次使用，runtime 用例支持顺序复用。
+- **断言与扩展**：context.check 统一记录 expected/actual 并控制失败判定，step 仅记录事实。公共 requirement registry 冻结，产品复制、独立注册、冻结，拒绝重复键和无效顺序引用；重复加载不会污染其他产品。
+- **SQL**：显式 session/transaction、参数化执行、原生 Python 类型选择、独立连接/语句超时、会话关闭检查、提交前取消检查和失败证据。原单语句文本化结果及业务报告步骤保留。
+- **runtime**：RuntimeBinding 采用明确的泛型协议与单一 execute(context, runtime)；准备失败也清理，teardown 故障记录 cleanup ERROR。ReportRuntime 以 ReportSpec/workspace/output_root/context_data 显式构造，不解析产品环境或猜测上下文/产物路径；套件锁归 output_root。产品环境解析留在产品层。
+- **验收**：新增 35 项 SDK 契约测试，覆盖 registry 隔离、版本拒绝、SQL 会话/事务/取消/证据、runtime 顺序复用/部分 setup/清理故障、一次性 context 与报告字节基线。最终全量 pytest **291 passed**（4 条已有 fork 多线程警告）；前端 tsc+vite 构建通过，改动 SDK 的 imports/undefined-name 检查和 git diff --check 通过。
+- **边界**：三个产品大 runtime 与 executor 用例体未重写；真实集群套件与每套件报告 golden-diff 本轮未执行，不宣称真机保真验收完成。设计与公开契约见 docs/sdk-v2-design.md、backend/platform_regress/SDK.md。
+
 ## 2026-09-30:回归报告补齐与网页证据回退(bedbf63)
 
 - **native 用例报告同构**：新增 `platform_regress/reporting/case_report.py`，从事件流渲染 `report.txt`/`steps.json`/`summary.json` 并镜像进 `regress_report_root` 的 `output/runs/<suite>/<case>/` 树(含 logs/、events.log、fbasecman.log);executor 报告权威文件以运行开始时间判定陈旧、不被覆盖。历史平台运行已回填(168 条保留权威 executor 报告、14 条 native 补齐)。修复"查看报告"空白:native 用例此前只产平台产物、无 runs/ 树。

@@ -1,15 +1,17 @@
+import os
 """HA console command executors: ROUTING."""
 
 from platform_regress.clients import jdbc as jdbc_client
 
 from suites.ha_commands.runtime import HaCommandFailure
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
 
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 __all__ = ['_run_balance_read_only_route', '_run_balance_route', '_run_four_group_modes_route_visibility', '_run_mmr_hint_read_route', '_run_mmr_hint_route', '_run_mmr_port_read_route', '_run_mmr_port_write_route', '_run_mmr_sql_parse_read_write_transactions', '_run_rep_hint_write_route', '_run_rep_port_read_route', '_run_rep_port_write_route', '_run_rep_sql_parse_read_write_transactions', '_run_replication_route', '_run_single_route', '_run_sql_parse_extended_protocol']
 
 
 def _run_mmr_hint_route(context):
+    ops = context.ops
     port = str(ops.env.config["database"]["ports"]["mmr2"])
     _run_route_mode(
         context, "mmr_group", "mmr",
@@ -22,6 +24,7 @@ def _run_mmr_hint_route(context):
 
 
 def _run_single_route(context):
+    ops = context.ops
     port = str(ops.env.config["database"]["ports"]["mmr1"])
     _run_route_mode(
         context, "single_group", "single",
@@ -32,6 +35,7 @@ def _run_single_route(context):
 
 
 def _run_rep_hint_write_route(context):
+    ops = context.ops
     primary = str(ops.env.config["database"]["ports"]["mmr1"])
     _run_route_mode(
         context, "rep_group", "replication",
@@ -44,6 +48,7 @@ def _run_rep_hint_write_route(context):
 
 
 def _run_rep_port_read_route(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     readable = (str(ports["mmr1_standby1"]), str(ports["mmr1"]))
     _run_route_mode(
@@ -56,6 +61,7 @@ def _run_rep_port_read_route(context):
 
 
 def _run_rep_port_write_route(context):
+    ops = context.ops
     backend = str(ops.env.config["database"]["ports"]["mmr1"])
     _run_route_mode(
         context, "rep_group", "replication",
@@ -67,6 +73,7 @@ def _run_rep_port_write_route(context):
 
 
 def _run_balance_route(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     allowed = tuple(str(ports[key]) for key in
                     ("mmr1", "mmr1_standby1", "mmr2", "mmr2_standby1"))
@@ -79,6 +86,7 @@ def _run_balance_route(context):
 
 
 def _run_mmr_port_write_route(context):
+    ops = context.ops
     backend = str(ops.env.config["database"]["ports"]["mmr2"])
     _run_route_mode(
         context, "mmr_group", "mmr",
@@ -90,6 +98,7 @@ def _run_mmr_port_write_route(context):
 
 
 def _run_sql_parse_extended_protocol(context):
+    ops = context.ops
     ops.start(transform=_sql_parse_transform("mmr_group"))
     jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     source = ops.root / "suites" / "ha_commands" / "assets" / "jdbc" / "HaSqlParseExtended.java"
@@ -100,7 +109,7 @@ def _run_sql_parse_extended_protocol(context):
         ops.logs_dir / "HaSqlParseExtended.javac.log", cwd=ops.workdir,
         step_title="编译 sql_parse 扩展协议 JDBC driver")
     jdbc_url = (
-        f"jdbc:postgresql://{ops.LOCAL_HOST}:{ops.listen_port}/mmr_group?"
+        f"jdbc:postgresql://{LOCAL_HOST}:{ops.listen_port}/mmr_group?"
         "prepareThreshold=1&preferQueryMode=extended")
     _, output = ops.run_command(
         ["java", "-cp", "%s:%s" % (ops.workdir, jar),
@@ -123,6 +132,7 @@ def _run_sql_parse_extended_protocol(context):
 
 
 def _run_rep_sql_parse_read_write_transactions(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     _run_sql_parse_transactions(
         context, "rep_group", "replication",
@@ -130,6 +140,7 @@ def _run_rep_sql_parse_read_write_transactions(context):
 
 
 def _run_mmr_port_read_route(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     readable = tuple(str(ports[key]) for key in
                      ("mmr1", "mmr1_standby1", "mmr2_standby1"))
@@ -143,6 +154,7 @@ def _run_mmr_port_read_route(context):
 
 
 def _run_four_group_modes_route_visibility(context):
+    ops = context.ops
     ops.start()
     for group_name, mode in (
             ("mmr_group", "mmr"), ("rep_group", "rep"),
@@ -158,6 +170,7 @@ def _run_four_group_modes_route_visibility(context):
 
 
 def _run_mmr_sql_parse_read_write_transactions(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     _run_sql_parse_transactions(
         context, "mmr_group", "mmr",
@@ -166,6 +179,7 @@ def _run_mmr_sql_parse_read_write_transactions(context):
 
 
 def _run_balance_read_only_route(context):
+    ops = context.ops
     conf = ops.start(transform=_balance_read_only_transform(context))
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -218,6 +232,7 @@ def _run_balance_read_only_route(context):
 
 
 def _run_replication_route(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     allowed = (str(ports["mmr1"]), str(ports["mmr1_standby1"]))
     _run_route_mode(
@@ -231,6 +246,7 @@ def _run_replication_route(context):
 
 
 def _run_mmr_hint_read_route(context):
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     readable = tuple(str(ports[key]) for key in
                      ("mmr1", "mmr1_standby1", "mmr2", "mmr2_standby1"))

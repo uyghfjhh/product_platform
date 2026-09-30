@@ -1,3 +1,4 @@
+import os
 """Executors for Chapter 9: JDBC read/write splitting scenarios (42.2.7, 42.7.0, 42.7.7)."""
 
 from platform_regress.clients.psql import build_psql_command
@@ -6,11 +7,11 @@ from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess
 from platform_regress.execution.shell import quote_arguments
 from suites.handover.runtime import HandoverFailure
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def execute_jdbc(context):
     """9.1 & 9.2 JDBC 读写分离时序矩阵测试"""
+    ops = context.ops
     ops.start()
     version = "42.2.7" if "4227" in ops.case.name else ("42.7.0" if "4270" in ops.case.name else "42.7.7")
     source = ops.root / "suites" / "handover" / "assets" / "jdbc" / "HandoverJdbcRouting.java"
@@ -22,7 +23,7 @@ def execute_jdbc(context):
     if compile_result.returncode != 0:
         raise HandoverFailure("JDBC compile failed: %s" % compile_result.output)
 
-    url = jdbc_client.build_url(ops.LOCAL_HOST, ops.listen_port, "postgres", {"user": "postgres"})
+    url = jdbc_client.build_url(LOCAL_HOST, ops.listen_port, "postgres", {"user": "postgres"})
     run_log = ops.logs_dir / "jdbc_run.log"
     protocol_mode = "old" if version == "42.2.7" else "new"
     phase_groups = ("OLD_11", "OLD_12", "OLD_13", "OLD_14") if protocol_mode == "old" else (
@@ -31,7 +32,7 @@ def execute_jdbc(context):
 
     def observe(phase, marker):
         command = build_psql_command(
-            ops.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, ops.listen_port,
+            ops.env.config["local"]["postgres_dir"], LOCAL_HOST, ops.listen_port,
             "admin", "console", "SHOW CLIENTS;",
         )
         logfile = ops.logs_dir / ("jdbc_%s_show_clients.log" % phase.lower())

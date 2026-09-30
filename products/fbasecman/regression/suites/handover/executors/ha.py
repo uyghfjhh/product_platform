@@ -9,15 +9,13 @@ Strictly verified against doc/转测文档/fbasecman转测文档.md:
 
 import time
 from suites.handover.runtime import HandoverFailure
-import fbasecman_ops as ops
-
-
 def _backend_port_sql():
     return "SELECT inet_server_port() AS backend_port, pg_is_in_recovery() AS in_recovery;"
 
 
 def execute_ha(context):
     """Entry point dispatching to specific Chapter 8 test executors."""
+    ops = context.ops
     case_name = ops.case.name
 
     if case_name in (
@@ -41,6 +39,7 @@ def execute_ha(context):
 # ---------------------------------------------------------------------------
 def execute_ha_mmr(context):
     """8.2~8.6 MMR 故障切换、降级与备库排除"""
+    ops = context.ops
     db_ports = ops.env.config["database"]["ports"]
     write_leader_port = str(db_ports["mmr1"])
     write_replica_port = str(db_ports["mmr1_standby1"])
@@ -254,6 +253,7 @@ def execute_ha_mmr(context):
 # ---------------------------------------------------------------------------
 def execute_ha_rep(context):
     """8.7 复制组高可用场景测试"""
+    ops = context.ops
     case_name = ops.case.name
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr2"])         # pg_230
@@ -529,6 +529,7 @@ def execute_ha_rep(context):
 # ---------------------------------------------------------------------------
 def execute_ha_monitor(context):
     """8.8 监控线程自动故障确认、接管与恢复测试"""
+    ops = context.ops
     case_name = ops.case.name
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr2"])

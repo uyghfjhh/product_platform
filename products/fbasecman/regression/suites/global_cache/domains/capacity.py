@@ -2,9 +2,6 @@
 
 from suites.global_cache.drivers import run_prepared_sequence
 from suites.global_cache.manifest import BACKEND_PS_LIMIT_KEY, GLOBAL_PS_LIMIT_KEY
-import fbasecman_ops as ops
-
-
 def ps_limit_replacements(global_limit, backend_limit=None):
     backend_limit = global_limit if backend_limit is None else backend_limit
     return [
@@ -40,6 +37,7 @@ def case_ps_limit(case_config, default):
 
 
 def seed_capacity_entries(context, count, prefix):
+    ops = context.ops
     operations = []
     statements = []
     for index in range(1, count + 1):

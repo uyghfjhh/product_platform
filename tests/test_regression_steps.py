@@ -3,7 +3,7 @@ import json
 import psycopg
 import pytest
 
-from platform_regress import CaseContext, SqlResult, run_sql_step
+from platform_regress.sdk import CaseContext, SqlResult, run_sql_step
 
 
 def test_declarative_sql_rows_mismatch_is_failure(tmp_path):

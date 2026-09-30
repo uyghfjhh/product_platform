@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 
 from . import bundle
 from .actions import TERMINAL, action_for_environment, actions_for_environment
-from .product_catalog import ProductManifestError, discover_products, validate_parameters
 from .catalog import get_product, list_products
 from .config import Settings, load_settings
 from .database import execute_query, list_columns, list_objects
 from .discovery import discover_cases, validate_target
+from .filestore import ConflictError, FileStore
 from .license import (
     LicenseInput,
     change_key_password,
@@ -30,8 +30,12 @@ from .license import (
     options,
     revoke_key,
 )
+from .product_catalog import (
+    ProductManifestError,
+    discover_products,
+    validate_parameters,
+)
 from .product_routes import register_product_routes
-from .filestore import ConflictError, FileStore
 from .topology import configured_topology, observed_status
 
 IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
@@ -85,6 +89,7 @@ class LicenseKeyDeleteInput(BaseModel):
 
 def public_task(task: dict) -> dict:
     result = dict(task)
+    result.pop("pending_events", None)
     result["parameters"] = json.loads(result["parameters"])
     result["cancel_requested"] = bool(result["cancel_requested"])
     return result
@@ -461,6 +466,11 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         async def stream():
             cursor = after
             while True:
+                # Read terminal state before its event snapshot. If finish
+                # races this iteration, the next iteration drains its event.
+                task = store.get_task(task_id)
+                if task is None:
+                    return
                 events = store.list_events(task_id, cursor)
                 for event in events:
                     cursor = event["sequence"]
@@ -468,8 +478,7 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
                         cursor,
                         json.dumps(event, ensure_ascii=False),
                     )
-                task = store.get_task(task_id)
-                if task is None or task["status"] in TERMINAL:
+                if task["status"] in TERMINAL:
                     return
                 await asyncio.sleep(0.5)
 

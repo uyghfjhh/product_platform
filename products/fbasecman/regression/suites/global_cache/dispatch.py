@@ -60,10 +60,8 @@ from suites.global_cache.domains.heartbeat_scenarios import (
     _assert_guc_reset_all_bypass,
     _run_heartbeat_reclassify_case,
 )
-import fbasecman_ops as ops
-
-
 def _execute_started_case(context, runner, assertion):
+    ops = context.ops
     ops.start_fbasecman()
     before_state = ops.capture_console_state("before")
     ops.summary["before_stats"] = before_state["stats"]
@@ -86,6 +84,7 @@ COMPOSITE_PHASE_NAMES = {
 @contextmanager
 def _case_phase(context, name, **overrides):
     """Run a sub-scenario with its own asset/config identity inside one report case."""
+    ops = context.ops
     if name not in COMPOSITE_PHASE_NAMES:
         raise GlobalCacheFailure("unknown composite phase: %s" % name)
     original = ops.case
@@ -101,6 +100,7 @@ def _case_phase(context, name, **overrides):
 
 
 def _collect_phase_checks(context, phase_title, action, collected):
+    ops = context.ops
     ops.summary.pop("verification_checks", None)
     first_step = len(ops.step_records)
     action()
@@ -113,6 +113,7 @@ def _collect_phase_checks(context, phase_title, action, collected):
 
 
 def _execute_reuse_scenarios(context):
+    ops = context.ops
     ops.start_fbasecman()
     before_state = ops.capture_console_state("before")
     ops.summary["before_stats"] = before_state["stats"]
@@ -154,6 +155,7 @@ def _execute_reuse_scenarios(context):
 
 
 def _execute_statement_lifecycle_scenarios(context):
+    ops = context.ops
     ops.start_fbasecman()
     before_state = ops.capture_console_state("before")
     ops.summary["before_stats"] = before_state["stats"]
@@ -181,6 +183,7 @@ def _execute_statement_lifecycle_scenarios(context):
 
 
 def _execute_guc_bypass_scenarios(context):
+    ops = context.ops
     ops.start_fbasecman()
     before_state = ops.capture_console_state("before")
     ops.summary["before_stats"] = before_state["stats"]
@@ -208,6 +211,7 @@ def _execute_guc_bypass_scenarios(context):
 
 
 def _execute_global_capacity_reload(context):
+    ops = context.ops
     _run_capacity_reload_shrink_case(context)
     try:
         after_state = ops.capture_console_state("after", include_server=False)
@@ -220,16 +224,19 @@ def _execute_global_capacity_reload(context):
 
 
 def _execute_close_unref(context):
+    ops = context.ops
     after_state = _run_close_unref_case(context)
     ops.summary["after_stats"] = after_state["stats"]
 
 
 def _execute_shared_disconnect_reuse(context):
+    ops = context.ops
     after_state = _run_shared_global_entry_disconnect_one_client_reuse_case(context)
     ops.summary["after_stats"] = after_state["stats"]
 
 
 def _execute_guc_reload(context):
+    ops = context.ops
     before_reload_state, after_state = _run_guc_reload_toggle_case(context)
     ops.summary["after_stats"] = after_state["stats"]
     _assert_guc_reload_toggle(context, before_reload_state, after_state)
@@ -268,6 +275,7 @@ SPECIAL_CASE_EXECUTORS = {
 
 
 def _execute_case(context):
+    ops = context.ops
     name = ops.case.name
     if name in STARTED_CASE_EXECUTORS:
         runner, assertion = STARTED_CASE_EXECUTORS[name]

@@ -29,8 +29,8 @@ from suites.global_cache.domains.driver_cases import (
 )
 from suites.global_cache.domains.capacity import ps_limit_replacements as _ps_limit_replacements
 from suites.global_cache.waits import wait_target_entries_unref as _wait_target_entries_unref
-import fbasecman_ops as ops
 def _assert_backend_global_split_eviction(context, before_state, mid_state, after_state):
+    ops = context.ops
     global_limit = int(ops.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
     backend_limit = int(ops.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
     delta = _stats_delta(before_state["stats"], after_state["stats"])
@@ -162,6 +162,7 @@ def _assert_backend_global_split_eviction(context, before_state, mid_state, afte
 
 
 def _run_backend_global_split_eviction_case(context):
+    ops = context.ops
     global_limit = int(ops.case.fbasecman.get(GLOBAL_PS_LIMIT_KEY, 4))
     backend_limit = int(ops.case.fbasecman.get(BACKEND_PS_LIMIT_KEY, 2))
     start_conf = ops.render_runtime_conf(
@@ -215,6 +216,7 @@ def _run_backend_global_split_eviction_case(context):
 
 
 def _run_discard_all_clears_backend_cache_case(context):
+    ops = context.ops
     business_sql = ops.case.assertions.get("business_sql", "select name from test where id = ? /* gc_discard_all_redeploy */")
     start_conf = ops.render_runtime_conf(
         [('server_lifetime  3600', 'server_lifetime  999')],
@@ -301,6 +303,7 @@ def _run_discard_all_clears_backend_cache_case(context):
 
 
 def _run_unnamed_overwrite_case(context, before_state):
+    ops = context.ops
     start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  10'),
@@ -353,6 +356,7 @@ def _run_unnamed_overwrite_case(context, before_state):
 
 
 def _assert_discard_all_clears_backend_cache(context, before_state, after_state):
+    ops = context.ops
     log_text = (ops.logs_dir / "GC_discard_all_redeploy.java.log").read_text(encoding="utf-8", errors="replace")
     before_rows = ops.summary.get("discard_all_before_server_rows", [])
     after_redeploy_rows = [
@@ -434,6 +438,7 @@ def _assert_discard_all_clears_backend_cache(context, before_state, after_state)
 
 
 def _assert_parse_invalid_error_recovery(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     log_text = ops.jdbc_log.read_text(encoding="utf-8")
     if "符合预期,首次执行失败！" not in log_text:

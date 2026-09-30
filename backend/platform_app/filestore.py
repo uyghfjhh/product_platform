@@ -9,7 +9,10 @@
     results/<env_id>/<sha>.json     结果（product+target+profile 键哈希命名）
     diagnoses/<env_id>/<sha>.json   诊断（随 result 快照判定 stale）
 
-写路径：临时文件 + os.replace 原子替换；多步写持 locks/store.lock 的
+任务状态与事件提交：meta.json 的 pending_events 是已提交事件，JSONL 是可恢复投影。
+API 合并 pending_events；重启/后续追加幂等重放，成功后清除 outbox。
+
+写路径：临时文件 + os.replace + 目录 fsync；多步写持 locks/store.lock 的
 flock 独占锁，保证并发安全。
 """
 
@@ -54,6 +57,7 @@ class FileStore:
         self.platform_dir.mkdir(parents=True, exist_ok=True)
         for sub in ("environments", "tasks", "results", "diagnoses", "locks"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
+        self.recover_event_projections()
 
     # ---- 底层原语 ---------------------------------------------------------
 
@@ -77,12 +81,21 @@ class FileStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp, path)
+            FileStore._sync_directory(path.parent)
         except BaseException:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _sync_directory(path: Path) -> None:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _read_yaml(path: Path, default=None):
@@ -364,7 +377,12 @@ class FileStore:
                 task["started_at"] = now()
             if status in TERMINAL_STATUSES and task.get("finished_at") is None:
                 task["finished_at"] = now()
-            self._write_task(task)
+            if status in TERMINAL_STATUSES:
+                task["last_sequence"] = task.get("last_sequence", 0) + 1
+                self._commit_event(task, "operation.finished",
+                                   {"status": status, "reason": task.get("reason")}, task["finished_at"])
+            else:
+                self._write_task(task)
         return True
 
     def request_cancel(self, task_id: str) -> bool:
@@ -378,12 +396,13 @@ class FileStore:
             else:
                 task["status"] = "CANCELLING"
             task["cancel_requested"] = 1
-            self._write_task(task)
+            task["last_sequence"] = task.get("last_sequence", 0) + 1
+            self._commit_event(task, "operation.cancel_requested", {})
         return True
 
     def finish_task(self, task_id: str, expected: tuple[str, ...], status: str,
                     reason: str | None) -> bool:
-        """终态 + operation.finished 事件原子提交。"""
+        """Atomically commit terminal state and its durable event in task metadata."""
         if status not in TERMINAL_STATUSES:
             raise ValueError("任务终态无效")
         with self._locked():
@@ -395,12 +414,64 @@ class FileStore:
             task["reason"] = reason
             task["finished_at"] = at
             task["last_sequence"] = task.get("last_sequence", 0) + 1
-            self._write_task(task)
-            self._append_event(task, "operation.finished",
-                               {"status": status, "reason": reason}, at)
+            self._commit_event(task, "operation.finished", {"status": status, "reason": reason}, at)
         return True
 
     # ---- 事件 --------------------------------------------------------------
+
+    def _commit_event(self, task: dict, event_type: str, payload: dict, at=None) -> dict:
+        event = {"task_id": task["id"], "sequence": task["last_sequence"],
+                 "recorded_at": at or now(), "event_type": event_type, "payload": payload}
+        retry = bool(task.get("pending_events"))
+        task.setdefault("pending_events", []).append(event)
+        # This single atomic file is the authoritative commit of state + event.
+        # JSONL is a projection; readers merge pending facts until it catches up.
+        self._write_task(task)
+        self._flush_pending_events(task, check_existing=retry)
+        return event
+
+    def _flush_pending_events(self, task: dict, *, check_existing=True) -> None:
+        pending = task.get("pending_events") or []
+        if not pending:
+            return
+        try:
+            path = self._task_events(task["id"])
+            projected = set()
+            if check_existing and path.is_file():
+                raw = path.read_bytes()
+                # Repair only an interrupted append. Its full event is durable
+                # in meta.json, so replay restores rather than loses that fact.
+                if raw and not raw.endswith(b"\n"):
+                    raw = raw[:raw.rfind(b"\n") + 1]
+                    with path.open("wb") as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                for line in raw.splitlines():
+                    try:
+                        projected.add(json.loads(line)["sequence"])
+                    except (ValueError, KeyError):
+                        continue
+            for event in pending:
+                if event["sequence"] not in projected:
+                    ref = {"id": task["id"], "last_sequence": event["sequence"]}
+                    self._append_event(ref, event["event_type"], event["payload"], event["recorded_at"])
+                    projected.add(event["sequence"])
+            clean = dict(task)
+            clean.pop("pending_events", None)
+            self._write_task(clean)
+            task.pop("pending_events", None)
+        except OSError:
+            # The commit already succeeded. Preserve its outbox; API readers
+            # see it and a later append/restart can retry projection safely.
+            return
+
+    def recover_event_projections(self) -> None:
+        with self._locked():
+            for path in (self.root / "tasks").glob("*/meta.json"):
+                task = self._read_json(path)
+                if task and task.get("pending_events"):
+                    self._flush_pending_events(task)
 
     def _append_event(self, task: dict, event_type: str, payload: dict,
                       at: str | None = None) -> dict:
@@ -419,6 +490,7 @@ class FileStore:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+                self._sync_directory(events_file.parent)
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         return event
@@ -429,8 +501,7 @@ class FileStore:
             if task is None:
                 raise KeyError(task_id)
             task["last_sequence"] = task.get("last_sequence", 0) + 1
-            self._write_task(task)
-            event = self._append_event(task, event_type, payload)
+            event = self._commit_event(task, event_type, payload)
         return {
             "task_id": task_id,
             "sequence": event["sequence"],
@@ -440,21 +511,19 @@ class FileStore:
         }
 
     def list_events(self, task_id: str, after: int = 0) -> list[dict]:
-        events_file = self._task_events(task_id)
-        if not events_file.is_file():
-            return []
-        events = []
-        for line in events_file.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("sequence", 0) > after:
-                events.append(event)
-        events.sort(key=lambda item: item.get("sequence", 0))
-        return events
+        with self._locked():
+            path = self._task_events(task_id)
+            events = {}
+            for line in path.read_bytes().splitlines() if path.is_file() else []:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and isinstance(event.get("sequence"), int):
+                    events[event["sequence"]] = event
+            task = self.get_task(task_id) or {}
+            events.update({event["sequence"]: event for event in task.get("pending_events", [])})
+            return [events[key] for key in sorted(events) if key > after]
 
     # ---- 结果与诊断 ---------------------------------------------------------
 

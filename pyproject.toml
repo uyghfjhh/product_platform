@@ -33,3 +33,6 @@ where = ["backend"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["backend", ".", "tests"]
+
+[tool.setuptools.package-data]
+platform_regress = ["clients/assets/*.sh"]

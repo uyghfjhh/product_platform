@@ -1,3 +1,4 @@
+import os
 """Executors for Chapter 11: Expanded product capabilities (Heartbeat, GUC, Attach, Parse error, Global PS)."""
 
 import re
@@ -7,11 +8,11 @@ from platform_regress.clients import jdbc as jdbc_client
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.phased_process import PhaseAction, PhasedProcess
 from suites.handover.runtime import HandoverFailure
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def execute_heartbeat_interception(context):
     """11.1、探活功能：探活 SQL 拦截且绝对不发送至 PostgreSQL"""
+    ops = context.ops
     # 配置文件中已设置 heartbeat_request "select 12"
     ops.start(heartbeat_request="select 12")
 
@@ -39,6 +40,7 @@ def execute_heartbeat_interception(context):
 
 def execute_guc_sync(context):
     """11.2、GUC 参数感知和动态同步功能"""
+    ops = context.ops
     ops.start()
 
     # 1. 设置会话 GUC 参数并验证生效
@@ -71,6 +73,7 @@ def execute_guc_sync(context):
 
 def execute_attach_optimization(context):
     """11.3、attach 流程优化：读写切换标签、探活和 GUC 不产生多余后端连接"""
+    ops = context.ops
     ops.start()
 
     # 初始连接并记录连接数
@@ -93,6 +96,7 @@ def execute_attach_optimization(context):
 
 def execute_parse_error_single(context):
     """11.4.3.1 单 Parse 执行失败后后端缓存清理与连接复用"""
+    ops = context.ops
     ops.start()
 
     # 故意构造语法错误的 Prepare/Parse，然后紧跟正确的 Prepare
@@ -113,6 +117,7 @@ def execute_parse_error_single(context):
 
 def execute_parse_error_multiple(context):
     """11.4.3.2 多 Parse 序列中某个失败后恢复"""
+    ops = context.ops
     ops.start()
 
     statements = [
@@ -135,6 +140,7 @@ def execute_parse_error_multiple(context):
 
 def execute_global_prepared_statements(context):
     """11.5.2 & 11.5.3 PreparedStatements 全局缓存基本功能与读写切换"""
+    ops = context.ops
     ops.start()
 
     # 1. 准备初始数据表
@@ -165,7 +171,7 @@ def execute_global_prepared_statements(context):
     if compile_res.returncode != 0:
         raise HandoverFailure("HandoverGlobalPrepared JDBC compile failed: %s" % compile_res.output)
 
-    url = f"jdbc:postgresql://{ops.LOCAL_HOST}:{ops.listen_port}/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended"
+    url = f"jdbc:postgresql://{LOCAL_HOST}:{ops.listen_port}/postgres?user=postgres&prepareThreshold=1&preferQueryMode=extended"
     process = PhasedProcess(
         ["java", "-cp", "%s:%s" % (jar, build), "HandoverGlobalPrepared", url],
         ops.logs_dir / "global_ps_first_run.log", cwd=build,
@@ -242,6 +248,7 @@ def execute_global_prepared_statements(context):
 
 def execute_global_prepared_special_sql(context):
     """11.5.3.2 全局缓存的心跳、GUC 和特殊事务标签"""
+    ops = context.ops
     ops.start()
 
     statements = [
@@ -256,6 +263,7 @@ def execute_global_prepared_special_sql(context):
 
 def execute_global_prepared_eviction(context):
     """11.5.3.3.1 全局和后端 PreparedStatement 缓存容量超限淘汰"""
+    ops = context.ops
     ops.start()
 
     # 准备若干不同的 Prepared Statement
@@ -271,6 +279,7 @@ def execute_global_prepared_eviction(context):
 
 def execute_global_prepared_bypass_retention(context):
     """11.5.3.3.2 持有 bypass 响应的全局缓存条目不淘汰"""
+    ops = context.ops
     ops.start()
 
     statements = [

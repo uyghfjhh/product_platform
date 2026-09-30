@@ -5,27 +5,31 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import socket
 import tarfile
 import time
 from datetime import datetime
 from pathlib import Path
 
-from platform_regress.execution.command import run_logged_command
-from platform_regress.execution.background import capture_command, start_background
-from platform_regress.execution.locking import ExclusiveFileLock
-from platform_regress.execution.shell import LoggedShellRunner
-from platform_regress.clients.psql import build_psql_command
 from cmanconf import validate_profile_isolation
-from products.fbasecman.process import FbasecmanProcess
+from platform_regress.clients.psql import build_psql_command
+from platform_regress.execution.background import start_background
+from platform_regress.execution.command import run_logged_command
+from platform_regress.execution.locking import ExclusiveFileLock
+from platform_regress.execution.longrun import transition_status
+from platform_regress.execution.processes import (
+    is_alive,
+    managed_pid,
+    stop_managed,
+)
+from platform_regress.execution.shell import LoggedShellRunner
 from suites.stable.config import StableConfig, render_fbasecman_config
 from suites.stable.manifest import find_workload
 from suites.stable.state import StateStore
-from suites.stable.lifecycle import transition_status
-import fbasecman_ops as ops
 
+from products.fbasecman.process import FbasecmanProcess
 
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 class StableFailure(RuntimeError):
     pass
 
@@ -34,7 +38,7 @@ def _port_free(port):
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((ops.LOCAL_HOST, int(port)))
+        sock.bind((LOCAL_HOST, int(port)))
         return True
     except OSError:
         return False
@@ -145,46 +149,12 @@ def displayed_pid(state, item, key="pid"):
     return str(item.get(key) or "-")
 
 
-def is_alive(pid):
-    if not pid:
-        return False
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except OSError:
-        return False
 
 
-def command_line(pid):
-    path = Path("/proc") / str(pid) / "cmdline"
-    if not path.exists():
-        return ""
-    return path.read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
 
 
-def managed_pid(pid, expected):
-    return bool(pid and is_alive(pid) and expected and expected in command_line(pid))
 
 
-def stop_managed(pid, expected, timeout=8):
-    if not managed_pid(pid, expected):
-        return False
-    try:
-        os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
-    except OSError:
-        try:
-            os.kill(int(pid), signal.SIGTERM)
-        except OSError:
-            return False
-    deadline = time.time() + timeout
-    while time.time() < deadline and is_alive(pid):
-        time.sleep(0.2)
-    if is_alive(pid) and managed_pid(pid, expected):
-        try:
-            os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
-        except OSError:
-            pass
-    return True
 
 
 def pgbench_result(text, returncode=0, allow_config_lock_conflict=False):
@@ -201,10 +171,9 @@ def pgbench_result(text, returncode=0, allow_config_lock_conflict=False):
                 "reload_busy": reload_busy, "refresh_retry": refresh_retry,
                 "attempts": attempts,
                 "returncode": returncode}
-    transactions = re.search(r"number of transactions actually processed:\s*(\d+)", text, re.I)
-    failures = re.search(r"number of failed transactions:\s*(\d+)", text, re.I)
-    count = int(transactions.group(1)) if transactions else 0
-    failed = int(failures.group(1)) if failures else 0
+    from platform_regress.clients.pgbench import parse_pgbench_result
+    metrics = parse_pgbench_result(text, returncode)
+    count, failed = metrics["transactions"], metrics["failures"]
     lock_conflict = "another reload or configuration persistence command is running" in text
     error_lines = [line for line in text.splitlines()
                    if re.search(r"ERROR:|FATAL:|PANIC:|server closed|connection refused|backend died", line, re.I)]
@@ -287,31 +256,9 @@ def pg_log_findings(text):
 
 
 def pg_log_window_script(postgres_dir, port, user, since, label):
-    """Return a log query that only emits records written during this run.
-
-    PostgreSQL appends to a long-lived log file.  Filtering files by mtime and
-    then reading their full tails makes errors from an earlier run look new.
-    Keep continuation lines with their timestamped record, but only emit a
-    record after the run start timestamp.
-    """
-    return """set -eu
-PG={pg}/bin/psql
-data_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show log_directory')
-case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
-run_start=$(date -d '@{since}' '+%Y-%m-%d %H:%M:%S')
-printf 'NODE={label} PORT={port} DATA_DIR=%s LOG_DIR=%s RUN_START=%s\\n' \"$data_dir\" \"$log_dir\" \"$run_start\"
-for file in $(find \"$log_dir\" -maxdepth 1 -type f -newermt '@{since}' -print | sort); do
-  printf '\\n=== FILE: %s ===\\n' \"$file\"
-  tail -n 800 \"$file\" | awk -v start=\"$run_start\" '
-    /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {{
-      keep = substr($0, 1, 19) >= start
-    }}
-    keep {{ print }}
-  ' | grep -Ei 'table_test|test_prepare|mmrhint|mmrport|rephint|balance|ERROR|FATAL|PANIC' || true
-done
-""".format(pg=shlex.quote(str(postgres_dir)), port=int(port), user=shlex.quote(str(user)),
-             since=int(since), label=label, host=ops.LOCAL_HOST)
+    from platform_regress.evidence.postgresql_logs import postgres_log_window_script
+    return postgres_log_window_script(postgres_dir, port, user, since, label, host=LOCAL_HOST,
+              patterns=("table_test", "test_prepare", "mmrhint", "mmrport", "rephint", "balance", "ERROR", "FATAL", "PANIC"))
 
 
 def pg_log_targets(config):
@@ -323,43 +270,9 @@ def pg_log_targets(config):
 
 
 def pg_log_archive_script(postgres_dir, port, user, since, label):
-    """Build a remote archive command that never moves PostgreSQL's open log."""
-    return """set -eu
-PG={pg}/bin/psql
-data_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show data_directory')
-log_dir=$($PG -h {host} -p {port} -U {user} -d postgres -At -c 'show log_directory')
-case \"$log_dir\" in /*) ;; *) log_dir=\"$data_dir/$log_dir\" ;; esac
-archive_dir=\"$log_dir/stable_archive\"
-mkdir -p \"$archive_dir\"
-command -v lsof >/dev/null 2>&1 || {{ echo 'ERROR: lsof is required to protect open PostgreSQL logs' >&2; exit 2; }}
-open_files=$(lsof -F n +d \"$log_dir\" 2>/dev/null | sed -n 's/^n//p')
-set --
-archived=0
-skipped_open=0
-for pattern in '*.csv' '*.log'; do
-  for file in \"$log_dir\"/$pattern; do
-    [ -f \"$file\" ] || continue
-    modified=$(stat -c %Y \"$file\" 2>/dev/null || printf '0')
-    [ \"$modified\" -ge {since} ] || continue
-    if printf '%s\\n' \"$open_files\" | grep -Fx \"$file\" >/dev/null 2>&1; then
-      skipped_open=$((skipped_open + 1))
-      continue
-    fi
-    set -- \"$@\" \"$file\"
-    archived=$((archived + 1))
-  done
-done
-archive_path=''
-if [ \"$archived\" -gt 0 ]; then
-  archive_path=\"$archive_dir/stable_{label}_$(date +%Y%m%d_%H%M%S).tar.gz\"
-  tar -czf \"$archive_path\" --remove-files \"$@\"
-fi
-printf 'NODE={label} PORT={port} LOG_DIR=%s\\n' \"$log_dir\"
-printf 'ARCHIVED_FILES=%s\\n' \"$archived\"
-printf 'SKIPPED_OPEN_FILES=%s\\n' \"$skipped_open\"
-printf 'ARCHIVE=%s\\n' \"$archive_path\"
-""".format(pg=shlex.quote(str(postgres_dir)), port=int(port), user=shlex.quote(str(user)),
-           since=int(since), label=label, host=ops.LOCAL_HOST)
+    from platform_regress.evidence.postgresql_logs import postgres_log_archive_script
+    return postgres_log_archive_script(postgres_dir, port, user, since, label, host=LOCAL_HOST,
+              archive_subdir="stable_archive", archive_prefix="stable", remove_sources=True)
 
 
 class StableRuntime(object):
@@ -513,7 +426,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
 
     def _console_reload(self):
         command = build_psql_command(
-            self.cfg.runtime_config.config["local"]["postgres_dir"], ops.LOCAL_HOST, self.main_port,
+            self.cfg.runtime_config.config["local"]["postgres_dir"], LOCAL_HOST, self.main_port,
             "admin", "console", "RELOAD;", footer=False)
         result = run_logged_command(
             command, self.logs / "fbasecman.reload.log", cwd=self.run_dir,
@@ -558,7 +471,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
             for attempt in range(attempts):
                 marker = "stable_route_%s_%d" % (workload.name.replace(".", "_"), attempt + 1)
                 command = build_psql_command(
-                    postgres_dir, ops.LOCAL_HOST, port, user, database,
+                    postgres_dir, LOCAL_HOST, port, user, database,
                     sql, footer=False)
                 env = os.environ.copy()
                 env["PGAPPNAME"] = marker
@@ -628,12 +541,14 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
         postgres = Path(self.cfg.runtime_config.config["local"]["postgres_dir"])
         port = self.write_port if workload.port_kind == "write" else self.main_port
         sql_path = self._render_pgbench_sql(workload)
-        command = [str(postgres / "bin" / "pgbench"), "-n", "-P", "5",
-                   "-h", ops.LOCAL_HOST, "-p", str(port), "-U", workload.user,
-                   "-d", workload.database, "-f", str(sql_path),
-                   "-c", str(workload.clients), "-j", str(workload.jobs)]
-        if workload.connect_per_transaction:
-            command.append("-C")
+        from platform_regress.clients.pgbench import (
+            PgbenchRequest,
+            filtered_pgbench_command,
+        )
+        command = PgbenchRequest(str(postgres / "bin" / "pgbench"), LOCAL_HOST,
+            port, workload.user, workload.database, str(sql_path),
+            workload.clients, workload.jobs,
+            connect_per_transaction=workload.connect_per_transaction).argv()
         if workload.name == "pgbench.reload_status_toggle":
             values = self.cfg.values["reload_status_toggle"]
             command.extend(("-T", str(self.cfg.duration("pgbench"))))
@@ -642,7 +557,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
                             "pgbench" / "run_reload_stress.sh"),
                 str(self.cfg.duration("pgbench")), str(values["interval_seconds"]),
                 str(self.conf), str(values["datasource"]),
-                str(postgres / "bin" / "psql"), ops.LOCAL_HOST, str(self.main_port),
+                str(postgres / "bin" / "psql"), LOCAL_HOST, str(self.main_port),
             ] + command
         if workload.name.startswith("pgbench.ha_"):
             command.extend(("-t", "1"))
@@ -650,7 +565,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
                                 "pgbench" / "run_ha_pgbench.sh"),
                     str(self.cfg.duration("pgbench"))] + command
         command.extend(("-T", str(self.cfg.duration("pgbench"))))
-        return ["bash", str(self.root / "suites" / "stable" / "assets" / "pgbench" / "run_pgbench.sh")] + command
+        return filtered_pgbench_command(command)
 
     def _render_pgbench_sql(self, workload):
         """Render endpoint targets from the resolved stable configuration."""
@@ -701,7 +616,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
         command = self._jdbc_command() if workload.kind == "jdbc" else self._pgbench_command(workload)
         env = os.environ.copy()
         if workload.kind == "jdbc":
-            env.update({"JDBC_URL": f"jdbc:postgresql://{ops.LOCAL_HOST}:{self.main_port}/mmrhint",
+            env.update({"JDBC_URL": f"jdbc:postgresql://{LOCAL_HOST}:{self.main_port}/mmrhint",
                         "JDBC_USER": "mmrhint", "JDBC_PASSWORD": "", "JDBC_PREPARE_THRESHOLD": "1",
                         "JDBC_DIR": str(self.root / self.cfg.runtime_config.config["local"]["jdbc_lib_dir"])})
         process = start_background(command, cwd=self.run_dir, env=env, output_path=log)
@@ -765,43 +680,35 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
             monitor_pid, monitor_command = self.start_monitor()
             state["monitor_pid"] = monitor_pid
             state["commands"][str(monitor_pid)] = "internal-monitor"
-            launched = {}
+            from platform_regress.execution.longrun import WorkloadGroup
+            def evaluate(name, text, rc):
+                item = find_workload(name)
+                return jdbc_result(text, rc) if item.kind == "jdbc" else pgbench_result(
+                    text, rc, allow_config_lock_conflict=name.startswith("pgbench.ha_"))
+            group = WorkloadGroup(self.store, state, launch=self.launch_workload,
+                describe=lambda item: {"duration_seconds": self.cfg.duration(item.kind),
+                                       "fingerprint": self.workload_fingerprint(item)},
+                evaluate=evaluate)
             completed = False
             try:
-                for item in workloads:
-                    process, log, command = self.launch_workload(item)
-                    launched[item.name] = (process, log, command)
-                    state["workloads"][item.name].update({"pid": process.pid, "status": "running",
-                                                           "log": str(log), "command": command,
-                                                           "started_at": int(time.time()),
-                                                           "duration_seconds": self.cfg.duration(item.kind),
-                                                           "fingerprint": self.workload_fingerprint(item)})
-                    state["commands"][str(process.pid)] = str(self.run_dir)
-                    self.store.save(state)
-                for name, (process, log, command) in launched.items():
-                    rc = process.wait()
-                    text = log.read_text(encoding="utf-8", errors="replace")
-                    item = find_workload(name)
-                    result = jdbc_result(text, rc) if item.kind == "jdbc" else pgbench_result(
-                        text, rc, allow_config_lock_conflict=item.name.startswith("pgbench.ha_"))
-                    state["workloads"][name].update({"returncode": rc, "status": "completed" if result["ok"] else "failed", "result": result})
-                    self.store.save(state)
+                group.run(workloads)
                 self.finalize_state(state, before_health)
                 self.store.save(state)
                 completed = state["status"] == "completed"
             finally:
-                for name, (process, _, _) in launched.items():
-                    if process.poll() is None:
-                        stop_managed(process.pid, self.workload_fingerprint(find_workload(name)))
-                    process.close_output()
-                monitor_stopped = stop_managed(state.get("monitor_pid"), "internal-monitor")
-                self.process.stop(best_effort=True, record=False)
-                state["cleanup"] = {
-                    "workloads_stopped": all(process.poll() is not None for process, _, _ in launched.values()),
-                    "monitor_stopped": monitor_stopped or not is_alive(state.get("monitor_pid")),
-                    "fbasecman_stopped": not is_alive(state.get("fbasecman_pid")),
-                    "environment_after_cleanup": self.health(),
-                }
+                from platform_regress.execution.longrun import cleanup_actions
+                def stop_product():
+                    self.process.stop(best_effort=True, record=False)
+                    return not is_alive(state.get("fbasecman_pid"))
+                state["cleanup"] = cleanup_actions({
+                    "workloads_stopped": group.close,
+                    "monitor_stopped": lambda: stop_managed(state.get("monitor_pid"), "internal-monitor") or not is_alive(state.get("monitor_pid")),
+                    "fbasecman_stopped": stop_product,
+                    "environment_after_cleanup": self.health,
+                })
+                if state["cleanup"].get("errors"):
+                    state["status"] = "failed"
+                    completed = False
                 self.store.save(state)
                 self.write_reports(state, state.get("environment_before"), state.get("environment_after"))
             return completed
@@ -1065,22 +972,10 @@ def workload_log_summary(text, kind):
 
 
 def monitor_loop(state_file, interval):
-    store = StateStore(state_file); state = store.load(); run_dir = Path(state.get("run_dir", ".")); output = run_dir / "monitor" / "resources.csv"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        if handle.tell() == 0: writer.writerow(["timestamp", "pid", "rss_kb", "vsz_kb", "cpu_percent", "threads", "fd_count", "read_bytes", "write_bytes"])
-        while True:
-            state = store.load(); pid = state.get("fbasecman_pid")
-            if state.get("status") != "running" or not managed_pid(pid, state.get("run_dir", "")): break
-            ps = capture_command(["ps", "-p", str(pid), "-o", "rss=,vsz=,%cpu=,nlwp="]).split()
-            io = {"read_bytes": 0, "write_bytes": 0}; io_path = Path("/proc") / str(pid) / "io"
-            if io_path.exists():
-                for line in io_path.read_text().splitlines():
-                    key, _, value = line.partition(":")
-                    if key in io: io[key] = int(value.strip())
-            fd = len(list((Path("/proc") / str(pid) / "fd").iterdir()))
-            writer.writerow([datetime.now().isoformat(), pid] + (ps[:4] if len(ps) >= 4 else [0,0,0,0]) + [fd, io["read_bytes"], io["write_bytes"]]); handle.flush(); time.sleep(interval)
+    from platform_regress.execution.monitoring import monitor_state
+    store = StateStore(state_file)
+    output = Path(store.load().get("run_dir", ".")) / "monitor" / "resources.csv"
+    return monitor_state(store, pid_key="fbasecman_pid", output=output, interval=interval)
 
 
 def scan_logs(run_dir, product_log=None):

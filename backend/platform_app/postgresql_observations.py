@@ -10,5 +10,9 @@ def parse_replication(text: str) -> list[ParsedObservation]:
         if not identity:
             continue
         state = (row.get("state") or "unknown").lower()
-        result.append(ParsedObservation("postgres.replication", state, {"entity_id": identity, **row}))
+        result.append(
+            ParsedObservation(
+                "postgres.replication", state, {"entity_id": identity, **row}
+            )
+        )
     return result

@@ -1,14 +1,11 @@
 """Executors for Chapter 4-7: MMR and REP routing and lifecycle."""
-
-import fbasecman_ops as ops
-
-
 def _backend_server_sql():
     return "SELECT pg_catalog.inet_server_addr() AS server_ip, inet_server_port() AS server_port, pg_is_in_recovery() AS in_recovery;"
 
 
 def execute_mmr_hint_configuration(context):
     """4.1、fbasecman 配置文件核对与启动生效"""
+    ops = context.ops
     conf = ops.start()
     rendered = conf.read_text(encoding="utf-8")
     
@@ -49,6 +46,7 @@ def execute_mmr_hint_configuration(context):
 
 def execute_mmr_hint_lifecycle(context):
     """4.2、启停 fbasecman 测试"""
+    ops = context.ops
     # 4.2.1 方式一：daemonize yes 启动
     ops.start(foreground=False)
     _, output, _, _ = ops.console("SHOW GROUPS;", "4.2.1: 确认 daemonize yes 启动后控制台可登录")
@@ -69,6 +67,7 @@ def execute_mmr_hint_lifecycle(context):
 
 def execute_mmr_hint_set_readonly(context):
     """4.3、多活组读写切换测试：测试一与测试二（SET READ ONLY / SET READ WRITE）"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     write_port = str(db_ports["mmr1"])
@@ -122,6 +121,7 @@ def execute_mmr_hint_set_readonly(context):
 
 def execute_mmr_hint_begin_readonly(context):
     """4.3、多活组读写切换测试：测试三（BEGIN READ ONLY 事务内路由与 COMMIT 恢复）"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     write_port = str(db_ports["mmr1"])
@@ -150,6 +150,7 @@ def execute_mmr_hint_begin_readonly(context):
 
 def execute_mmr_port_configuration(context):
     """5.1、多活组 port 模式核心配置核对与生效"""
+    ops = context.ops
     conf = ops.start()
     rendered = conf.read_text(encoding="utf-8")
     required = [
@@ -165,6 +166,7 @@ def execute_mmr_port_configuration(context):
 
 def execute_mmr_port_node_status(context):
     """5.2、多活组 port 模式节点信息核对"""
+    ops = context.ops
     ops.start()
     expected_nodes = {
         "pg_220": {"group_role": "write-leader", "state": "active", "is_abnormal": "OK"},
@@ -177,6 +179,7 @@ def execute_mmr_port_node_status(context):
 
 def execute_mmr_port_write(context):
     """5.3、测试一：通过 write_port 连接固定写节点"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     write_port = str(db_ports["mmr1"])
@@ -191,6 +194,7 @@ def execute_mmr_port_write(context):
 
 def execute_mmr_port_read(context):
     """5.3、测试二：通过非 write_port 连接固定读节点并验证只读限制"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     write_port = str(db_ports["mmr1"])
@@ -211,6 +215,7 @@ def execute_mmr_port_read(context):
 
 def execute_rep_hint_configuration(context):
     """6.1、复制组 hint 模式核心配置核对与生效"""
+    ops = context.ops
     conf = ops.start()
     rendered = conf.read_text(encoding="utf-8")
     required = [
@@ -225,6 +230,7 @@ def execute_rep_hint_configuration(context):
 
 def execute_rep_hint_node_status(context):
     """6.2、复制组 hint 模式节点信息核对"""
+    ops = context.ops
     ops.start()
     expected_nodes = {
         "pg_220": {"group_role": "primary", "state": "active", "is_abnormal": "OK"},
@@ -236,6 +242,7 @@ def execute_rep_hint_node_status(context):
 
 def execute_rep_hint_set_readonly(context):
     """6.3、复制组 hint 读写切换测试：测试一与测试二"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr1"])
@@ -264,6 +271,7 @@ def execute_rep_hint_set_readonly(context):
 
 def execute_rep_hint_begin_readonly(context):
     """6.3、复制组 hint 读写切换测试：测试三（BEGIN READ ONLY）"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr1"])
@@ -283,6 +291,7 @@ def execute_rep_hint_begin_readonly(context):
 
 def execute_rep_port_configuration(context):
     """7.1、复制组 port 模式核心配置核对与生效"""
+    ops = context.ops
     conf = ops.start()
     rendered = conf.read_text(encoding="utf-8")
     required = [
@@ -297,6 +306,7 @@ def execute_rep_port_configuration(context):
 
 def execute_rep_port_node_status(context):
     """7.2、复制组 port 模式节点信息核对"""
+    ops = context.ops
     ops.start()
     expected_nodes = {
         "pg_220": {"group_role": "primary", "state": "active", "is_abnormal": "OK"},
@@ -308,6 +318,7 @@ def execute_rep_port_node_status(context):
 
 def execute_rep_port_write(context):
     """7.3、测试一：复制组通过 write_port 固定主库"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr1"])
@@ -323,6 +334,7 @@ def execute_rep_port_write(context):
 
 def execute_rep_port_read(context):
     """7.3、测试二：复制组通过非 write_port 固定备库并验证只读"""
+    ops = context.ops
     ops.start()
     db_ports = ops.env.config["database"]["ports"]
     primary_port = str(db_ports["mmr1"])

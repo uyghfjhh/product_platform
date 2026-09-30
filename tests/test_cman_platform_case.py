@@ -2,7 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from platform_regress import CaseContext, RegressionEngine
+from platform_regress.sdk import CaseContext, RegressionEngine
 
 
 TARGET = "global_cache.reuse_single_and_cross_client"
@@ -109,7 +109,7 @@ def test_large_suites_no_longer_use_run_case_bridge():
 
 
 def test_suite_failures_map_to_fail_verdict(tmp_path):
-    from platform_regress import CaseFailure
+    from platform_regress.sdk import CaseFailure
 
     module = load_cases()
     for suite, failure_name in (

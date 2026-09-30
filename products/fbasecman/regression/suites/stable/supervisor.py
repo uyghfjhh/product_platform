@@ -2,15 +2,12 @@
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 from platform_regress.execution.background import start_background
 from suites.stable.config import StableConfig
 from suites.stable.manifest import find_workload
 from suites.stable.state import StateStore
-from suites.stable.lifecycle import transition_status
-
 
 TERMINAL_WORKLOAD_STATES = ("completed", "failed", "stopped")
 
@@ -43,47 +40,13 @@ def _workload_result(name, item):
 
 
 def _observe_workloads(store):
-    from suites.stable.runtime import managed_pid
-
-    observed = store.load()
-    if observed.get("status") not in ("running", "degraded"):
-        return False
-    completed = {}
-    for name, item in observed.get("workloads", {}).items():
-        if item.get("status") != "running":
-            continue
-        if not managed_pid(item.get("pid"), item.get("fingerprint", observed.get("run_dir", ""))):
-            completed[name] = _workload_result(name, item)
-
-    def update(state):
-        if state.get("status") not in ("running", "degraded"):
-            return
-        for name, result in completed.items():
-            item = state.get("workloads", {}).get(name)
-            if not item or item.get("status") != "running":
-                continue
-            item.update({
-                "returncode": result.get("returncode"),
-                "result": result,
-                "status": "completed" if result["ok"] else "failed",
-            })
-    state = store.update(update) if completed else observed
-    values = list(state.get("workloads", {}).values())
-    return bool(values) and all(
-        item.get("status") in TERMINAL_WORKLOAD_STATES for item in values
-    )
+    from platform_regress.execution.longrun import observe_workloads
+    return observe_workloads(store, _workload_result)
 
 
 def _claim_finalization(store):
-    claimed = {"value": False}
-
-    def update(state):
-        if state.get("status") in ("running", "degraded"):
-            transition_status(state, "finalizing")
-            claimed["value"] = True
-
-    store.update(update)
-    return claimed["value"]
+    from platform_regress.execution.longrun import claim_finalization
+    return claim_finalization(store)
 
 
 def _cleanup_runtime(runtime, state):
@@ -104,53 +67,22 @@ def _cleanup_runtime(runtime, state):
 
 
 def _finalize(cfg, store):
+    from platform_regress.execution.longrun import finalize_run
     from suites.stable.runtime import runtime_for_state
-
-    state = store.load()
-    runtime = runtime_for_state(cfg, state)
-    try:
-        runtime.finalize_state(state, state.get("environment_before"))
-    except Exception as exc:
-        transition_status(state, "failed")
-        state["finalization_error"] = "%s: %s" % (type(exc).__name__, exc)
-    finally:
-        try:
-            state["cleanup"] = _cleanup_runtime(runtime, state)
-        except Exception as exc:
-            if state.get("status") == "finalizing":
-                transition_status(state, "failed")
-            state["cleanup_error"] = "%s: %s" % (type(exc).__name__, exc)
-        state["supervisor_pid"] = 0
-        def persist(current):
-            # stop_runtime claims stopping before terminating this process. Do
-            # not resurrect a stopped run with an in-flight finalizer snapshot.
-            if current.get("status") in ("stopping", "stopped"):
-                return
-            current.clear()
-            current.update(state)
-        state = store.update(persist)
-        try:
-            runtime.write_reports(
-                state, state.get("environment_before"), state.get("environment_after"),
-            )
-        except Exception as exc:
-            state["report_error"] = "%s: %s" % (type(exc).__name__, exc)
-            if state.get("status") == "completed":
-                state["status"] = "failed"
-            store.save(state)
+    runtime = runtime_for_state(cfg, store.load())
+    return finalize_run(store,
+        finalize=lambda state: runtime.finalize_state(state, state.get("environment_before")),
+        cleanup=lambda state: _cleanup_runtime(runtime, state),
+        report=lambda state: runtime.write_reports(state, state.get("environment_before"),
+                                                   state.get("environment_after")))
 
 
 def supervise(root, state_file, config_files=None, poll_interval=1):
+    from platform_regress.execution.longrun import supervise as supervise_workloads
     cfg = StableConfig(root, [Path(item) for item in config_files or ()])
     store = StateStore(state_file)
-    while True:
-        state = store.load()
-        if state.get("status") not in ("running", "degraded"):
-            return 0
-        if _observe_workloads(store) and _claim_finalization(store):
-            _finalize(cfg, store)
-            return 0
-        time.sleep(poll_interval)
+    return supervise_workloads(store, _workload_result, lambda: _finalize(cfg, store),
+                               poll_interval=poll_interval)
 
 
 def _parser():

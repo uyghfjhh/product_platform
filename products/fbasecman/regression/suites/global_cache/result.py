@@ -1,8 +1,6 @@
 """Global-cache case result assembly."""
-
-
-import fbasecman_ops as ops
 def set_report_blocks(context, verification_checks=None, business_summary=None, key_evidence=None):
+    ops = context.ops
     if verification_checks is not None:
         ops.summary["verification_checks"] = verification_checks
     if business_summary is not None:

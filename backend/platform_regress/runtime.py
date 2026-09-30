@@ -1,6 +1,6 @@
 """产品无关的用例运行时基类。
 
-``CaseRuntime`` 承担每个回归用例的公共生命周期：
+``ReportRuntime`` 承担每个回归用例的公共生命周期：
 
 - 运行目录 ``output/runs/<suite>/<case>`` 的重建与 workdir/logs 布局；
 - ``StepJournal`` 崩溃安全的步骤落盘 + ``record_step``/``evidence_step`` 记录；
@@ -14,6 +14,7 @@
 """
 
 import shutil
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,92 +24,56 @@ from platform_regress.evidence import EvidenceStep, StepJournal
 from platform_regress.execution.command import run_logged_command
 from platform_regress.execution.locking import ExclusiveFileLock
 from platform_regress.persistence.atomic import atomic_write_text, write_json
-from platform_regress.reporting import ReportCheck, ReportDocument, ReportStep, render_report
+from platform_regress.reporting import (
+    ReportCheck,
+    ReportDocument,
+    ReportStep,
+    render_report,
+)
 
-from .engine import CaseFailure
-
-
-class CaseRuntimeFailure(CaseFailure):
-    """用例执行失败的统一异常类型；各 suite 可子类化保留自己的名字。"""
-
-
-@dataclass(frozen=True)
-class EnvironmentRef:
-    """A pgcluster-managed environment reference supplied by the platform."""
-
-    id: str
-    product_id: str
-    deployment_config: Path
-    deployment_target: str
-    host: str
-    port: int
-    database_name: str = "postgres"
-    database_user: str = "postgres"
+from .contracts import CaseFailure
 
 
 @dataclass(frozen=True)
-class RegressionContext:
-    """Stable product SDK input; no product framework imports are required."""
+class ReportSpec:
+    """Product-independent identity and display metadata for a case report."""
+    name: str
+    target: str
+    summary: str
+    suite_id: str
+    source_sections: tuple[str, ...] = ()
 
-    environment: EnvironmentRef
-    output_dir: Path
-    profile_id: str
-    cancellation: object | None = None
+    def __post_init__(self):
+        for field in ("name", "suite_id"):
+            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", getattr(self, field)):
+                raise ValueError(f"invalid report {field}")
 
 
-class CaseRuntime(object):
+class ReportRuntime:
     """一个回归用例的运行上下文基类。
 
     子类扩展点：
-    - ``failure_class``：失败异常类型（默认 CaseRuntimeFailure）
+    - ``failure_class``：失败异常类型（默认 CaseFailure）
     - ``lock_name``：互斥锁文件名；同一 lock_name 的用例串行执行
     - ``stop()``：资源清理钩子
     - ``report_config_lines()`` / ``report_document_kwargs()`` /
       ``summary_extra()`` / ``collect_failure_steps()``：报告与摘要钩子
     """
 
-    failure_class = CaseRuntimeFailure
+    failure_class = CaseFailure
     lock_name = None
 
-    def __init__(self, root, case, platform_context: RegressionContext | None = None,
-                 *, env=None, context_data=None, output_root=None):
-        self.root = Path(root)
-        self.case = case
-        self.platform_context = platform_context
-        self.env = None
-        self.context = {}
-        if env is not None:
-            # 宿主注入路径：环境由上游 resolver 按环境 overlay 解析后传入，
-            # runtime 不再自行触发 legacy 配置加载。
-            self.env = env
-            if context_data is not None:
-                self.context = context_data
-            else:
-                context_file = getattr(env, "test_context_file", None)
-                if context_file is not None and Path(context_file).exists():
-                    import yaml
-                    self.context = yaml.safe_load(
-                        Path(context_file).read_text(encoding="utf-8")) or {}
-        elif platform_context is not None:
-            self.context = {
-                "environment_id": platform_context.environment.id,
-                "product_id": platform_context.environment.product_id,
-                "deployment_target": platform_context.environment.deployment_target,
-                "host": platform_context.environment.host,
-                "port": platform_context.environment.port,
-                "database_name": platform_context.environment.database_name,
-                "database_user": platform_context.environment.database_user,
-            }
-        else:
-            raise self.failure_class(
-                "CaseRuntime 必须由宿主注入 env 或 platform_context")
-        self.suite_id = (getattr(case, "suite_name", None)
-                         or getattr(case, "suite_id", None) or "suite")
-        # 每次用例运行重建目录，保证报告工件不混入上一次结果
-        if output_root is None:
-            output_root = (self.env.output_dir if self.env is not None
-                           else platform_context.output_dir)
-        self.run_root = output_root / "runs" / self.suite_id / case.name
+    def __init__(self, workspace: Path, spec: ReportSpec, *, output_root: Path,
+                 context_data: dict):
+        self.root = Path(workspace)
+        self.report_spec = spec
+        self.context = dict(context_data)
+        self.suite_id = spec.suite_id
+        output_root = Path(output_root)
+        self._lock_dir = output_root
+        self.run_root = output_root / "runs" / self.suite_id / spec.name
+        if not self.run_root.resolve().is_relative_to((output_root / "runs").resolve()):
+            raise ValueError("report directory escapes output root")
         if self.run_root.exists():
             shutil.rmtree(str(self.run_root))
         self.workdir = self.run_root / "workdir"
@@ -119,7 +84,7 @@ class CaseRuntime(object):
         self.finished_at = None
         self._step_order = 0
         self.steps = []
-        self.step_journal = StepJournal(self.run_root / "steps.json", case.target)
+        self.step_journal = StepJournal(self.run_root / "steps.json", spec.target)
         self._lock = None
 
     # ------------------------------------------------------------------
@@ -294,10 +259,10 @@ class CaseRuntime(object):
             items = self._timeline_steps()
             items.extend(self.collect_failure_steps(status))
         document = ReportDocument(
-            self.case.target, status,
+            self.report_spec.target, status,
             self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
             (self.finished_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
-            self.case.summary,
+            self.report_spec.summary,
             steps=items,
             **kwargs
         )
@@ -307,8 +272,8 @@ class CaseRuntime(object):
     def write_summary(self, status, reason):
         """写结构化 summary.json，供 JUnit/HTML 报告与失败重跑判定消费。"""
         payload = {
-            "target": self.case.target, "status": status, "reason": reason,
-            "source_sections": getattr(self.case, "source_sections", []),
+            "target": self.report_spec.target, "status": status, "reason": reason,
+            "source_sections": list(self.report_spec.source_sections),
         }
         payload.update(self.summary_extra())
         write_json(self.run_root / "summary.json", payload)
@@ -330,7 +295,7 @@ class CaseRuntime(object):
         # lock_name 相同的用例共用一把文件锁，串行执行避免争抢共享环境
         if self.lock_name:
             self._lock = ExclusiveFileLock(
-                self.root / "output" / ("%s.lock" % self.lock_name),
+                self._lock_dir / ("%s.lock" % self.lock_name),
                 "%s suite" % self.suite_id)
             self._lock.__enter__()
         return self

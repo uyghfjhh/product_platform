@@ -7,9 +7,6 @@ from suites.global_cache.reports.documents import (
     _record_or_text as _record_or_text,
     build_structured_report_document as build_structured_report_document,
 )
-import fbasecman_ops as ops
-
-
 def _extract_key_log_lines(text, patterns):
     matched = []
     for raw_line in text.splitlines():
@@ -20,6 +17,7 @@ def _extract_key_log_lines(text, patterns):
 
 
 def _summary_set_log_window(context, text, patterns, title=None):
+    ops = context.ops
     key_lines = _extract_key_log_lines(text, patterns)
     ops.summary["key_log_window"] = {
         "title": title or "关键日志窗口",
@@ -30,6 +28,7 @@ def _summary_set_log_window(context, text, patterns, title=None):
 
 
 def _summary_set_pg_log_verify(context, before_count, after_count, paths):
+    ops = context.ops
     ops.summary["pg_log_verify"] = {
         "before_count": before_count,
         "after_count": after_count,
@@ -40,6 +39,7 @@ def _summary_set_pg_log_verify(context, before_count, after_count, paths):
 
 
 def _collect_capacity_shrink_failure_context(context):
+    ops = context.ops
     context = {}
     live_conf = ops.summary.get("capacity_reload_live_conf")
     if live_conf and Path(live_conf).exists():

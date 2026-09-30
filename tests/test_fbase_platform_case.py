@@ -1,18 +1,29 @@
+import copy
 import json
+
 import psycopg
-
+import pytest
 from fastapi.testclient import TestClient
-
 from platform_app.actions import run_task
 from platform_app.api import create_app
 from platform_app.providers import command_for
-from platform_regress import CaseContext, RegressionEngine
+from platform_regress.sdk import CaseContext, RegressionEngine
 from test_api import settings_for
-
 
 TARGET = "mmr.installation.runtime_prerequisites"
 BASIC_TARGET = "mmr.cluster_verification.basic"
 MAC_TARGET = "mac.separation_of_duties.dba_metadata_access_restrictions"
+
+
+@pytest.fixture(scope="module")
+def catalog_module():
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).parents[1] / "products/fbase-database/cases.py"
+    spec = importlib.util.spec_from_file_location("fbase_cases_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_migrated_case_blocks_without_real_cluster_topology(tmp_path):
@@ -68,15 +79,9 @@ def test_migrated_case_replaces_stale_result_with_error(tmp_path):
     assert store.list_results("lab")[0]["status"] == "ERROR"
 
 
-def test_migrated_case_records_failed_extension_assertion(tmp_path):
-    import importlib.util
-    from pathlib import Path
-    from platform_regress.engine import SqlResult
-
-    case_path = Path(__file__).parents[1] / "products" / "fbase-database" / "cases.py"
-    spec = importlib.util.spec_from_file_location("fbase_cases_test", case_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_migrated_case_records_failed_extension_assertion(tmp_path, catalog_module):
+    from platform_regress.sdk import SqlResult
+    module = catalog_module
     context = CaseContext(TARGET, tmp_path, environment={"nodes": {"mmr1": {}, "mmr2": {}}})
     calls = []
 
@@ -85,7 +90,7 @@ def test_migrated_case_records_failed_extension_assertion(tmp_path):
         return SqlResult((("1",),) if query == "SELECT 1" else (), (), "SELECT 1")
 
     context.sql = sql
-    result = RegressionEngine().run(module.CASES[TARGET], context)
+    result = RegressionEngine().run(copy.deepcopy(module.CASES[TARGET]), context)
     assert result.verdict == "FAIL"
     assert len(calls) == 3
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
@@ -115,29 +120,17 @@ def test_migrated_case_uses_primary_nodes_from_pgcluster_topology(tmp_path, monk
     assert context["user"] == "tester"
 
 
-def test_three_node_case_blocks_when_third_primary_is_missing(tmp_path):
-    import importlib.util
-    from pathlib import Path
-
-    case_path = Path(__file__).parents[1] / "products" / "fbase-database" / "cases.py"
-    spec = importlib.util.spec_from_file_location("fbase_three_node_cases_test", case_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_three_node_case_blocks_when_third_primary_is_missing(tmp_path, catalog_module):
+    module = catalog_module
     context = CaseContext(BASIC_TARGET, tmp_path, environment={"nodes": {}})
-    result = RegressionEngine().run(module.CASES[BASIC_TARGET], context)
+    result = RegressionEngine().run(copy.deepcopy(module.CASES[BASIC_TARGET]), context)
     assert result.verdict == "BLOCKED"
     assert "mmr1" in result.reason
 
 
-def test_mac_case_preserves_four_expected_denials(tmp_path):
-    import importlib.util
-    from pathlib import Path
-    from platform_regress.engine import SqlResult
-
-    path = Path(__file__).parents[1] / "products" / "fbase-database" / "cases.py"
-    spec = importlib.util.spec_from_file_location("fbase_mac_cases_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_mac_case_preserves_four_expected_denials(tmp_path, catalog_module):
+    from platform_regress.sdk import SqlResult
+    module = catalog_module
     context = CaseContext(MAC_TARGET, tmp_path, environment={"nodes": {"primary": {}}})
     queries = []
 
@@ -151,22 +144,16 @@ def test_mac_case_preserves_four_expected_denials(tmp_path):
                             else "rename metadata relation(policy)")
 
     context.sql = sql
-    result = RegressionEngine().run(module.CASES[MAC_TARGET], context)
+    result = RegressionEngine().run(copy.deepcopy(module.CASES[MAC_TARGET]), context)
     assert result.verdict == "PASS", result.reason
     assert len(queries) == 5
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
     assert len([event for event in events if event["kind"] == "step.finished"]) == 5
 
 
-def test_mac_case_fails_when_protected_table_is_readable(tmp_path):
-    import importlib.util
-    from pathlib import Path
-    from platform_regress.engine import SqlResult
-
-    path = Path(__file__).parents[1] / "products" / "fbase-database" / "cases.py"
-    spec = importlib.util.spec_from_file_location("fbase_mac_readable_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_mac_case_fails_when_protected_table_is_readable(tmp_path, catalog_module):
+    from platform_regress.sdk import SqlResult
+    module = catalog_module
     context = CaseContext(MAC_TARGET, tmp_path, environment={"nodes": {"primary": {}}})
 
     def sql(node, query, *, database="postgres"):
@@ -175,7 +162,7 @@ def test_mac_case_fails_when_protected_table_is_readable(tmp_path):
         return SqlResult((), (), "SELECT 0")
 
     context.sql = sql
-    result = RegressionEngine().run(module.CASES[MAC_TARGET], context)
+    result = RegressionEngine().run(copy.deepcopy(module.CASES[MAC_TARGET]), context)
     assert result.verdict == "FAIL"
     assert "意外成功" in result.reason
 

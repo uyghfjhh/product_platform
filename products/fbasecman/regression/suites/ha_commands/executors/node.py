@@ -2,12 +2,11 @@
 
 
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
-
 __all__ = ['_run_missing_promoted_set_promoted', '_run_missing_promoted_set_write', '_run_set_node_invalid_datasource', '_run_set_node_parted_active_roundtrip', '_run_set_node_promoted_idempotent', '_run_set_node_promoted_in_groups_missing_field', '_run_set_node_role_rejects_parted_target', '_run_set_node_role_rejects_unrelated_group', '_run_set_node_weight_idempotent', '_run_set_node_weight_invalid_values', '_run_set_node_weight_switch_and_restore', '_run_set_node_weight_zero_roundtrip', '_run_set_node_write_all_related_groups', '_run_set_node_write_idempotent', '_run_set_node_write_in_groups_cardinality_errors', '_run_set_node_write_in_groups_invalid_group', '_run_set_node_write_in_groups_roundtrip', '_run_set_node_write_non_mmr_group', '_run_set_node_write_switch_and_restore', '_run_weight_sum_overflow_rejected']
 
 
 def _run_set_node_invalid_datasource(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -27,6 +26,7 @@ def _run_set_node_invalid_datasource(context):
 
 
 def _run_set_node_promoted_in_groups_missing_field(context):
+    ops = context.ops
     conf = ops.start(transform=_add_groups_without_promoted)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -86,6 +86,7 @@ def _run_set_node_promoted_in_groups_missing_field(context):
 
 
 def _run_set_node_write_all_related_groups(context):
+    ops = context.ops
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -128,6 +129,7 @@ def _run_set_node_write_all_related_groups(context):
 
 
 def _run_set_node_write_in_groups_invalid_group(context):
+    ops = context.ops
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -155,6 +157,7 @@ def _run_set_node_write_in_groups_invalid_group(context):
 
 
 def _run_set_node_write_non_mmr_group(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -168,6 +171,7 @@ def _run_set_node_write_non_mmr_group(context):
 
 
 def _run_set_node_write_in_groups_cardinality_errors(context):
+    ops = context.ops
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -198,6 +202,7 @@ def _run_set_node_write_in_groups_cardinality_errors(context):
 
 
 def _run_set_node_weight_invalid_values(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -220,6 +225,7 @@ def _run_set_node_weight_invalid_values(context):
 
 
 def _run_set_node_promoted_idempotent(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -247,6 +253,7 @@ def _run_set_node_promoted_idempotent(context):
 def _run_set_node_parted_active_roundtrip(context):
     # 保留 postgres 用户对 mmr_group 的路由范围，同时让 single_group
     # 继续使用 read_only，覆盖 PARTED 后回退 primary、ACTIVE 后恢复 replica。
+    ops = context.ops
     conf = ops.start(transform=_single_read_only_keep_scope)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -292,6 +299,7 @@ def _run_set_node_parted_active_roundtrip(context):
 
 
 def _run_weight_sum_overflow_rejected(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -312,6 +320,7 @@ def _run_weight_sum_overflow_rejected(context):
 
 
 def _run_set_node_weight_zero_roundtrip(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -340,6 +349,7 @@ def _run_set_node_weight_zero_roundtrip(context):
 
 
 def _run_set_node_weight_idempotent(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -372,6 +382,7 @@ def _run_set_node_weight_idempotent(context):
 
 
 def _run_missing_promoted_set_promoted(context):
+    ops = context.ops
     conf = ops.start(transform=_without_promoted)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -396,6 +407,7 @@ def _run_missing_promoted_set_promoted(context):
 
 
 def _run_set_node_write_idempotent(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -421,6 +433,7 @@ def _run_set_node_write_idempotent(context):
 
 
 def _run_set_node_write_in_groups_roundtrip(context):
+    ops = context.ops
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -467,6 +480,7 @@ def _run_set_node_write_in_groups_roundtrip(context):
 
 
 def _run_set_node_role_rejects_unrelated_group(context):
+    ops = context.ops
     conf = ops.start(transform=_add_single_cluster_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -496,6 +510,7 @@ def _run_set_node_role_rejects_unrelated_group(context):
 
 
 def _run_set_node_write_switch_and_restore(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -558,6 +573,7 @@ def _run_set_node_write_switch_and_restore(context):
 
 
 def _run_set_node_role_rejects_parted_target(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -596,6 +612,7 @@ def _run_set_node_role_rejects_parted_target(context):
 
 
 def _run_set_node_weight_switch_and_restore(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -624,6 +641,7 @@ def _run_set_node_weight_switch_and_restore(context):
 
 
 def _run_missing_promoted_set_write(context):
+    ops = context.ops
     conf = ops.start(transform=_without_promoted)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")

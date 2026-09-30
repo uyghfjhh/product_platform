@@ -1,6 +1,6 @@
 """Global-cache suite failures."""
 
-from platform_regress.engine import CaseFailure
+from platform_regress.sdk import CaseFailure
 
 
 class GlobalCacheFailure(CaseFailure):

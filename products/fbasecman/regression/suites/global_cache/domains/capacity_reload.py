@@ -14,10 +14,8 @@ from suites.global_cache.manifest import BACKEND_PS_LIMIT_KEY, GLOBAL_PS_LIMIT_K
 from suites.global_cache.result import set_report_blocks as _summary_set_report_blocks
 from suites.global_cache.errors import GlobalCacheFailure
 from suites.global_cache.waits import wait_capacity_entries_unref
-import fbasecman_ops as ops
-
-
 def run_capacity_reload_shrink_case(context):
+    ops = context.ops
     before_limit = int(ops.case.reload.get("before_limit", 10))
     after_limit = int(ops.case.reload.get("after_limit", 5))
     seed_count = int(ops.case.reload.get("seed_count", before_limit))
@@ -87,6 +85,7 @@ def run_capacity_reload_shrink_case(context):
         if len(row) >= 2 and ("%s_" % prefix) in row[1]
     ]
 def assert_capacity_reload_shrink(context, before_state, after_state):
+    ops = context.ops
     before_limit = int(ops.summary.get("capacity_before_limit", ops.case.reload.get("before_limit", 10)))
     after_limit = int(ops.summary.get("capacity_after_limit", ops.case.reload.get("after_limit", 5)))
     seed_count = int(ops.case.reload.get("seed_count", before_limit))

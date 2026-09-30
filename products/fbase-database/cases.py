@@ -6,10 +6,16 @@ import re
 import uuid
 from pathlib import Path
 
-from platform_regress import (Blocked, run_declared_steps, run_sql_step,
+from platform_regress.sdk import (Blocked, run_declared_steps, run_sql_step,
                               SUPPORTED_COMMAND_ASSERTIONS, SUPPORTED_SQL_ASSERTIONS)
-from platform_regress.requirements import evaluate_requirements, register_requirement
+from platform_regress.sdk import COMMON_REQUIREMENTS
 import psycopg
+
+
+# A catalog is one immutable declaration snapshot per product import. Loading
+# each case family must not re-decode the same five-megabyte source file.
+_CATALOG = json.loads((Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8"))
+_DEFINITIONS = {case["id"]: case for case in _CATALOG["cases"]}
 
 
 def _load_isolated_module():
@@ -263,8 +269,7 @@ class MacMetadataDenialCase(MacMetadataAccessRestrictions):
 
 
 def load_mac_metadata_denials():
-    path = Path(__file__).parent / "regression" / "cases.json"
-    definitions = {case["id"]: case for case in json.loads(path.read_text(encoding="utf-8"))["cases"]}
+    definitions = _DEFINITIONS
     selected = {}
     for target in MAC_METADATA_DENIAL_TARGETS:
         case = definitions[target]
@@ -353,8 +358,7 @@ class FixtureSqlCase(DeclarativeSqlCase):
 
 
 def load_mmr_read_only_cases():
-    path = Path(__file__).parent / "regression" / "cases.json"
-    definitions = {case["id"]: case for case in json.loads(path.read_text(encoding="utf-8"))["cases"]}
+    definitions = _DEFINITIONS
     selected = {}
     for target in MMR_READ_ONLY_TARGETS:
         case = definitions[target]
@@ -375,9 +379,7 @@ MMR_READ_ONLY_CASES = load_mmr_read_only_cases()
 
 def load_native_sql_cases():
     """Batch-register only cases fully expressible by the platform SDK."""
-    path = Path(__file__).parent / "regression" / "cases.json"
-    definitions = {case["id"]: case for case in json.loads(
-        path.read_text(encoding="utf-8"))["cases"]}
+    definitions = _DEFINITIONS
     supported = {"rows_equal", "output_contains_text", "output_contains", "sql_error", "sql_fails",
                  "command_succeeds"}
     # These targets intentionally stay on the legacy executor until their
@@ -424,7 +426,10 @@ def _scalar(context, node, sql):
     return rows[0][0] if rows and rows[0] else None
 
 
-@register_requirement("writable_node", before="system_time_control")
+PRODUCT_REQUIREMENTS = COMMON_REQUIREMENTS.copy()
+
+
+@PRODUCT_REQUIREMENTS.register("writable_node", before="system_time_control")
 def _require_writable_node(context, requirements):
     """Product gate: a healthy writable node (pg_isready + recovery/health row)."""
     if not requirements.get("writable_node"):
@@ -437,9 +442,12 @@ def _require_writable_node(context, requirements):
         raise Blocked("cluster %s 没有健康的可写节点" % cluster_name)
 
 
+PRODUCT_REQUIREMENTS.freeze()
+
+
 def check_requirements(context, definition):
     """Mirror the legacy requirement gate exactly (evaluate_requirements)."""
-    evaluate_requirements(context, definition.get("requirements") or {})
+    PRODUCT_REQUIREMENTS.evaluate(context, definition.get("requirements") or {})
 
 
 class ExportedCommandCase:
@@ -636,9 +644,7 @@ def load_exported_command_cases():
     definition are all expressible with the platform SDK; anything else stays
     on the legacy executor rather than being approximated.
     """
-    path = Path(__file__).parent / "regression" / "cases.json"
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    definitions = {case["id"]: case for case in payload["cases"]}
+    definitions = _DEFINITIONS
     selected = {}
     for target, case in definitions.items():
         steps = case.get("steps") or []
@@ -708,8 +714,6 @@ CASES.update({target: DeclarativeSqlCase(case) for target, case in NATIVE_SQL_CA
               if target not in CASES and target not in FIXTURE_TARGETS})
 CASES.update({target: FixtureSqlCase(NATIVE_SQL_CASES[target])
               for target in FIXTURE_TARGETS if target not in CASES})
-_CATALOG = json.loads(
-    (Path(__file__).parent / "regression" / "cases.json").read_text(encoding="utf-8"))
 CASE_ORDER = [case["id"] for case in _CATALOG["cases"]]
 
 CASE_METADATA = [{

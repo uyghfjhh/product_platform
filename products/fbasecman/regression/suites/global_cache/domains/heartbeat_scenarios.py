@@ -19,8 +19,8 @@ from suites.global_cache.drivers import (
 )
 
 from suites.global_cache.domains.driver_cases import _run_jdbc_case
-import fbasecman_ops as ops
 def _run_heartbeat_rule_precedence_case(context):
+    ops = context.ops
     global_heartbeat = ops.case.assertions.get("global_heartbeat", "select 999")
     user_heartbeat = ops.case.assertions.get("user_heartbeat", "select 124")
     verify_sql = ops.case.assertions.get("verify_sql", "SELECT 124")
@@ -110,6 +110,7 @@ def _run_heartbeat_rule_precedence_case(context):
 
 
 def _run_same_sql_different_users_isolation_case(context):
+    ops = context.ops
     shared_sql = ops.case.assertions.get("shared_sql", "SELECT 124")
     user1 = ops.case.assertions.get("user1_name", "postgres")
     user2 = ops.case.assertions.get("user2_name", "postgres2")
@@ -190,6 +191,7 @@ def _run_same_sql_different_users_isolation_case(context):
 
 
 def _assert_guc_set_report_bypass(context, before_state, after_state):
+    ops = context.ops
     expected_class = ops.case.assertions.get("expected_sql_class", "GUC_SET_REPORT")
     matched = [
         "|".join(row) for row in after_state["global"]
@@ -226,6 +228,7 @@ def _assert_guc_set_report_bypass(context, before_state, after_state):
 
 
 def _assert_guc_reset_all_bypass(context, before_state, after_state):
+    ops = context.ops
     expected_class = ops.case.assertions.get("expected_reset_sql_class", "GUC_RESET_ALL")
     log_text = (ops.logs_dir / "GCGucResetAllBypass.java.log").read_text(encoding="utf-8", errors="replace")
     reset_entries = [
@@ -271,6 +274,7 @@ def _find_rows_by_sql(state, sql_text):
 
 
 def _assert_heartbeat_reload_reclassifies_existing_normal_entry(context, before_state, after_state):
+    ops = context.ops
     sql_text = ops.case.assertions.get("prepared_sql", "SELECT 124")
     verify_sql = ops.case.assertions.get("verify_sql", sql_text)
     heartbeat_before = ops.case.assertions.get("heartbeat_before", "select 123")
@@ -367,6 +371,7 @@ def _assert_heartbeat_reload_reclassifies_existing_normal_entry(context, before_
 
 
 def _run_heartbeat_reclassify_case(context):
+    ops = context.ops
     heartbeat_before = ops.case.assertions.get("heartbeat_before", "select 123")
     heartbeat_after = ops.case.assertions.get("heartbeat_after", "select 124")
     prepared_sql = ops.case.assertions.get("prepared_sql", "SELECT 124")

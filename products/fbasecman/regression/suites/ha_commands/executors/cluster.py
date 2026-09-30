@@ -8,12 +8,11 @@ except ImportError:
     fcntl = None
 
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
-
 __all__ = ['_run_console_set_validation_toggle', '_run_refresh_cluster', '_run_refresh_cluster_probe_edges', '_run_refresh_cluster_syntax_errors', '_run_set_cluster_30_datasource_roundtrip', '_run_set_cluster_active_idempotent', '_run_set_cluster_invalid_commands', '_run_set_cluster_parted_active_roundtrip', '_run_set_cluster_write_promoted_roundtrip', '_run_set_node_promoted_write_cluster_conflict', '_run_write_cluster_format_preservation']
 
 
 def _run_refresh_cluster_syntax_errors(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -36,6 +35,7 @@ def _run_refresh_cluster_syntax_errors(context):
 
 
 def _run_set_cluster_30_datasource_roundtrip(context):
+    ops = context.ops
     conf = ops.start(transform=_add_30_cluster_datasources)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -67,6 +67,7 @@ def _run_set_cluster_30_datasource_roundtrip(context):
 
 
 def _run_set_cluster_invalid_commands(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -89,6 +90,7 @@ def _run_set_cluster_invalid_commands(context):
 
 
 def _run_console_set_validation_toggle(context):
+    ops = context.ops
     def with_validation_yes(content):
         return 'console_set_validation yes\n' + content
 
@@ -201,6 +203,7 @@ def _run_console_set_validation_toggle(context):
 
 
 def _run_set_cluster_active_idempotent(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -226,6 +229,7 @@ def _run_set_cluster_active_idempotent(context):
 
 
 def _run_set_node_promoted_write_cluster_conflict(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -240,6 +244,7 @@ def _run_set_node_promoted_write_cluster_conflict(context):
 
 
 def _run_refresh_cluster_probe_edges(context):
+    ops = context.ops
     db = ops.env.config["database"]
     mmr_root = db.get("mmr_data_root", db["mmr_postgres_dir"])
     pg_1_dir = mmr_root + "/test_mmr1"
@@ -340,6 +345,7 @@ def _run_refresh_cluster_probe_edges(context):
 
 
 def _run_set_cluster_write_promoted_roundtrip(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -418,6 +424,7 @@ def _run_set_cluster_write_promoted_roundtrip(context):
 
 
 def _run_set_cluster_parted_active_roundtrip(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -463,6 +470,7 @@ def _run_set_cluster_parted_active_roundtrip(context):
             'pg_1、pg_3 均恢复 active',
             lambda output: all(v in output for v in ("pg_1", "pg_3", "active")))
 def _run_refresh_cluster(context):
+    ops = context.ops
     db = ops.env.config["database"]
     node_dir = db.get("mmr_data_root", db["mmr_postgres_dir"]) + "/test_mmr1_s1"
 
@@ -561,6 +569,7 @@ def _run_refresh_cluster(context):
 
 
 def _run_write_cluster_format_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_group_fields_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")

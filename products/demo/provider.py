@@ -35,23 +35,13 @@ class DemoProvider:
         return CommandSpec(command, PRODUCT_DIR)
 
     def publish_result(self, store, settings, environment, task, terminal, reason):
-        output = settings.output_dir / "regression" / environment["id"] / task["target"]
-        result_file = output / ("suite-result.json" if task["target"] in {"smoke", "all"} else "result.json")
-        try:
-            result = json.loads(result_file.read_text(encoding="utf-8"))
-            if task["target"] in {"smoke", "all"}:
-                verdict = "PASS" if result["counts"].get("PASS") == 1 else "ERROR"
-            elif result.get("operation_id") == task["id"] and result.get("target") == task["target"]:
-                verdict = result["verdict"]
-            else:
-                verdict = "ERROR"
-        except (OSError, ValueError, KeyError, TypeError):
-            verdict = "ERROR"
-        if verdict == "ERROR":
-            terminal, reason = "FAILED", "本次没有可核对的回归结果"
-        store.put_result("demo", environment["id"], task["target"], "default",
-                         verdict, reason, str(output))
-        return terminal, reason
+        if task["action"] != "tests.demo":
+            return terminal, reason
+        from platform_app.result_publication import publish_regression_results
+        parameters = json.loads(task["parameters"])
+        return publish_regression_results(store, settings, environment, task, terminal, reason,
+                                          case_targets={TARGET},
+                                          profile=parameters.get("profile", "default"))
 
     def observe_database(self, environment):
         return []

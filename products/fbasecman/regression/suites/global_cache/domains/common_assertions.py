@@ -10,9 +10,8 @@ from suites.global_cache.runtime import (
 from suites.global_cache.manifest import (
     NEGATIVE_LOG_PATTERNS,
 )
-import fbasecman_ops as ops
-
 def _assert_negative_logs(context, report_check=False):
+    ops = context.ops
     paths = sorted(ops.logs_dir.glob("*.log")) + [ops.fbasecman_log]
     found = find_forbidden_log_patterns(paths, NEGATIVE_LOG_PATTERNS)
     if found:
@@ -34,6 +33,7 @@ def _assert_negative_logs(context, report_check=False):
 
 
 def _assert_fbasecman_no_warning_or_error(context):
+    ops = context.ops
     if not ops.fbasecman_log.exists():
         ops.summary["fbasecman_log_level_check"] = {
             "status": "missing",
@@ -78,6 +78,7 @@ def _assert_fbasecman_no_warning_or_error(context):
 
 
 def _assert_verification_checks_clean(context):
+    ops = context.ops
     checks = ops.summary.get("verification_checks", [])
     failed = [item for item in checks if str(item.get("result", "PASS")).upper() != "PASS"]
     if failed:

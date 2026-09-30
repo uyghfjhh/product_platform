@@ -12,3 +12,7 @@ The integration points are `product.yaml` (catalog and action), `provider.py`
 For a new product, copy the package structure and replace the action, profile,
 case and Provider logic. A real database product also needs its own topology,
 fixtures and assertions; this example does not validate those integrations.
+
+The regression contract is SDK v2: declare `regression_sdk: "2"` in the manifest
+and import public types from `platform_regress.sdk`. See
+[the SDK guide](../../backend/platform_regress/SDK.md). Older SDK imports are not supported.

@@ -15,7 +15,8 @@ import time
 
 import psycopg
 
-from .engine import Blocked, Cancelled, CaseContext
+from .contracts import Blocked, Cancelled
+from .engine import CaseContext
 
 
 SUPPORTED_SQL_ASSERTIONS = frozenset({

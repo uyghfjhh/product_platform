@@ -17,9 +17,9 @@ from pathlib import Path
 
 import yaml
 
-from platform_regress import Blocked, Cancelled, CaseFailure
+from platform_regress.sdk import Blocked, Cancelled, CaseFailure
 from platform_regress.execution.locking import ExclusiveFileLock
-from platform_regress.suites.executor import RuntimeBinding, RuntimeExecutorCase
+from platform_regress.sdk import RuntimeBinding, RuntimeExecutorCase
 
 
 PRODUCT_ROOT = Path(__file__).parent
@@ -163,14 +163,13 @@ class _LockedHandoverRuntimeMixin:
 
 
 def _ops_context_executor(executor_fn):
-    """Bind ``fbasecman_ops`` to the per-case runtime while the executor runs."""
+    """Expose the per-case runtime as ``context.ops`` while the executor runs."""
     def context_executor(ctx, runtime):
-        ops = importlib.import_module("fbasecman_ops")
-        ops.bind(runtime)
+        ctx.ops = runtime
         try:
             return executor_fn(ctx)
         finally:
-            ops.unbind()
+            ctx.ops = None
     return context_executor
 
 
@@ -181,8 +180,7 @@ def _binding(source, env, suite_id, spec, runtime_type, failure_class,
         _guarded_factory(env, suite_id, failure_class,
                          lambda ctx, case: runtime_type(
                              source, case, env=env)),
-        None, reason,
-        context_executor=_ops_context_executor(executor_fn),
+        _ops_context_executor(executor_fn), reason,
         finalize=_finalize_run,
         **binding_kwargs)
 
@@ -313,8 +311,7 @@ class _GlobalCachePlatformCase:
         if case.notes:
             rt.trace("notes: %s" % " | ".join(case.notes))
         failure = None
-        ops = importlib.import_module("fbasecman_ops")
-        ops.bind(rt)
+        context.ops = rt
         try:
             self._execute_case(context)
             self._assert_negative_logs(context)
@@ -363,7 +360,7 @@ class _GlobalCachePlatformCase:
             rt.write_summary()
             rt.write_report()
             rt.prune_artifacts()
-            ops.unbind()
+            context.ops = None
         passed = rt.summary["status"] == "PASS"
         if passed:
             print("%-55s SUCCESS" % case.target, flush=True)

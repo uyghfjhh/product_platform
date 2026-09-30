@@ -13,9 +13,8 @@ from platform_regress.evidence.jdbc import (
 from platform_regress.reporting import render_psql_table_from_pipe_text
 from platform_regress.execution.phased_process import PhaseAction
 from suites.global_cache.paths import asset_path
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 # Driver contract failures share the platform JDBC error type.
 DriverError = JdbcError
 
@@ -145,6 +144,7 @@ def libpq_prepared_operations(source, phase=None):
 
 
 def record_driver_api_calls(context, source):
+    ops = context.ops
     calls = driver_api_calls(source)
     # execute_jdbc() already records source-backed APIs, SQL, parameters and
     # real output in the step journal.  Do not attach them to the preceding
@@ -186,6 +186,7 @@ def stage_libpq_source(source, target_dir):
 
 
 def build_libpq_asset(context, logfile=None):
+    ops = context.ops
     source = libpq_source(ops.root, ops.case)
     target = stage_libpq_source(source, ops.driver_dir)
     binary = ops.build_dir / source.stem
@@ -200,12 +201,13 @@ def build_libpq_asset(context, logfile=None):
 
 
 def libpq_run_spec(context, binary, extra_args=None, include_rw_method=True):
+    ops = context.ops
     postgres_dir = ops.env.config["local"]["postgres_dir"]
     run_env = os.environ.copy()
     run_env["LD_LIBRARY_PATH"] = "%s/lib:%s" % (
         postgres_dir, run_env.get("LD_LIBRARY_PATH", "")
     )
-    conninfo = f"host={ops.LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
+    conninfo = f"host={LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
     command = [str(binary), conninfo]
     if include_rw_method:
         command.append("mmr_hint")
@@ -215,6 +217,7 @@ def libpq_run_spec(context, binary, extra_args=None, include_rw_method=True):
 
 def start_phased_libpq(context, log_stem, extra_args=None, include_rw_method=True,
                        compile_log=None, binary=None):
+    ops = context.ops
     binary = binary or build_libpq_asset(context, compile_log)
     command, run_env = libpq_run_spec(
         context, binary, extra_args=extra_args, include_rw_method=include_rw_method
@@ -225,6 +228,7 @@ def start_phased_libpq(context, log_stem, extra_args=None, include_rw_method=Tru
 
 def run_libpq_asset(context, log_stem, extra_args=None, include_rw_method=True,
                     compile_log=None, binary=None, step_title="执行外置 libpq driver"):
+    ops = context.ops
     source = libpq_source(ops.root, ops.case)
     binary = binary or build_libpq_asset(context, compile_log)
     command, run_env = libpq_run_spec(
@@ -289,6 +293,7 @@ def normalize_phased_prepared_operations(operations):
 
 
 def jdbc_jar(context, version=None):
+    ops = context.ops
     return jdbc_client.resolve_jar(
         ops.root / ops.env.config["local"]["jdbc_lib_dir"],
         version or ops.case.jdbc.get("version"),
@@ -296,6 +301,7 @@ def jdbc_jar(context, version=None):
 
 
 def jdbc_url(context, options=None):
+    ops = context.ops
     return jdbc_client.build_url("localhost", ops.listen_port, "postgres", options)
 
 
@@ -306,6 +312,7 @@ def jdbc_source_file(root, case, safe_name):
 
 
 def compile_java(context, source, logfile, step_title):
+    ops = context.ops
     jar = jdbc_jar(context)
     ops.run_command(
         jdbc_client.javac_argv(jar, source),
@@ -318,6 +325,7 @@ def compile_java(context, source, logfile, step_title):
 
 def run_java(context, class_name, jar, logfile, user="postgres", password="", options=None,
              allow_failure=False, step_title="执行 JDBC driver", source=None):
+    ops = context.ops
     url = jdbc_url(context, options)
     command = jdbc_client.java_argv(
         jdbc_client.classpath(ops.driver_dir, jar), class_name, url, user, password,
@@ -339,6 +347,7 @@ def run_java(context, class_name, jar, logfile, user="postgres", password="", op
 def run_jdbc_asset(context, source_name, class_name, arguments=None, user="postgres",
                    password="", options=None, allow_failure=False,
                    step_title="执行外置 JDBC driver"):
+    ops = context.ops
     source = asset_path(ops.root, "jdbc", source_name)
     if not source.exists():
         raise DriverError("missing jdbc driver source: %s" % source)
@@ -381,6 +390,7 @@ def run_jdbc_asset_phased(context, source_name, class_name, arguments=None, user
                           password="", options=None, actions=None,
                           sql_operations=None, step_title="执行阶段 JDBC driver"):
     """Run an external JDBC asset and inspect it while its connection is alive."""
+    ops = context.ops
     source = asset_path(ops.root, "jdbc", source_name)
     if not source.exists():
         raise DriverError("missing jdbc driver source: %s" % source)
@@ -413,6 +423,7 @@ def run_jdbc_asset_phased(context, source_name, class_name, arguments=None, user
 
 def _phase_console_observation(context, phase):
     """Collect complete business-visible console evidence at a JDBC pause."""
+    ops = context.ops
     chunks = []
     for index, sql in enumerate((
         "SHOW GLOBAL_PREPARED_STATEMENTS;",
@@ -438,6 +449,7 @@ def _phase_console_observation(context, phase):
 
 
 def _run_phased_case_jdbc(context, source, target, jar, command, url, title):
+    ops = context.ops
     actions = PHASED_JDBC_ACTIONS[ops.case.name]
     sql_operations = jdbc_prepared_operations(source)
     if ops.case.name == "parse_invalid_error_recovery_same_connection":
@@ -474,6 +486,7 @@ def _run_phased_case_jdbc(context, source, target, jar, command, url, title):
 
 
 def run_case_jdbc(context, safe_name, noise_patterns):
+    ops = context.ops
     case = ops.case
     source = jdbc_source_file(ops.root, case, safe_name)
     target = ops.driver_dir / source.name
@@ -525,6 +538,7 @@ def run_case_jdbc(context, safe_name, noise_patterns):
 
 
 def run_prepared_sequence(context, operations, log_stem="GC_prepared_sql_sequence", allow_failure=False):
+    ops = context.ops
     normalized = normalize_prepared_sequence(operations)
     ops.summary["jdbc_sequence"] = normalized
     source = asset_path(ops.root, "jdbc", "GC_prepared_sql_sequence.java")
@@ -572,6 +586,7 @@ def run_prepared_sequence(context, operations, log_stem="GC_prepared_sql_sequenc
 
 
 def start_phased_prepared(context, operations, log_stem="GC_phased_prepared"):
+    ops = context.ops
     normalized = normalize_phased_prepared_operations(operations)
     ops.summary["phased_prepared_operations"] = normalized
     source = asset_path(ops.root, "jdbc", "GC_phased_prepared.java")

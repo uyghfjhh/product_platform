@@ -3,11 +3,9 @@
 import time
 from platform_regress.reporting import ReportCheck
 from ..console_parser import ConsoleAssertionError
-import fbasecman_ops as ops
-
-
 def run_core_16_rep_failover(context):
     """CORE-16: Replication failover, old primary PARTED, standby promote, and rebuild."""
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     a0_port = str(ports["mmr1"])
     a1_port = str(ports["mmr1_standby1"])
@@ -235,6 +233,7 @@ def run_core_16_rep_failover(context):
 
 def run_core_17_mmr_write_center_failover(context):
     """CORE-17: MMR write center automatic failover to promoted cluster and manual switch."""
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     a0_port = str(ports["mmr1"])
     b0_port = str(ports["mmr2"])

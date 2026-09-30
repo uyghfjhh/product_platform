@@ -24,7 +24,8 @@ from suites.global_cache.drivers import (
 )
 
 from suites.global_cache.domains.common_assertions import _stats_change_text
-import fbasecman_ops as ops
+
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def _jdbc_driver_source_file(root, case):
     return _driver_jdbc_source_file(root, case, _safe_name)
 
@@ -47,6 +48,7 @@ def _append_driver_log(path, output):
 
 
 def _run_libpq_case(context, extra_args=None, step_title=None):
+    ops = context.ops
     source = _libpq_driver_source(ops.root, ops.case)
     if not source.exists():
         raise GlobalCacheFailure("missing libpq source: %s" % source)
@@ -66,7 +68,7 @@ def _run_libpq_case(context, extra_args=None, step_title=None):
     ops.run_command(compile_cmd, ops.logs_dir / "gcc.log", cwd=ops.driver_dir, step_title="编译 libpq driver")
     run_env = os.environ.copy()
     run_env["LD_LIBRARY_PATH"] = "%s/lib:%s" % (cfg, run_env.get("LD_LIBRARY_PATH", ""))
-    conninfo = f"host={ops.LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
+    conninfo = f"host={LOCAL_HOST} port={ops.listen_port} user=postgres dbname=postgres sslmode=disable"
     allow_failure = False
     cmd = [str(binary), conninfo, "mmr_hint"]
     if extra_args:
@@ -106,6 +108,7 @@ def _run_libpq_case(context, extra_args=None, step_title=None):
 
 
 def _assert_libpq_activity(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     if delta.get("misses", 0) < 1 and delta.get("hits", 0) < 1:
         raise GlobalCacheFailure("libpq case produced no cache activity: %s" % delta)
@@ -378,6 +381,7 @@ def _assert_libpq_activity(context, before_state, after_state):
 
 
 def _assert_unnamed_overwrite(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     descriptions = ["|".join(row) for row in after_state["global"]]
     snapshots = ops.summary.get("unnamed_overwrite_snapshots", {})
@@ -456,6 +460,7 @@ def _assert_unnamed_overwrite(context, before_state, after_state):
 
 
 def _assert_named_conflict_keeps_old(context, before_state, after_state):
+    ops = context.ops
     log_text = ops.libpq_log.read_text(encoding="utf-8").lower()
     if "conflict_ok" not in log_text:
         raise GlobalCacheFailure("named conflict keep-old did not capture conflict marker")

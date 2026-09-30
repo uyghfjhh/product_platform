@@ -3,7 +3,7 @@
 import unittest
 
 from platform_regress import requirements
-from platform_regress.engine import Blocked
+from platform_regress.sdk import Blocked
 
 
 class FakeResult(object):
@@ -124,27 +124,17 @@ class RequirementGateTest(unittest.TestCase):
         def marker(context, requirements):
             calls.append("marker")
 
-        requirements.register_requirement("custom_key", custom,
-                                          before="system_time_control")
-        requirements.register_requirement("marker_key", marker)
-        try:
-            order = [k for k, _ in requirements._EVALUATORS]
-            self.assertLess(order.index("node"), order.index("custom_key"))
-            self.assertLess(order.index("custom_key"),
-                            order.index("system_time_control"))
-            context = self.context()
-            requirements.evaluate_requirements(
-                context, {"custom_key": True})
-            self.fail("expected Blocked")
-        except Blocked as exc:
-            self.assertEqual("custom blocker", str(exc))
-            # custom sits before system_time_control which no-ops.
-            self.assertEqual(["custom"], calls)
-        finally:
-            requirements._EVALUATORS[:] = [
-                e for e in requirements._EVALUATORS
-                if e[0] not in ("custom_key", "marker_key")
-            ]
+        registry = requirements.COMMON_REQUIREMENTS.copy()
+        registry.register("custom_key", custom, before="system_time_control")
+        registry.register("marker_key", marker)
+        order = registry.keys
+        self.assertLess(order.index("node"), order.index("custom_key"))
+        self.assertLess(order.index("custom_key"), order.index("system_time_control"))
+        with self.assertRaisesRegex(Blocked, "custom blocker"):
+            registry.evaluate(self.context(), {"custom_key": True})
+        self.assertEqual(["custom"], calls)
+        self.assertNotIn("custom_key", requirements.COMMON_REQUIREMENTS.keys)
+
 
 
 if __name__ == "__main__":

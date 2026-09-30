@@ -1,13 +1,14 @@
+import os
 """Phase 2 executors: Probing, node failure, and read-only fallback (CORE-13 to CORE-15, CORE-18)."""
 
 import time
 from platform_regress.reporting import ReportCheck
 from ..console_parser import ConsoleAssertionError
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def _wait_candidate(context, group_name, node_name, present=True, timeout=15):
     """Poll SHOW GROUP_ROUTING until candidate appearance/disappearance matches expectation."""
+    ops = context.ops
     deadline = time.time() + timeout
     last_snap = None
     while time.time() < deadline:
@@ -25,12 +26,13 @@ def _wait_candidate(context, group_name, node_name, present=True, timeout=15):
 
 def _wait_standby_readiness(context, node_key="A1", timeout=20):
     """Wait until a restarted standby has reached consistent recovery state."""
+    ops = context.ops
     _, port = ops.nodes.nodes[node_key]
     deadline = time.time() + timeout
     last_output = ""
     while time.time() < deadline:
         rc, output = ops.nodes._run_cmd(
-            ('%s/bin/psql -h ' + ops.LOCAL_HOST + ' -p %d -U %s -d postgres -tAc "SELECT 1;"')
+            ('%s/bin/psql -h ' + LOCAL_HOST + ' -p %d -U %s -d postgres -tAc "SELECT 1;"')
             % (ops.nodes.pg_dir, port, ops.nodes.user),
             "pg_ready_%s.log" % node_key,
         )
@@ -46,6 +48,7 @@ def _wait_standby_readiness(context, node_key="A1", timeout=20):
 
 def run_core_13_monitor_confirm(context):
     """CORE-13: Monitor failure and recovery debounce and confirmation cycle."""
+    ops = context.ops
     ops.coverage_items = [
         "基线检查：正常运行态下从库 A1 准入只读候选列表",
         "故障防抖：从库短暂停机后恢复（未达 3 次重试阈值），不误屏蔽",
@@ -278,6 +281,7 @@ def run_core_13_monitor_confirm(context):
 
 def run_core_14_rep_standby_failure(context):
     """CORE-14: Replication group standby failure, write stays on primary, read falls back."""
+    ops = context.ops
     a1_port = ops.env.config["database"]["ports"]["mmr1_standby1"]
     ops.coverage_items = [
         "基线检查：主库 A0 为写目标，备库 A1 承担只读",
@@ -448,6 +452,7 @@ def run_core_14_rep_standby_failure(context):
 
 def run_core_15_rep_primary_failure(context):
     """CORE-15: Primary failure without promote; standby continues serving reads."""
+    ops = context.ops
     a0_port = ops.env.config["database"]["ports"]["mmr1"]
     ops.coverage_items = [
         "主库故障未决判定：集群拓扑置为 UNRESOLVED/NO_PRIMARY",
@@ -585,6 +590,7 @@ def run_core_15_rep_primary_failure(context):
 
 def run_core_18_balance_single_failure(context):
     """CORE-18: Balance and single node failure and fallback strategies."""
+    ops = context.ops
     ports = ops.env.config["database"]["ports"]
     b0_port = ports["mmr2"]
     b1_port = ports["mmr2_standby1"]

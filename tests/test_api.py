@@ -187,6 +187,14 @@ def test_test_result_is_published_before_task_finishes(tmp_path, monkeypatch):
     task = store.create_task("database", "tests.fbase", "mmr", {"cluster": "mmr"}, None)
     monkeypatch.setattr(actions, "command_for_task", lambda *_: (["true"], tmp_path))
     monkeypatch.setattr(actions, "_run_command", lambda *_args, **_kwargs: (True, "执行完成"))
+    # Successful task publication requires attributable result facts.
+    output = config.output_dir / "regression" / "database" / "mmr"
+    output.mkdir(parents=True)
+    import json
+    (output / "suite-result.json").write_text(json.dumps({"results": [{
+        "target": "mmr.installation.runtime_prerequisites", "operation_id": task["id"],
+        "verdict": "PASS", "reason": None,
+    }]}))
     original_put_result = store.put_result
     statuses_at_publication = []
 

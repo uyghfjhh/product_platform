@@ -9,9 +9,8 @@ from platform_regress.evidence.backup import (
     backup_content_matches, backup_dir_path, backup_files, created_backups,
     snapshot_backup,
 )
-from platform_regress.runtime import (
-    CaseRuntime, CaseRuntimeFailure, EnvironmentRef, RegressionContext,
-)
+from platform_regress.sdk import ReportRuntime, ReportSpec, CaseFailure
+
 
 
 class FakeCase(object):
@@ -25,14 +24,8 @@ class FakeCase(object):
 
 
 def make_runtime(root):
-    context = RegressionContext(
-        environment=EnvironmentRef(
-            id="env", product_id="demo", deployment_config=root / "d.yaml",
-            deployment_target="local", host="127.0.0.1", port=5432),
-        output_dir=root / "output",
-        profile_id="local",
-    )
-    runtime = CaseRuntime(root, FakeCase(), platform_context=context)
+    spec = ReportSpec("demo", "demo_suite.demo", "demo case", "demo_suite")
+    runtime = ReportRuntime(root, spec, output_root=root / "output", context_data={})
     runtime.write_report = lambda *a, **k: None  # avoid rendering on tmp dirs
     return runtime
 
@@ -79,7 +72,7 @@ class AssertedCommandTest(unittest.TestCase):
             original = rt.run_logged_command
             rt.run_logged_command = fake_run
             try:
-                with self.assertRaises(CaseRuntimeFailure) as caught:
+                with self.assertRaises(CaseFailure) as caught:
                     runtime.asserted_command(
                         ["/bin/false"], "check", "expected",
                         lambda r, o, a, e: (False, "rc=%s" % r.returncode),
@@ -99,7 +92,7 @@ class AssertedCommandTest(unittest.TestCase):
             rt.run_logged_command = lambda *a, **k: type(
                 "R", (), {"command": "x", "returncode": 7, "output": ""})
             try:
-                with self.assertRaisesRegex(CaseRuntimeFailure, "rc=7 only"):
+                with self.assertRaisesRegex(CaseFailure, "rc=7 only"):
                     runtime.asserted_command(
                         ["/bin/false"], "t", "e",
                         lambda r, o, a, e: (False, ""),

@@ -10,12 +10,11 @@ except ImportError:
     fcntl = None
 
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
-
 __all__ = ['_run_application_name_persistence', '_run_backup_directory_permissions', '_run_backup_path_regular_file_rejected', '_run_backup_symlink_rejected', '_run_candidate_validation_rejected', '_run_config_backup_dir', '_run_crlf_format_preservation', '_run_duplicate_and_conflicting_weights', '_run_duplicate_object_rejected_after_start', '_run_eof_without_newline_preservation', '_run_external_edit_conflict', '_run_file_metadata_preservation', '_run_group_defaults_persistence', '_run_hash_inside_string_preservation', '_run_include_rejected_after_start', '_run_locked_disk_object_resolution', '_run_locked_invalid_numeric_token', '_run_readonly_config_directory', '_run_readonly_config_file', '_run_reload_failure_rollback', '_run_reload_restore_failure', '_run_rename_failure_protection', '_run_single_line_block_preservation', '_run_single_read_only_persistence', '_run_stable_lock_contention', '_run_stable_lock_directory_rejected', '_run_stable_lock_permissions', '_run_stable_lock_symlink_rejected', '_run_status_format_preservation', '_run_weight_format_preservation']
 
 
 def _run_readonly_config_file(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -57,6 +56,7 @@ def _run_readonly_config_file(context):
 
 
 def _run_hash_inside_string_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_add_hash_inside_string)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -88,6 +88,7 @@ def _run_hash_inside_string_preservation(context):
 
 
 def _run_group_defaults_persistence(context):
+    ops = context.ops
     conf = ops.start(transform=_omit_group_defaults)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -144,6 +145,7 @@ def _run_group_defaults_persistence(context):
 
 
 def _run_stable_lock_symlink_rejected(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -197,6 +199,7 @@ def _run_stable_lock_symlink_rejected(context):
 
 
 def _run_file_metadata_preservation(context):
+    ops = context.ops
     conf = ops.start()
     os.chmod(conf, 0o640)
     before = ops.workdir / "before-command.conf"
@@ -255,6 +258,7 @@ def _run_file_metadata_preservation(context):
 
 
 def _run_duplicate_and_conflicting_weights(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -298,6 +302,7 @@ def _run_duplicate_and_conflicting_weights(context):
 
 
 def _run_eof_without_newline_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_without_final_newline)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -329,6 +334,7 @@ def _run_eof_without_newline_preservation(context):
 
 
 def _run_candidate_validation_rejected(context):
+    ops = context.ops
     conf = ops.start()
     _inject_after_start(
         conf, 'not_a_real_parameter "candidate validation must reject this"')
@@ -359,6 +365,7 @@ def _run_candidate_validation_rejected(context):
 
 
 def _run_config_backup_dir(context):
+    ops = context.ops
     dir_explicit = ops.workdir / "backup-explicit"
     dir_reload = ops.workdir / "backup-reload"
     default_dir = ops.workdir / "conf-backup"
@@ -578,6 +585,7 @@ def _run_config_backup_dir(context):
 
 
 def _run_reload_restore_failure(context):
+    ops = context.ops
     hook_source = ops.root / "suites" / "ha_commands" / "assets" / "rename_fault.c"
     hook_library = ops.workdir / "rename_fault.so"
     ops.run_command(
@@ -627,6 +635,7 @@ def _run_reload_restore_failure(context):
 
 
 def _run_locked_disk_object_resolution(context):
+    ops = context.ops
     conf = ops.start(transform=_rename_disk_datasource)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -653,6 +662,7 @@ def _run_locked_disk_object_resolution(context):
 
 
 def _run_backup_symlink_rejected(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -686,6 +696,7 @@ def _run_backup_symlink_rejected(context):
 
 
 def _run_readonly_config_directory(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -737,6 +748,7 @@ def _run_readonly_config_directory(context):
 
 
 def _run_crlf_format_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_as_crlf)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -769,6 +781,7 @@ def _run_crlf_format_preservation(context):
 
 
 def _run_stable_lock_permissions(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -812,6 +825,7 @@ def _run_stable_lock_permissions(context):
 
 
 def _run_application_name_persistence(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -861,6 +875,7 @@ def _run_application_name_persistence(context):
 
 
 def _run_rename_failure_protection(context):
+    ops = context.ops
     hook_source = ops.root / "suites" / "ha_commands" / "assets" / "rename_fault.c"
     hook_library = ops.workdir / "rename_fault.so"
     ops.run_command(
@@ -903,6 +918,7 @@ def _run_rename_failure_protection(context):
 
 
 def _run_duplicate_object_rejected_after_start(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     text = conf.read_text(encoding="utf-8")
@@ -923,6 +939,7 @@ def _run_duplicate_object_rejected_after_start(context):
 
 
 def _run_stable_lock_contention(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -978,6 +995,7 @@ def _run_stable_lock_contention(context):
 
 
 def _run_include_rejected_after_start(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     _inject_after_start(conf, 'include "%s";' % (ops.workdir / "included.conf"))
@@ -996,6 +1014,7 @@ def _run_include_rejected_after_start(context):
 
 
 def _run_status_format_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_status_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1027,6 +1046,7 @@ def _run_status_format_preservation(context):
 
 
 def _run_single_read_only_persistence(context):
+    ops = context.ops
     conf = ops.start(transform=_single_read_only)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -1073,6 +1093,7 @@ def _run_single_read_only_persistence(context):
 
 
 def _run_reload_failure_rollback(context):
+    ops = context.ops
     conf = ops.start(transform=_single_read_only)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -1121,6 +1142,7 @@ def _run_reload_failure_rollback(context):
 
 
 def _run_locked_invalid_numeric_token(context):
+    ops = context.ops
     conf = ops.start()
     text = conf.read_text(encoding="utf-8")
     marker = 'datasources "pg_3" {'
@@ -1143,6 +1165,7 @@ def _run_locked_invalid_numeric_token(context):
 
 
 def _run_external_edit_conflict(context):
+    ops = context.ops
     hook_source = ops.root / "suites" / "ha_commands" / "assets" / "rename_fault.c"
     hook_library = ops.workdir / "rename_fault.so"
     ops.run_command(
@@ -1192,6 +1215,7 @@ def _run_external_edit_conflict(context):
 
 
 def _run_weight_format_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_weight_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1223,6 +1247,7 @@ def _run_weight_format_preservation(context):
 
 
 def _run_single_line_block_preservation(context):
+    ops = context.ops
     conf = ops.start(transform=_pg3_as_single_line_block)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -1259,6 +1284,7 @@ def _run_single_line_block_preservation(context):
 
 
 def _run_backup_path_regular_file_rejected(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -1308,6 +1334,7 @@ def _run_backup_path_regular_file_rejected(context):
 
 
 def _run_backup_directory_permissions(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -1339,6 +1366,7 @@ def _run_backup_directory_permissions(context):
 
 
 def _run_stable_lock_directory_rejected(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())

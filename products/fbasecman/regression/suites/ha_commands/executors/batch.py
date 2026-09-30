@@ -2,12 +2,11 @@
 
 
 from suites.ha_commands.helpers import *
-import fbasecman_ops as ops
-
 __all__ = ['_run_batch_mixed_no_change_and_change', '_run_batch_status_invalid_target_atomicity', '_run_batch_weight_atomicity', '_run_bulk_30_datasource_weight_roundtrip', '_run_bulk_30_group_write_roundtrip', '_run_bulk_30_groups_invalid_target', '_run_bulk_30_groups_non_mmr', '_run_comprehensive_all_groups_and_commands', '_run_default_group_expansion_34', '_run_duplicate_and_mixed_status_targets', '_run_mixed_topology_pool_mode_batch_write', '_run_name_endpoint_status_deduplication', '_run_set_node_write_in_groups_duplicate_group']
 
 
 def _run_bulk_30_groups_non_mmr(context):
+    ops = context.ops
     conf = ops.start(transform=_add_bulk_mmr_groups)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -33,6 +32,7 @@ def _run_bulk_30_groups_non_mmr(context):
 
 
 def _run_default_group_expansion_34(context):
+    ops = context.ops
     conf = ops.start(transform=_add_34_mmr_groups)
     _wait_pg_cluster_ready(context, "pg_cluster_1", "pg_1", ("pg_3",))
     _wait_pg_cluster_ready(context, "pg_cluster_2", "pg_2", ("pg_4",))
@@ -65,6 +65,7 @@ def _run_default_group_expansion_34(context):
 
 
 def _run_bulk_30_datasource_weight_roundtrip(context):
+    ops = context.ops
     conf = ops.start(transform=_add_bulk_datasources)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -110,6 +111,7 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
 
 
 def _run_batch_weight_atomicity(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -141,6 +143,7 @@ def _run_batch_weight_atomicity(context):
 
 
 def _run_name_endpoint_status_deduplication(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -179,6 +182,7 @@ def _run_name_endpoint_status_deduplication(context):
 
 
 def _run_set_node_write_in_groups_duplicate_group(context):
+    ops = context.ops
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -206,6 +210,7 @@ def _run_set_node_write_in_groups_duplicate_group(context):
 
 
 def _run_batch_status_invalid_target_atomicity(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -228,6 +233,7 @@ def _run_batch_status_invalid_target_atomicity(context):
 
 def _run_comprehensive_all_groups_and_commands(context):
     """Exercise the supported HA command matrix with one complex fixture."""
+    ops = context.ops
     conf = ops.start(transform=_comprehensive_transform(context))
     before = ops.workdir / "comprehensive.initial.conf"
     before.write_bytes(conf.read_bytes())
@@ -516,6 +522,7 @@ def _run_comprehensive_all_groups_and_commands(context):
 
 
 def _run_mixed_topology_pool_mode_batch_write(context):
+    ops = context.ops
     conf = ops.start(transform=_mixed_topology_transform(context))
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -617,6 +624,7 @@ def _run_mixed_topology_pool_mode_batch_write(context):
 
 
 def _run_batch_mixed_no_change_and_change(context):
+    ops = context.ops
     conf = ops.start()
     initial = ops.workdir / "initial.conf"
     initial.write_bytes(conf.read_bytes())
@@ -660,6 +668,7 @@ def _run_batch_mixed_no_change_and_change(context):
 
 
 def _run_bulk_30_group_write_roundtrip(context):
+    ops = context.ops
     conf = ops.start(transform=_add_bulk_mmr_groups)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -685,6 +694,7 @@ def _run_bulk_30_group_write_roundtrip(context):
 
 
 def _run_bulk_30_groups_invalid_target(context):
+    ops = context.ops
     conf = ops.start(transform=_add_bulk_mmr_groups)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
@@ -706,6 +716,7 @@ def _run_bulk_30_groups_invalid_target(context):
 
 
 def _run_duplicate_and_mixed_status_targets(context):
+    ops = context.ops
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")

@@ -18,8 +18,8 @@ from suites.global_cache.drivers import (
 )
 
 from suites.global_cache.domains.common_assertions import _stats_change_text
-import fbasecman_ops as ops
 def _assert_basic_reuse(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     if delta.get("misses", 0) < 1:
         raise GlobalCacheFailure("basic_reuse expects misses delta >= 1, got %s" % delta.get("misses"))
@@ -77,6 +77,7 @@ def _assert_basic_reuse(context, before_state, after_state):
 
 
 def _assert_cross_client_reuse(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     if delta.get("hits", 0) < 1:
         raise GlobalCacheFailure("cross_client_reuse expects hits delta >= 1, got %s" % delta.get("hits"))
@@ -128,6 +129,7 @@ def _assert_cross_client_reuse(context, before_state, after_state):
 
 
 def _assert_close_unref(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     snapshots = ops.summary.get("close_unref_snapshots", {})
     close_before = snapshots.get("close_before", [])
@@ -272,6 +274,7 @@ def _assert_close_unref(context, before_state, after_state):
 
 
 def _assert_shared_global_entry_disconnect_one_client_reuse(context, before_state, after_state):
+    ops = context.ops
     delta = _stats_delta(before_state["stats"], after_state["stats"])
     snapshots = ops.summary.get("shared_disconnect_reuse_snapshots", {})
     both_connected = snapshots.get("both_connected", [])
@@ -352,6 +355,7 @@ def _assert_shared_global_entry_disconnect_one_client_reuse(context, before_stat
 
 
 def _run_shared_global_entry_disconnect_one_client_reuse_case(context):
+    ops = context.ops
     start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  3'),
@@ -429,6 +433,7 @@ def _run_shared_global_entry_disconnect_one_client_reuse_case(context):
 
 
 def _run_close_unref_case(context):
+    ops = context.ops
     start_conf = ops.render_runtime_conf(
         [
             ('server_lifetime  3600', 'server_lifetime  10'),

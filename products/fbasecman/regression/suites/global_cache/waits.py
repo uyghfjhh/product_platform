@@ -3,10 +3,8 @@
 from platform_regress.execution.polling import PollTimeout, poll_until
 from suites.global_cache.errors import GlobalCacheFailure
 from suites.global_cache.state import capture_global_cache_state
-import fbasecman_ops as ops
-
-
 def _capture_without_report_steps(context, prefix):
+    ops = context.ops
     def query(sql, stem):
         return ops.console_query(sql, stem, record=False)
     return capture_global_cache_state(query, prefix, include_server=False)
@@ -63,6 +61,7 @@ def wait_target_entries_released(context, marker, timeout, interval=1.0):
 
 
 def wait_capacity_entries_unref(context, prefix, expected_count, timeout, interval=1.0):
+    ops = context.ops
     state, matched = wait_target_entries_unref(
         context, "%s_" % prefix, expected_count, timeout, interval=interval
     )

@@ -1,6 +1,7 @@
 id: fbase-database
 title: FBase 数据库
 plugin_api: v1
+regression_sdk: "2"
 provider: provider.py
 source:
   env: PRODUCT_PLATFORM_FBASE_SOURCE_ROOT

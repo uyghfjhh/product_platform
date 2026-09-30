@@ -2,10 +2,8 @@
 
 from platform_regress.configuration.reload import install_reload_config, record_config_transition
 from suites.global_cache.domains.guc_sequences import run_guc_redeploy_phase
-import fbasecman_ops as ops
-
-
 def run_guc_reload_toggle_case(context):
+    ops = context.ops
     start_sync = ops.case.assertions.get("start_enable_guc_sync", "no")
     reload_sync = ops.case.assertions.get("reload_enable_guc_sync", "yes")
     scope = ops.case.assertions.get("guc_sync_scope", "global")

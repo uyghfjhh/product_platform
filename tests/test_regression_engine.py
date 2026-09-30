@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from platform_regress import Blocked, Cancelled, CaseContext, RegressionEngine
+from platform_regress.sdk import Blocked, Cancelled, CaseContext, RegressionEngine
 from platform_app.actions import run_task
 from platform_app.api import create_app
 from platform_app.config import Settings
@@ -98,7 +98,7 @@ def test_blocked_and_cooperative_cancel_have_distinct_verdicts(tmp_path):
 def test_product_case_runs_via_platform_cli(tmp_path):
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: demo\ntitle: Demo\nplugin_api: v1\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\n", encoding="utf-8")
     (package / "cases.py").write_text(
         "class Case:\n"
         "    def run(self, context):\n"
@@ -130,7 +130,7 @@ def test_platform_cli_accepts_explicit_nodes(tmp_path):
 
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: demo\nregression_sdk: '2'\n", encoding="utf-8")
     (package / "cases.py").write_text(
         "class Case:\n"
         "    def run(self, context):\n"
@@ -148,7 +148,7 @@ def test_platform_cli_runs_a_suite_batch_and_writes_aggregate(tmp_path):
     from platform_regress.cli import main
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: demo\nregression_sdk: '2'\n", encoding="utf-8")
     (package / "cases.py").write_text(
         "class Case:\n"
         "    def __init__(self, name): self.name = name\n"
@@ -169,7 +169,7 @@ def test_platform_cli_failed_target_reruns_only_recorded_failures(tmp_path):
 
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: demo\nregression_sdk: '2'\n", encoding="utf-8")
     flag = tmp_path / "healed.flag"
     ran = tmp_path / "ran.json"
     (package / "cases.py").write_text(
@@ -205,7 +205,7 @@ def test_platform_cli_failed_with_no_record_is_a_noop(tmp_path):
 
     package = tmp_path / "demo"
     package.mkdir()
-    (package / "product.yaml").write_text("id: demo\n", encoding="utf-8")
+    (package / "product.yaml").write_text("id: demo\nregression_sdk: '2'\n", encoding="utf-8")
     (package / "cases.py").write_text(
         "class Case:\n"
         "    def run(self, context): return True\n"
@@ -236,7 +236,7 @@ def test_attach_file_copies_source_into_execution_evidence(tmp_path):
 
 
 def test_sql_uses_declared_node_and_records_query_evidence(tmp_path, monkeypatch):
-    from platform_regress import SqlResult
+    from platform_regress.sdk import SqlResult
 
     calls = []
 
@@ -261,7 +261,7 @@ def test_sql_uses_declared_node_and_records_query_evidence(tmp_path, monkeypatch
         calls.append(kwargs)
         return Connection()
 
-    monkeypatch.setattr("platform_regress.engine.psycopg.connect", connect)
+    monkeypatch.setattr("platform_regress.sql.psycopg.connect", connect)
     context = CaseContext("demo.case", tmp_path, environment={
         "user": "tester", "nodes": {"primary": {"host": "127.0.0.1", "port": 15432}},
     })
@@ -324,7 +324,7 @@ def test_product_case_uses_shared_engine_through_web_task(tmp_path, monkeypatch)
     package = tmp_path / "products" / "demo"
     package.mkdir(parents=True)
     (package / "product.yaml").write_text(
-        "id: demo\ntitle: Demo\nplugin_api: v1\ncapabilities:\n  tests: demo\n"
+        "id: demo\ntitle: Demo\nplugin_api: v1\nregression_sdk: '2'\ncapabilities:\n  tests: demo\n"
         "actions:\n  - id: tests.demo\n    title: Run demo\n"
         "    capability: tests\n    changes_environment: true\n",
         encoding="utf-8",

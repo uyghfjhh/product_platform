@@ -2,14 +2,12 @@
 
 from platform_regress.evidence.assertions import matching_rows, pipe_rows, require_markers
 from suites.global_cache.errors import GlobalCacheFailure
-import fbasecman_ops as ops
-
-
 def _read_log(path):
     return path.read_text(encoding="utf-8", errors="replace")
 
 
 def assert_guc_reload_toggle(context, before_state, after_state):
+    ops = context.ops
     cfg = ops.summary.get("reload_toggle", {})
     expected_before = cfg.get("expected_before", "on")
     expected_after = cfg.get("expected_after", "off")

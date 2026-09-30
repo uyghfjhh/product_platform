@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from platform_regress.clients.psql import build_psql_command, assert_table_rows
-from platform_regress.engine import CaseFailure
+from platform_regress.sdk import CaseFailure
 
 from platform_regress.evidence.log_window import (
     LocalLogWindow,
@@ -37,9 +37,8 @@ from platform_regress.reporting import (
 from products.fbasecman.process import FbasecmanProcess, FbasecmanProcessError
 from products.fbasecman.config import remove_config_block_line, set_config_block_line
 from suites.handover.manifest import HANDOVER_CASES
-import fbasecman_ops as ops
 
-
+LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 class HandoverFailure(CaseFailure):
     pass
 
@@ -51,7 +50,7 @@ def _port_free(port):
     # bind it with SO_REUSEADDR during an immediate restart.
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((ops.LOCAL_HOST, int(port)))
+        sock.bind((LOCAL_HOST, int(port)))
         return True
     except OSError:
         return False
@@ -543,7 +542,7 @@ class HandoverRuntime(object):
         self._command_no += 1
         port = int(port or self.listen_port)
         logfile = self.logs_dir / ("%02d_psql.log" % self._command_no)
-        command = build_psql_command(self.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, port,
+        command = build_psql_command(self.env.config["local"]["postgres_dir"], LOCAL_HOST, port,
                                      user, database, sql)
         with self.evidence_step(
                 title or "psql 执行 SQL", sql=sql, console=(database == "console"),
@@ -567,7 +566,7 @@ class HandoverRuntime(object):
             statement.rstrip(";") + ";" for statement in statements
         ) + "\n", encoding="utf-8")
         logfile = self.logs_dir / ("%02d_psql_script.log" % self._command_no)
-        command = build_psql_command(self.env.config["local"]["postgres_dir"], ops.LOCAL_HOST, port,
+        command = build_psql_command(self.env.config["local"]["postgres_dir"], LOCAL_HOST, port,
                                      user, database, "")
         # build_psql_command adds -c; replace that empty query with the script form.
         command = command[:-2] + ["-f", str(script)]
@@ -769,7 +768,7 @@ class HandoverRuntime(object):
             "mmr2_s1": ("test_mmr2_s1", db["mmr_pg_user"], db["mmr_host"], db["ports"]["mmr2_standby1"]),
         }
         pgdata_name, user, host, port = nodes[node]
-        psql_cmd = ('%s/bin/psql -h ' + ops.LOCAL_HOST + ' -p %s -U %s -d %s -c "%s"') % (
+        psql_cmd = ('%s/bin/psql -h ' + LOCAL_HOST + ' -p %s -U %s -d %s -c "%s"') % (
             pg_dir, port, user, dbname, sql.replace('"', '\\"')
         )
         result = self._pg_runner.run_remote(user, host, psql_cmd, "pg_sql_%s_%02d.log" % (node, self._command_no), check=False)
@@ -806,7 +805,7 @@ class HandoverRuntime(object):
         script = (
             '{pg_dir}/bin/pg_ctl -D {standby_dir} stop -m immediate || true; '
             'rm -rf {standby_dir}; mkdir -p {standby_dir}; chmod 700 {standby_dir}; '
-            '{pg_dir}/bin/pg_basebackup -h ' + ops.LOCAL_HOST + ' -U replicator -p {primary_port} -w -F p -P -X stream -R -c fast -D {standby_dir}; '
+            '{pg_dir}/bin/pg_basebackup -h ' + LOCAL_HOST + ' -U replicator -p {primary_port} -w -F p -P -X stream -R -c fast -D {standby_dir}; '
             'sed -i "/^primary_conninfo = / s/\'$/ application_name={app_name}\'/" {standby_dir}/postgresql.auto.conf; '
             'sed -i "/^primary_slot_name/d" {standby_dir}/postgresql.auto.conf {standby_dir}/pgcluster.conf 2>/dev/null || true; '
             'echo "port={standby_port}" >> {standby_dir}/postgresql.conf; '

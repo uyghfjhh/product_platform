@@ -1,57 +1,100 @@
-"""Public SDK for product regression packages.
+"""Versioned public contracts for product regression packages.
 
-Product code should import regression contracts from this module.  The module
-is deliberately a small facade: execution, evidence, cancellation and SQL
-transport remain owned by :mod:`platform_regress`, while a product only
-implements ``RegressionCase.run`` and its business assertions.
+The exports below and the documented public subpackages in SDK.md are the
+supported product API. Execution implementation modules are platform-private.
 """
 
-from __future__ import annotations
-
-from typing import Protocol
-
-from .engine import (
+from .catalog import CaseCatalog, CaseContractError, CaseDefinition
+from .clients.pgbench import PgbenchRequest
+from .contracts import (
     Blocked,
     Cancelled,
-    CaseContext,
     CaseFailure,
     CaseResult,
+    CleanupCase,
+    CleanupResult,
+    CleanupStatus,
     CommandResult,
     RegressionCase,
-    RegressionEngine,
+    SetupCase,
     SqlResult,
+    Verdict,
 )
-from .runtime import (
-    CaseRuntime,
-    CaseRuntimeFailure,
-    EnvironmentRef,
-    RegressionContext,
+from .engine import CaseContext, RegressionEngine
+from .environment.context import CaseEnvironment, NodeEndpoint, resolve_selector
+from .environment.disposable import DisposablePostgresResources
+from .environment.guards import FileRestoreGuard
+from .environment.postgresql_fixtures import PostgresFixtures
+from .environment.postgresql_lifecycle import PostgresLifecycle
+from .evidence.artifacts import ArtifactRepository, CleanupReport
+from .evidence.server_logs import ServerLogCollector
+from .execution.longrun import WorkloadGroup
+from .execution.remote import RemoteExecutor, RemoteTarget
+from .persistence.state import JsonStateStore
+from .requirements import (
+    COMMON_REQUIREMENTS,
+    RequirementRegistry,
+    evaluate_requirements,
 )
+from .runtime import ReportRuntime, ReportSpec
+from .sql import SqlSession
+from .steps import (
+    SUPPORTED_COMMAND_ASSERTIONS,
+    SUPPORTED_SQL_ASSERTIONS,
+    run_declared_step,
+    run_declared_steps,
+    run_sql_step,
+)
+from .suites.executor import CaseRuntimeProtocol, RuntimeBinding, RuntimeExecutorCase
 
-SDK_VERSION = "1"
-
-
-class ProductCase(Protocol):
-    """Minimal contract implemented by every product regression case."""
-
-    def run(self, context: CaseContext) -> bool | None:
-        ...
-
+SDK_VERSION = "2"
 
 __all__ = [
+    "COMMON_REQUIREMENTS",
+    "SDK_VERSION",
+    "SUPPORTED_COMMAND_ASSERTIONS",
+    "SUPPORTED_SQL_ASSERTIONS",
+    "ArtifactRepository",
     "Blocked",
     "Cancelled",
+    "CaseCatalog",
     "CaseContext",
+    "CaseContractError",
+    "CaseDefinition",
+    "CaseEnvironment",
     "CaseFailure",
     "CaseResult",
+    "CaseRuntimeProtocol",
+    "CleanupCase",
+    "CleanupReport",
+    "CleanupResult",
+    "CleanupStatus",
     "CommandResult",
-    "EnvironmentRef",
-    "ProductCase",
+    "DisposablePostgresResources",
+    "FileRestoreGuard",
+    "JsonStateStore",
+    "NodeEndpoint",
+    "PgbenchRequest",
+    "PostgresFixtures",
+    "PostgresLifecycle",
     "RegressionCase",
-    "RegressionContext",
     "RegressionEngine",
-    "CaseRuntime",
-    "CaseRuntimeFailure",
-    "SDK_VERSION",
+    "RemoteExecutor",
+    "RemoteTarget",
+    "ReportRuntime",
+    "ReportSpec",
+    "RequirementRegistry",
+    "RuntimeBinding",
+    "RuntimeExecutorCase",
+    "ServerLogCollector",
+    "SetupCase",
     "SqlResult",
+    "SqlSession",
+    "Verdict",
+    "WorkloadGroup",
+    "evaluate_requirements",
+    "resolve_selector",
+    "run_declared_step",
+    "run_declared_steps",
+    "run_sql_step",
 ]

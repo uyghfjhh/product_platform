@@ -1,11 +1,9 @@
 """Executors for Chapter 10: fbasecman console commands and statistics."""
 
 import re
-import fbasecman_ops as ops
-
-
 def execute_console_group_metadata(context):
     """10.1.1~10.1.5 控制台元数据命令输出字段全检"""
+    ops = context.ops
     ops.start()
 
     # 10.1.1 SHOW HELP
@@ -62,6 +60,7 @@ def execute_console_group_metadata(context):
 
 def execute_console_server_maintenance(context):
     """10.1.6~10.1.9 SPLITLOG 与 server 清理命令"""
+    ops = context.ops
     ops.start()
 
     # 10.1.6 SPLITLOG
@@ -111,6 +110,7 @@ def execute_console_server_maintenance(context):
 
 def execute_console_statistics(context):
     """10.2.1 SHOW SERVERS 统计信息验证"""
+    ops = context.ops
     ops.start()
 
     # 初始状态下查看 SERVERS 统计
@@ -140,6 +140,7 @@ def execute_console_statistics(context):
 
 def execute_console_thread_pool_statistics(context):
     """10.2.3 SHOW THREAD_STATUS 与 10.2.4 SHOW POOLS 统计信息"""
+    ops = context.ops
     ops.start()
 
     # 10.2.3 SHOW THREAD_STATUS
@@ -161,6 +162,7 @@ def execute_console_thread_pool_statistics(context):
 
 def execute_console_reset_statistics(context):
     """10.2.5 RESET 统计重置验证"""
+    ops = context.ops
     ops.start()
 
     # 产生业务流量

@@ -1,6 +1,7 @@
 id: demo
 title: 接入示例
 plugin_api: v1
+regression_sdk: "2"
 provider: provider.py
 capabilities:
   tests: demo-regression

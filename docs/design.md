@@ -116,6 +116,7 @@ products/<product_id>/
 id: fbasecman
 title: fbasecman
 plugin_api: v1
+regression_sdk: "2"
 versions:
   - id: 1.7
     binary: /path/to/fbasecman
@@ -278,6 +279,8 @@ runtime 构造注入 resolver `env`/`context_data`，不再自行加载 legacy �
 产品只提供业务用例、产品命令、SQL、观测解析和业务断言。`CaseResult`、`EvidenceRef`、清理协议和报告事实模型属于平台。产品 `run.sh`/`stable.sh` 等入口仍然保留，必须调用产品包内代码或平台 SDK，不能把产品逻辑重新搬回平台核心。
 
 ### 5.2 Test SDK
+
+当前实现为 SDK v2，公开契约与迁移规则见 [SDK 指南](../backend/platform_regress/SDK.md) 和 [v2 设计](sdk-v2-design.md)。下方接口示意属于目标能力说明，具体签名以 SDK 指南为准。
 
 ```python
 class TestProvider(Protocol):

@@ -4,10 +4,8 @@ from platform_regress.evidence.assertions import stats_delta as _stats_delta
 from lib.report_utils import render_psql_expanded_from_pipe_text
 from suites.global_cache.result import set_report_blocks as _summary_set_report_blocks
 from suites.global_cache.errors import GlobalCacheFailure
-import fbasecman_ops as ops
-
-
 def assert_capacity_eviction_zero_ref(context, before_state, active_state, zero_ref_state, trigger_a_state, trigger_b_state, after_state):
+    ops = context.ops
     capacity_limit = int(ops.case.reload.get("capacity_limit", 3))
     server_lifetime = int(ops.case.reload.get("server_lifetime", 10))
     delta = _stats_delta(before_state["stats"], after_state["stats"])
@@ -156,6 +154,7 @@ def assert_capacity_eviction_zero_ref(context, before_state, active_state, zero_
 
 
 def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(context, before_state, heartbeat_state, guc_report_state, discard_state, zero_ref_ready_state, after_state):
+    ops = context.ops
     heartbeat_rows = ["|".join(row) for row in heartbeat_state["global"] if len(row) >= 2 and "SELECT 124" in row[1]]
     report_rows = ["|".join(row) for row in guc_report_state["global"] if len(row) >= 2 and "gc_capacity_fused_report" in row[1]]
     discard_rows = ["|".join(row) for row in discard_state["global"] if len(row) >= 2 and row[1].strip().upper() == "DISCARD ALL"]
@@ -279,6 +278,7 @@ def assert_capacity_mixed_bypass_response_and_zero_ref_shortage(context, before_
 
 
 def assert_ref_count_protects_active_entries(context, before_state, after_state):
+    ops = context.ops
     capacity_limit = int(ops.case.reload.get("capacity_limit", 2))
     active_count = int(ops.case.reload.get("active_count", 4))
     delta = _stats_delta(before_state["stats"], after_state["stats"])

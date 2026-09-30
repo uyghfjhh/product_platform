@@ -1,0 +1,15 @@
+用例: demo.sample
+结论: PASS
+测试开始时间: 2026-09-30 10:00:00
+测试结束时间: 2026-09-30 10:00:01
+通过原因: verified
+
+验证目的:
+  Report preservation
+
+验证步骤:
+步骤 1: Check count
+    实际执行: SELECT 1
+    关键期望: 1 row
+    实际: 1 row
+    判定: PASS

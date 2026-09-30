@@ -9,16 +9,12 @@ evidence attachment. Anything the platform cannot express stays in the
 legacy executor instead of being approximated here.
 """
 
-import errno
 import os
 import re
 import shutil
-import socket
-import time
 from pathlib import Path
 
-from platform_regress import Blocked
-
+from platform_regress.sdk import Blocked
 
 TMP_PREFIX = os.environ.get("FBASE_REGRESS_TMP_PREFIX", "/tmp/fbase_regress_")
 
@@ -161,61 +157,18 @@ def _untrack_cluster(context, entry_id):
         pass
 
 
-def _sweep_dead_owners(context, definition):
-    """Reclaim framework clusters whose owning engine process is gone.
+def _resources(context, definition):
+    from platform_regress.environment.disposable import DisposablePostgresResources
+    return DisposablePostgresResources(context, owned_prefix=_tmp_prefix(context),
+        pg_ctl=lambda: _binary(context, definition, "pg_ctl"), run=_run)
 
-    A run killed with SIGKILL leaves postmasters listening and directories
-    behind.  Any later isolated fixture on this environment sweeps the
-    ledger: stop the postmaster under the framework tmp prefix only, remove
-    the directory, then drop the entry.  Orphaned SysV segments left by dead
-    postmasters are released the same way.
-    """
+
+def _sweep_dead_owners(context, definition):
+    import pwd
+
     from platform_regress.ledger import sweep_orphaned_sysv_shm
-    try:
-        entries = context.ledger.sweep("isolated_cluster")
-    except Exception:
-        entries = []
-    for entry in entries:
-        data_dir = Path(str(entry.get("data_dir") or ""))
-        if not str(data_dir).startswith(_tmp_prefix(context)):
-            continue
-        clusters = []
-        if (data_dir / "PG_VERSION").is_file():
-            clusters.append(data_dir)
-        for child in data_dir.iterdir() if data_dir.is_dir() else []:
-            if child.is_dir() and (child / "PG_VERSION").is_file():
-                clusters.append(child)
-        if clusters:
-            try:
-                pg_ctl = _binary(context, definition, "pg_ctl")
-            except Exception:
-                pg_ctl = None
-            for cluster in clusters:
-                if pg_ctl:
-                    _run(context, [pg_ctl, "-D", str(cluster),
-                                   "stop", "-m", "immediate"], timeout=30)
-                # A postmaster that ignores pg_ctl still holds its port;
-                # SIGTERM by pid is the bounded fallback for dead-owner dirs.
-                # Verify the pid is really this cluster's postmaster first —
-                # a stale postmaster.pid can name a recycled pid of an
-                # unrelated process.
-                for pid in _cluster_pids(cluster):
-                    if _postgres_data_dir(pid) != cluster:
-                        continue
-                    try:
-                        os.kill(pid, 15)
-                    except OSError:
-                        pass
-        shutil.rmtree(str(data_dir), ignore_errors=True)
-        try:
-            context.ledger.drop(entry)
-        except Exception:
-            pass
-    try:
-        import pwd
-        sweep_orphaned_sysv_shm(owner=pwd.getpwuid(os.geteuid()).pw_name)
-    except Exception:
-        pass
+    _resources(context, definition).sweep()
+    sweep_orphaned_sysv_shm(owner=pwd.getpwuid(os.geteuid()).pw_name)
 
 
 def _declared_ports(context, definition):
@@ -229,21 +182,8 @@ def _declared_ports(context, definition):
 
 
 def _allocate_listener(reserved):
-    """Bind one available loopback port and retain the socket until pg_ctl starts."""
-    for port in list(range(20000, 65536)) + list(range(1025, 20000)):
-        if str(port) in reserved:
-            continue
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            listener.bind((os.environ.get("FBASE_LOCAL_HOST", "127.0.0.1"), port))
-        except OSError as exc:
-            listener.close()
-            if exc.errno == errno.EADDRINUSE:
-                continue
-            raise Blocked("无法探测隔离实例端口 %s: %s" % (port, exc))
-        return str(port), listener
-    raise Blocked("没有可用的隔离实例监听端口")
+    from platform_regress.environment.disposable import reserve_listener
+    return reserve_listener(reserved, host=os.environ.get("FBASE_LOCAL_HOST", "127.0.0.1"))
 
 
 def _reserve_ports(context, definition, declared_ports=None):
@@ -302,112 +242,33 @@ def release_port_for_command(context, definition, argv):
 
 
 def _cluster_pids(data_dir):
-    """Postmaster pid from postmaster.pid, if the file survives."""
-    try:
-        lines = (Path(data_dir) / "postmaster.pid").read_text().splitlines()
-        return [int(lines[0].strip())] if lines and lines[0].strip().isdigit() else []
-    except (OSError, ValueError):
-        return []
+    from platform_regress.environment.disposable import postmaster_pids
+    return postmaster_pids(data_dir)
 
 
 def _postgres_data_dir(pid):
-    """Read the postmaster data directory without trusting lsof process names."""
-    try:
-        argv = (Path("/proc") / str(pid) / "cmdline").read_bytes().split(b"\0")
-    except OSError:
-        return None
-    for index, argument in enumerate(argv[:-1]):
-        if argument == b"-D":
-            return Path(argv[index + 1].decode("utf-8", "replace"))
-    return None
+    from platform_regress.environment.disposable import postgres_data_dir
+    return postgres_data_dir(pid)
 
 
 def _listener_pids(context, port):
-    returncode, output = _run(
-        context, ["lsof", "-nP", "-t", "-iTCP:%s" % port, "-sTCP:LISTEN"], timeout=10)
-    return [line.strip() for line in output.splitlines() if line.strip().isdigit()]
+    from platform_regress.environment.disposable import DisposablePostgresResources
+    return DisposablePostgresResources(context, owned_prefix=_tmp_prefix(context),
+        pg_ctl=lambda: "pg_ctl", run=_run).listener_pids(port)
 
 
 def _wait_ports_free(context, definition, timeout=10):
-    """Wait for an immediate-stop listener to release a reused test port."""
-    ports = tuple(_instances(context, definition))
-    if not ports:
-        return
-    deadline = time.monotonic() + timeout
-    escalated = False
-    while True:
-        occupied = {port: _listener_pids(context, port) for port in ports}
-        occupied = {port: pids for port, pids in occupied.items() if pids}
-        if not occupied:
-            return
-        if time.monotonic() >= deadline:
-            if not escalated:
-                # pg_ctl -m immediate can return before the postmaster lets go;
-                # SIGTERM framework-owned stragglers once, then re-wait.
-                for pids in occupied.values():
-                    for pid in pids:
-                        data_dir = _postgres_data_dir(pid)
-                        if (data_dir is not None and
-                                str(data_dir).startswith(_tmp_prefix(context))):
-                            try:
-                                os.kill(int(pid), 15)
-                            except OSError:
-                                pass
-                escalated = True
-                deadline = time.monotonic() + 5
-                continue
-            details = ", ".join("%s(pid=%s)" % (port, ",".join(pids))
-                                for port, pids in sorted(occupied.items()))
-            raise RuntimeError("隔离实例端口在停止后 %ss 仍被监听: %s" % (timeout, details))
-        time.sleep(0.1)
+    return _resources(context, definition).wait_ports_free(_instances(context, definition), timeout=timeout)
 
 
 def _reclaim_stale_listeners(context, definition):
-    """Stop only orphaned framework postmasters occupying this case's ports."""
-    for port in _instances(context, definition):
-        for pid in _listener_pids(context, port):
-            data_dir = _postgres_data_dir(pid)
-            if data_dir is None:
-                raise Blocked("端口 %s 被 PID %s 占用，但无法确认其 PostgreSQL 数据目录"
-                              % (port, pid))
-            if (not str(data_dir).startswith(_tmp_prefix(context)) or
-                    not (data_dir / "PG_VERSION").is_file()):
-                raise Blocked(
-                    "端口 %s 被非本框架隔离实例占用（PID %s，数据目录 %s），拒绝停止"
-                    % (port, pid, data_dir))
-            _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(data_dir),
-                           "stop", "-m", "immediate"], timeout=30)
-            shutil.rmtree(str(data_dir), ignore_errors=True)
-    _wait_ports_free(context, definition)
+    return _resources(context, definition).reclaim_listeners(_instances(context, definition))
 
 
 def _remove_stale_cluster_root(context, definition, data_dir):
-    """Stop and remove a prior interrupted run under a framework-owned root."""
-    data_dir = Path(data_dir)
-    command_clusters = [Path(cluster)
-                        for cluster in _instances(context, definition).values()]
-    if not data_dir.exists() and not any(cluster.exists()
-                                         for cluster in command_clusters):
-        return
-    if not str(data_dir).startswith(_tmp_prefix(context)):
-        raise Blocked("拒绝清理非框架隔离目录: %s" % data_dir)
-    clusters = []
-    if (data_dir / "PG_VERSION").is_file():
-        clusters.append(data_dir)
-    for child in data_dir.iterdir() if data_dir.is_dir() else []:
-        if child.is_dir() and (child / "PG_VERSION").is_file():
-            clusters.append(child)
-    # The case command may expand {run_id} after fixture registration.  Use
-    # the parsed instance paths as well so an interrupted run cannot leave a
-    # nonempty data directory that makes the next initdb fail.
-    for cluster in command_clusters:
-        if (cluster / "PG_VERSION").is_file() and cluster not in clusters:
-            clusters.append(cluster)
-    for cluster in clusters:
-        _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(cluster),
-                       "stop", "-m", "immediate"], timeout=30)
-        shutil.rmtree(str(cluster), ignore_errors=True)
-    shutil.rmtree(str(data_dir), ignore_errors=True)
+    return _resources(context, definition).remove(data_dir,
+        registered=_instances(context, definition).values(),
+        wait=lambda: _wait_ports_free(context, definition))
 
 
 def _isolated_cluster_root(context, definition, options, fixture_name,
@@ -420,33 +281,9 @@ def _isolated_cluster_root(context, definition, options, fixture_name,
     ledger_entries = [_track_cluster(context, data_dir)]
 
     def cleanup():
-        clusters = set()
-        if data_dir.is_dir() and (data_dir / "PG_VERSION").is_file():
-            clusters.add(data_dir)
-        for child in data_dir.iterdir() if data_dir.is_dir() else []:
-            if child.is_dir() and (child / "PG_VERSION").is_file():
-                clusters.add(child)
-        # Commands may have expanded the fixture's data_dir placeholder before
-        # startup.  The registered topology is therefore authoritative even
-        # when filesystem enumeration misses a still-running postmaster.
-        for cluster in _instances(context, definition).values():
-            cluster = Path(cluster)
-            if (cluster / "PG_VERSION").is_file():
-                clusters.add(cluster)
-        for cluster in clusters:
-            for source_name in ("start.log", "postgresql.log", "postgresql.csv"):
-                source = cluster / source_name
-                if source.is_file():
-                    context.attach_file("%s.%s" % (cluster.name, source_name), source)
-            _run(context, [_binary(context, definition, "pg_ctl"), "-D", str(cluster),
-                           "stop", "-m", "immediate"], timeout=30)
-        # pg_ctl can return while the postmaster still owns its listener.  The
-        # next isolated MMR case reuses fixed ports, so do not return until
-        # the kernel has released every port declared by this case.
-        _wait_ports_free(context, definition)
-        for cluster in clusters:
-            shutil.rmtree(str(cluster), ignore_errors=True)
-        shutil.rmtree(str(data_dir), ignore_errors=True)
+        _resources(context, definition).remove(data_dir,
+            registered=_instances(context, definition).values(), archive=True,
+            wait=lambda: _wait_ports_free(context, definition))
         for entry_id in ledger_entries:
             _untrack_cluster(context, entry_id)
 

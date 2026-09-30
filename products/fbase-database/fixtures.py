@@ -17,10 +17,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from platform_regress import Blocked
 from platform_regress import steps as platform_steps
-from platform_regress.engine import resolve_selector
 from platform_regress.execution.forensics import CoreSnapshot
+from platform_regress.sdk import Blocked, resolve_selector
 
 
 class SafetyError(Exception):
@@ -100,40 +99,18 @@ def binary(context, name):
 
 
 def pg_ctl(context, node, action, check=True):
-    """Run pg_ctl on a managed node like the legacy environment manager."""
-    endpoint = context.node_endpoint(node)
-    argv = platform_steps._pg_ctl_argv(context, endpoint, action)
-    completed = runner_run(context, argv, check=False)
-    if check and completed.returncode != 0:
-        raise OperationError("命令执行失败(%s): %s\n%s" % (
-            completed.returncode, " ".join(argv), completed.stdout.rstrip()))
-    return completed
+    from platform_regress.environment.postgresql_lifecycle import PostgresLifecycle
+    return PostgresLifecycle(context, run=runner_run, operation_error=OperationError).node_action(node, action, check=check)
 
 
 def managed_node_order(context):
-    return platform_steps._managed_node_order(context)
+    from platform_regress.environment.postgresql_lifecycle import PostgresLifecycle
+    return PostgresLifecycle(context, run=runner_run).node_order()
 
 
 def cluster_apply(context, action):
-    """Apply a cluster-wide lifecycle action with legacy manager semantics."""
-    order = managed_node_order(context)
-    if action == "reload":
-        for node in order:
-            pg_ctl(context, node, "reload")
-    elif action == "start":
-        for node in order:
-            if pg_ctl(context, node, "status", check=False).returncode != 0:
-                pg_ctl(context, node, "start")
-    elif action == "stop":
-        for node in reversed(order):
-            if pg_ctl(context, node, "status", check=False).returncode == 0:
-                pg_ctl(context, node, "stop")
-    elif action == "restart":
-        for node in order:
-            status = pg_ctl(context, node, "status", check=False).returncode
-            pg_ctl(context, node, "restart" if status == 0 else "start")
-    else:
-        raise ConfigError("不支持的 cluster action: %s" % action)
+    from platform_regress.environment.postgresql_lifecycle import PostgresLifecycle
+    return PostgresLifecycle(context, run=runner_run, operation_error=OperationError).apply(action)
 
 
 def postgres_execute(context, node, user, database, sql, structured=False,
@@ -476,106 +453,17 @@ def declared_nodes_blocker(context, definition, environment=None):
 _LOG_DESTINATIONS = {"stderr": "postgresql.log", "csvlog": "postgresql.csv"}
 
 
-class ServerLogCollector:
-    """Collect postmaster log tails for one managed node into the case dir."""
-
-    def __init__(self, context, node, case_dir, label=None):
-        self.context = context
-        self.node = node
-        self.case_dir = Path(case_dir)
-        endpoint = context.node_endpoint(node)
-        self.data_dir = Path(str(endpoint.get("data_dir") or ""))
-        self.host = str(endpoint.get("host", ""))
-        self.before = {}
-        self.errors = []
-        self.label = label
-        self.finished = False
-
-    def _output_name(self, output_name):
-        if not self.label:
-            return output_name
-        path = Path(output_name)
-        return "%s.%s%s" % (path.stem, self.label, path.suffix)
-
-    def start(self):
-        for output_name in _LOG_DESTINATIONS.values():
-            path = self.case_dir / self._output_name(output_name)
-            if path.exists():
-                path.unlink()
-        self.before = self._snapshot()
-
-    def finish(self, allow_missing_before=False):
-        if self.finished:
-            return []
-        self.finished = True
-        after = self._snapshot(ignore_errors=allow_missing_before)
-        evidence = []
-        for destination, output_name in _LOG_DESTINATIONS.items():
-            output_name = self._output_name(output_name)
-            segments = []
-            before_path, before_size = self.before.get(destination, (None, 0))
-            after_path, _ = after.get(destination, (None, 0))
-            if before_path:
-                segments.append((before_path, before_size))
-            if after_path and after_path != before_path:
-                segments.append((after_path, 0))
-            content = b""
-            for path, offset in segments:
-                try:
-                    if self.context.is_local(self.host):
-                        with path.open("rb") as stream:
-                            stream.seek(offset)
-                            content += stream.read()
-                    else:
-                        transport = (self.context.environment.get("cluster", {})
-                                     .get("transport") or {})
-                        import os as _os
-                        ssh_user = (transport.get("ssh_user") or
-                                    self.context.environment.get("ssh_user") or
-                                    _os.environ.get("USER") or "postgres")
-                        ssh_port = (transport.get("ssh_port") or
-                                    self.context.environment.get("ssh_port") or 22)
-                        result = self.context.command(
-                            ["ssh", "-p", str(ssh_port), "%s@%s" % (ssh_user, self.host),
-                             "tail -c +%s %s" % (offset + 1, path)],
-                            timeout_seconds=60, merge_stderr=True)
-                        if result.returncode != 0:
-                            raise OSError(result.stdout.strip() or "远端日志读取失败")
-                        content += result.stdout.encode("utf-8")
-                except OSError as exc:
-                    if not (allow_missing_before and path == before_path):
-                        self.errors.append("%s: %s" % (path, exc))
-            if content:
-                reference = self.context.attach_bytes(output_name, content)
-                evidence.append(reference)
-        return evidence
-
-    def _snapshot(self, ignore_errors=False):
-        result = {}
-        for destination in _LOG_DESTINATIONS:
-            try:
-                relative = query_value(
-                    self.context, self.node, "postgres",
-                    "SELECT coalesce(pg_current_logfile('%s'), '')" % destination)
-                if not relative:
-                    continue
-                path = Path(relative)
-                if not path.is_absolute():
-                    path = self.data_dir / path
-                if self.context.is_local(self.host):
-                    size = path.stat().st_size
-                else:
-                    continue
-                result[destination] = (path, size)
-            except Exception as exc:  # noqa: BLE001 - snapshot probe
-                if not ignore_errors:
-                    self.errors.append("%s: %s" % (destination, exc))
-        return result
+def server_log_collector(context, node, case_dir, label=None):
+    from platform_regress.evidence.server_logs import ServerLogCollector
+    return ServerLogCollector(context, node, case_dir,
+        current_log=lambda ctx, selector, destination: query_value(ctx, selector, "postgres",
+            "SELECT coalesce(pg_current_logfile('%s'), '')" % destination),
+        destinations=_LOG_DESTINATIONS, label=label)
 
 
 def start_log_collectors(context, names, case_dir):
     multiple = len(names) > 1
-    collectors = [ServerLogCollector(context, name, case_dir,
+    collectors = [server_log_collector(context, name, case_dir,
                                      label=name if multiple else None)
                   for name in names]
     for collector in collectors:
@@ -1244,25 +1132,8 @@ def _mmr_schemas_empty(context, definition, options):
 
 
 def _system_clock(context, definition, options):
-    """Save the host clock and restore it if a case advances system time."""
-    now = runner_run(context, ["date", "+%s"]).stdout.strip()
-    ntp = runner_run(
-        context, ["timedatectl", "show", "-p", "NTP", "--value"],
-        check=False).stdout.strip()
-    if not now.isdigit():
-        raise OperationError("无法读取当前系统时间")
-    state = {"epoch": now, "ntp": ntp, "changed": False}
-    context.values["system_clock"] = state
-
-    def cleanup():
-        if not state["changed"]:
-            return
-        runner_run(context, ["sudo", "-n", "timedatectl", "set-ntp", "false"])
-        runner_run(context, ["sudo", "-n", "date", "-s", "@%s" % state["epoch"]])
-        if state["ntp"] in ("yes", "true", "1"):
-            runner_run(context, ["sudo", "-n", "timedatectl", "set-ntp", "true"])
-
-    defer(context, "恢复系统时间和 NTP 状态", cleanup, priority=200)
+    from platform_regress.environment.guards import system_clock_guard
+    return system_clock_guard(context, run=runner_run, defer=defer)
 
 
 def _shared_mmr_conflict_topology(context, definition, options):
@@ -1600,12 +1471,10 @@ def _hba_password_auth(context, definition, options):
         postgres_checked(context, node, _env(context, "user", "postgres"), "postgres",
                          "SELECT pg_reload_conf()")
 
-    def cleanup():
-        path.write_text(original, encoding="utf-8")
-        reload_hba()
-
-    defer(context, "恢复 %s 的 pg_hba.conf" % role, cleanup, priority=90)
-    path.write_text(rule + original, encoding="utf-8")
+    from platform_regress.environment.guards import FileRestoreGuard
+    guard = FileRestoreGuard(context, path, after_restore=reload_hba,
+                             title="恢复 %s 的 pg_hba.conf" % role, defer=defer, priority=90)
+    guard.write_text(rule + original)
     reload_hba()
 
 
@@ -1616,116 +1485,32 @@ def _topology(context, definition, options):
         raise ConfigError("cluster 缺少关系组: %s" % ",".join(missing))
 
 
-def _roles(context, definition, options):
-    node = context.resolve_node(options.get("node", "primary"))
-    database = options.get("database", "postgres")
-    setup = options.get("setup", True)
-    cleanup_priority = options.get("cleanup_priority", 0)
-    for role in options.get("create", []):
-        if isinstance(role, str):
-            role = {"name": role}
-        name = role["name"]
-        attributes = role.get("attributes", "LOGIN")
-        password = role.get("password")
-        login_user = role.get("login", False)
+def postgres_fixtures(context):
+    from platform_regress.environment.postgresql_fixtures import PostgresFixtures
+    return PostgresFixtures(context, checked=postgres_checked, scalar=postgres_scalar,
+        execute=postgres_execute, apply_cluster=cluster_apply, check_setting=check_setting,
+        defer=defer, config_error=ConfigError, operation_error=OperationError,
+        empty_setting_token="__FBASE_REGRESS_EMPTY_SETTING__")
 
-        def cleanup(role_name=name, node_name=node, db=database):
-            postgres_checked(
-                context, node_name, _env(context, "user", "postgres"), db,
-                "DROP ROLE IF EXISTS %s" % _identifier(role_name))
-        defer(context, "删除角色 %s" % name, cleanup, priority=cleanup_priority)
-        if setup:
-            if login_user and not attributes and password is None:
-                sql = "CREATE USER %s" % _identifier(name)
-            else:
-                sql = "CREATE ROLE %s %s" % (_identifier(name), attributes)
-            if password is not None:
-                sql += " PASSWORD %s" % _literal(password)
-            postgres_checked(context, node, _env(context, "user", "postgres"), database, sql)
+
+def _roles(context, definition, options):
+    return postgres_fixtures(context).roles(options)
 
 
 def _database(context, definition, options):
-    name = options.get("name")
-    if not name:
-        return
-    node = context.resolve_node(options.get("node", "primary"))
-    if options.get("setup", True):
-        sql = "CREATE DATABASE %s" % _identifier(name)
-        if options.get("template"):
-            sql += " TEMPLATE %s" % _identifier(options["template"])
-        if options.get("encoding"):
-            sql += " ENCODING %s" % _literal(options["encoding"])
-        if options.get("locale"):
-            sql += " LOCALE %s" % _literal(options["locale"])
-        postgres_checked(context, node, _env(context, "user", "postgres"), "postgres", sql)
-
-    def cleanup():
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), "postgres",
-            "DROP DATABASE IF EXISTS %s WITH (FORCE)" % _identifier(name))
-    defer(context, "删除数据库 %s" % name, cleanup)
+    return postgres_fixtures(context).database(options)
 
 
 def _table(context, definition, options):
-    """Create or only clean up a disposable table."""
-    node = context.resolve_node(options.get("node", "primary"))
-    database = options.get("database", "postgres")
-    schema = options.get("schema", "public")
-    name = options.get("name")
-    if not name:
-        raise ConfigError("table fixture 缺少 name")
-    table_ref = "%s.%s" % (_identifier(schema), _identifier(name))
-
-    def cleanup():
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), database,
-            "DROP TABLE IF EXISTS %s" % table_ref)
-    defer(context, "删除测试表 %s" % name, cleanup,
-          priority=options.get("cleanup_priority", 0))
-
-    if options.get("setup", True):
-        columns = options.get("columns", "id integer PRIMARY KEY")
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), database,
-            "CREATE TABLE %s (%s)" % (table_ref, columns))
+    return postgres_fixtures(context).table(options)
 
 
 def _sequence(context, definition, options):
-    """Create or only clean up a disposable PostgreSQL sequence."""
-    node = context.resolve_node(options.get("node", "primary"))
-    database = options.get("database", "postgres")
-    schema = options.get("schema", "public")
-    name = options.get("name")
-    if not name:
-        raise ConfigError("sequence fixture 缺少 name")
-    sequence_ref = "%s.%s" % (_identifier(schema), _identifier(name))
-
-    def cleanup():
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), database,
-            "DROP SEQUENCE IF EXISTS %s" % sequence_ref)
-    defer(context, "删除测试序列 %s" % name, cleanup,
-          priority=options.get("cleanup_priority", 0))
-
-    if options.get("setup", True):
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), database,
-            "CREATE SEQUENCE %s" % sequence_ref)
+    return postgres_fixtures(context).sequence(options)
 
 
 def _table_grants(context, definition, options):
-    """Grant disposable table privileges required as a prior test state."""
-    node = context.resolve_node(options.get("node", "primary"))
-    database = options.get("database", "postgres")
-    schema = options.get("schema", "public")
-    table = options.get("table")
-    if not table:
-        raise ConfigError("table_grants fixture 缺少 table")
-    table_ref = "%s.%s" % (_identifier(schema), _identifier(table))
-    for role, privileges in (options.get("grants") or {}).items():
-        postgres_checked(
-            context, node, _env(context, "user", "postgres"), database,
-            "GRANT %s ON %s TO %s" % (privileges, table_ref, _identifier(role)))
+    return postgres_fixtures(context).table_grants(options)
 
 
 def _audit_rules(context, definition, options):
@@ -1838,72 +1623,7 @@ def _mac_policy(context, definition, options):
 
 
 def _settings(context, definition, options):
-    selectors = options.get("nodes") or [options.get("node", "primary")]
-    values = options.get("values") or {}
-    action = options.get("apply", "reload")
-    user = options.get("user") or _env(context, "user", "postgres")
-    setup = options.get("setup", True)
-    restore_runtime_value = options.get("restore_runtime_value", False)
-    if action not in ("reload", "restart"):
-        raise ConfigError("settings fixture apply 只支持 reload 或 restart")
-    saved = []
-
-    def cleanup():
-        for node, name, old, auto_value in saved:
-            sql = ("ALTER SYSTEM RESET %s" % name if auto_value is None else
-                   "ALTER SYSTEM SET %s = %s" % (name, _literal(auto_value)))
-            postgres_checked(context, node, user, "postgres", sql)
-        if saved:
-            cluster_apply(context, action)
-
-    cleanup_registered = False
-    for selector in selectors:
-        node = context.resolve_node(selector)
-        for name, value in values.items():
-            if not _GUC_NAME.match(name):
-                raise ConfigError("非法 PostgreSQL 配置名: %s" % name)
-            old = postgres_scalar(
-                context, node, "postgres",
-                "SELECT CASE WHEN current_setting(%s) = '' THEN "
-                "'__FBASE_REGRESS_EMPTY_SETTING__' ELSE current_setting(%s) END" %
-                (_literal(name), _literal(name)), user=user)
-            if old == "__FBASE_REGRESS_EMPTY_SETTING__":
-                old = ""
-            auto_result = postgres_execute(
-                context, node, _env(context, "user", "postgres"), "postgres",
-                "SELECT setting FROM pg_file_settings "
-                "WHERE name = %s AND sourcefile LIKE '%%/postgresql.auto.conf' "
-                "ORDER BY seqno DESC LIMIT 1" % _literal(name), structured=True)
-            if auto_result.returncode != 0:
-                raise OperationError(auto_result.output.strip() or
-                                     "无法读取 ALTER SYSTEM 原配置")
-            auto_value = auto_result.rows[0][0] if auto_result.rows else None
-            if restore_runtime_value:
-                auto_value = old
-            saved.append((node, name, old, auto_value))
-            if not cleanup_registered:
-                defer(context, "恢复 PostgreSQL 配置", cleanup, priority=100)
-                cleanup_registered = True
-            if setup:
-                postgres_checked(
-                    context, node, user, "postgres",
-                    "ALTER SYSTEM SET %s = %s" % (name, _literal(value)))
-    if saved and setup:
-        cluster_apply(context, action)
-        details = context.values.setdefault("postgresql_settings", [])
-        purpose = options.get("purpose", "用例临时 PostgreSQL 配置")
-        for node, name, old, _ in saved:
-            if setup:
-                detail = check_setting(context, node, {
-                    "source": "fixture", "name": name,
-                    "equals": str(values[name]), "purpose": purpose,
-                })
-                detail["previous"] = old
-                details.append(detail)
-                if not detail["matched"]:
-                    raise OperationError(
-                        "PostgreSQL 参数 %s 未生效（实际=%s，要求=%s）" %
-                        (name, detail["actual"], detail["requirement"]))
+    return postgres_fixtures(context).settings(options)
 
 
 def _isolated_fixture(context, definition, name, options):
