@@ -8,20 +8,12 @@ from ..console_parser import ConsoleAssertionError
 LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
 def _wait_candidate(context, group_name, node_name, present=True, timeout=15):
     """Poll SHOW GROUP_ROUTING until candidate appearance/disappearance matches expectation."""
-    ops = context.ops
-    deadline = time.time() + timeout
-    last_snap = None
-    while time.time() < deadline:
-        last_snap = ops.admin_psql("SHOW GROUP_ROUTING %s;" % group_name)
-        rows = last_snap.find_rows(candidate_node=node_name)
-        if (len(rows) > 0) == present:
-            return last_snap
-        time.sleep(1)
-    if present:
-        last_snap.assert_candidate_present(node_name)
-    else:
-        last_snap.assert_candidate_absent(node_name)
-    return last_snap
+    return context.ops.console_wait(
+        "SHOW GROUP_ROUTING %s;" % group_name,
+        lambda s: (len(s.find_rows(candidate_node=node_name)) > 0) == present,
+        timeout=timeout, interval=1.0,
+        describe="%s candidate %s %s"
+        % (group_name, node_name, "present" if present else "absent"))
 
 
 def _wait_standby_readiness(context, node_key="A1", timeout=20):
@@ -72,33 +64,31 @@ def run_core_13_monitor_confirm(context):
     ops.nodes.ensure_all_running()
 
     # Step 2: Baseline check
-    snap_base = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="基线状态检查")
-    snap_base.assert_candidate_present("test_mmr1_s1", candidate_type="READ")
-    snap_base.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
-    snap_base.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
-                            candidate_type="READ", route_status="AVAILABLE")
-    ops.add_step(
-        title="探活基线检查",
+    ops.console_step(
+        "探活基线检查", "SHOW GROUP_ROUTING qa_rep;",
+        verify=lambda s: (s.assert_candidate_present("test_mmr1_s1", candidate_type="READ"),
+                          s.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true"),
+                          s.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_hint_user"},
+                                          candidate_type="READ", route_status="AVAILABLE")),
         coverage="1",
         coverage_check="验证基线状态下从库 test_mmr1_s1 (A1) 正常入围只读候选",
         action="控制台执行 SHOW GROUP_ROUTING qa_rep; 查询初始路由分配",
-        command=ops.console_result(snap_base),
-        intermediate=snap_base.format_table(),
+        intermediate=lambda s: s.format_table(),
         evidence="\n".join(ops.extract_log_lines(["probe", "qa_rep", "site_a", "valid"], max_lines=4)),
         expected="从库 test_mmr1_s1 (方案代号 A1) 在只读候选列表中且状态为 AVAILABLE，主库 test_mmr1 (方案代号 A0) 为写目标",
         actual="从库 test_mmr1_s1 (A1) 正常在只读候选列表，主库 test_mmr1 (A0) 为写目标",
         result="PASS",
-        checks=[
+        checks=lambda s: [
             ReportCheck(
                 title="只读候选包含从库 test_mmr1_s1 (A1)",
                 expected="candidate_node=test_mmr1_s1, route_status=AVAILABLE",
-                actual=snap_base.format_record(candidate_node="test_mmr1_s1"),
+                actual=s.format_record(candidate_node="test_mmr1_s1"),
                 result="PASS",
             ),
             ReportCheck(
                 title="写目标指向主库 test_mmr1 (A0)",
                 expected="candidate_node=test_mmr1, is_write_target=true",
-                actual=snap_base.format_record(candidate_node="test_mmr1"),
+                actual=s.format_record(candidate_node="test_mmr1"),
                 result="PASS",
             ),
         ],
@@ -108,34 +98,26 @@ def run_core_13_monitor_confirm(context):
     ops.mark_time("T1_fault_injection")
     ops.nodes.stop_node("A1", immediate=True)
     stop_transcript = ops.nodes.last_operation_transcript
-    deadline = time.time() + 5
-    snap_debounce_fault = None
-    while time.time() < deadline:
-        snap_debounce_fault = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
-        endpoint = snap_debounce_fault.find_one(node_name="test_mmr1_s1")
-        fault_count = int(endpoint.get("fault_count", "0") or 0)
-        if fault_count >= 3:
+
+    def debounce_fault_seen(snap):
+        count = int(snap.find_one(node_name="test_mmr1_s1").get("fault_count", "0") or 0)
+        if count >= 3:
             raise ConsoleAssertionError("Debounce probe reached failure threshold before recovery")
-        if fault_count >= 1:
-            break
-        time.sleep(0.1)
-    if snap_debounce_fault is None or int(
-            snap_debounce_fault.find_one(node_name="test_mmr1_s1").get("fault_count", "0") or 0) < 1:
-        raise ConsoleAssertionError("No failed monitor probe was observed during debounce test")
+        return count >= 1
+
+    snap_debounce_fault = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr1_s1;", debounce_fault_seen,
+        timeout=5, interval=0.1,
+        describe="debounce fault_count >= 1 observed")
     ops.nodes.start_node("A1")
     start_transcript = ops.nodes.last_operation_transcript
     snap_deb = _wait_candidate(context, "qa_rep", "test_mmr1_s1", present=True, timeout=8)
-    deadline = time.time() + 8
-    snap_debounce_recovered = None
-    while time.time() < deadline:
-        snap_debounce_recovered = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
-        endpoint = snap_debounce_recovered.find_one(node_name="test_mmr1_s1")
-        if endpoint.get("connect_status") == "ONLINE" and endpoint.get("fault_count") == "0":
-            break
-        time.sleep(0.2)
-    recovered_endpoint = snap_debounce_recovered.find_one(node_name="test_mmr1_s1")
-    if recovered_endpoint.get("connect_status") != "ONLINE" or recovered_endpoint.get("fault_count") != "0":
-        raise ConsoleAssertionError("Debounce counters did not reset after A1 recovery")
+    snap_debounce_recovered = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr1_s1;",
+        lambda s: (s.find_one(node_name="test_mmr1_s1").get("connect_status") == "ONLINE" and
+                   s.find_one(node_name="test_mmr1_s1").get("fault_count") == "0"),
+        timeout=8, interval=0.2,
+        describe="debounce counters reset after A1 recovery")
     snap_debounce_fault.assert_fields({"node_name": "test_mmr1_s1"},
                                       connect_status="ONLINE", retry_phase="DOWN_CONFIRMING")
     snap_debounce_recovered.assert_fields({"node_name": "test_mmr1_s1"},
@@ -169,17 +151,11 @@ def run_core_13_monitor_confirm(context):
     stop_fail_transcript = ops.nodes.last_operation_transcript
     ops.mark_time("T2_sustained_failure_injected")
     snap_fail = _wait_candidate(context, "qa_rep", "test_mmr1_s1", present=False, timeout=15)
-    deadline = time.time() + 8
-    snap_fault_endpoint = None
-    while time.time() < deadline:
-        snap_fault_endpoint = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
-        fault_endpoint = snap_fault_endpoint.find_one(node_name="test_mmr1_s1")
-        if int(fault_endpoint.get("fault_count", "0") or 0) >= 3:
-            break
-        time.sleep(0.2)
-    if snap_fault_endpoint is None or int(
-            snap_fault_endpoint.find_one(node_name="test_mmr1_s1").get("fault_count", "0") or 0) < 3:
-        raise ConsoleAssertionError("Monitor fault_count did not reach threshold 3")
+    snap_fault_endpoint = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr1_s1;",
+        lambda s: int(s.find_one(node_name="test_mmr1_s1").get("fault_count", "0") or 0) >= 3,
+        timeout=8, interval=0.2,
+        describe="monitor fault_count reached threshold 3")
     snap_fault_endpoint.assert_fields({"node_name": "test_mmr1_s1"},
                                       connect_status="OFFLINE", retry_phase="DOWN_STABLE",
                                       topology_state="VALID_DEGRADED")
@@ -187,27 +163,19 @@ def run_core_13_monitor_confirm(context):
                             candidate_node="", route_status="UNAVAILABLE",
                             unavailable_reason="NO_READ_CANDIDATE")
     ops.mark_time("T3_endpoint_fault_confirmed")
-    deadline = time.time() + 15
-    snap_clusters = None
-    while time.time() < deadline:
-        snap_clusters = ops.admin_psql("SHOW CLUSTERS;")
-        row_site_a = snap_clusters.find_one(cluster_name="site_a")
-        if row_site_a.get("topology_state") == "VALID_DEGRADED":
-            break
-        time.sleep(0.5)
-    snap_clusters.assert_fields({"cluster_name": "site_a"}, topology_state="VALID_DEGRADED")
+    snap_clusters = ops.console_wait(
+        "SHOW CLUSTERS;",
+        lambda s: s.find_one(cluster_name="site_a").get("topology_state") == "VALID_DEGRADED",
+        timeout=15, interval=0.5,
+        describe="site_a topology VALID_DEGRADED")
     snap_clusters.assert_fields({"cluster_name": "site_b"}, topology_state="VALID")
     other_before = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr2_s1;")
     other_seq = int(other_before.find_one(node_name="test_mmr2_s1")["probe_seq"])
-    deadline = time.monotonic() + 15
-    other_after = other_before
-    while time.monotonic() < deadline:
-        other_after = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr2_s1;")
-        if int(other_after.find_one(node_name="test_mmr2_s1")["probe_seq"]) > other_seq:
-            break
-        time.sleep(0.25)
-    if int(other_after.find_one(node_name="test_mmr2_s1")["probe_seq"]) <= other_seq:
-        raise ConsoleAssertionError("site_b probe did not advance during site_a failure")
+    other_after = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr2_s1;",
+        lambda s: int(s.find_one(node_name="test_mmr2_s1")["probe_seq"]) > other_seq,
+        timeout=15, interval=0.25,
+        describe="site_b probe advancing during site_a failure")
     other_after.assert_fields({"node_name": "test_mmr2_s1"}, connect_status="ONLINE",
                               topology_state="VALID")
 
@@ -303,31 +271,29 @@ def run_core_14_rep_standby_failure(context):
     ops.nodes.ensure_all_running()
 
     # Step 2: Baseline checks
-    snap_base = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查初始路由基线")
-    snap_base.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
-    snap_base.assert_field({"candidate_node": "test_mmr1_s1"}, "candidate_type", "READ")
-    snap_base.assert_field({"candidate_node": "test_mmr1_s1"}, "route_status", "AVAILABLE")
-    ops.add_step(
-        title="检查初始路由基线",
+    ops.console_step(
+        "检查初始路由基线", "SHOW GROUP_ROUTING qa_rep;",
+        verify=lambda s: (s.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true"),
+                          s.assert_field({"candidate_node": "test_mmr1_s1"}, "candidate_type", "READ"),
+                          s.assert_field({"candidate_node": "test_mmr1_s1"}, "route_status", "AVAILABLE")),
         coverage="1",
         coverage_check="验证初始读写分离基线配置",
         action="控制台查询 qa_rep 组路由表",
-        command=ops.console_result(snap_base),
-        intermediate=snap_base.format_table(),
+        intermediate=lambda s: s.format_table(),
         expected="主库 A0 为写目标，从库 A1 承担只读，状态均为 AVAILABLE",
         actual="主从分配正常，A0 为写目标，A1 承担只读",
         result="PASS",
-        checks=[
+        checks=lambda s: [
             ReportCheck(
                 title="主库 A0 为写目标",
                 expected="candidate_node=test_mmr1, is_write_target=true, route_status=AVAILABLE",
-                actual=snap_base.format_record(candidate_node="test_mmr1"),
+                actual=s.format_record(candidate_node="test_mmr1"),
                 result="PASS",
             ),
             ReportCheck(
                 title="从库 A1 承担只读",
                 expected="candidate_node=test_mmr1_s1, candidate_type=READ, route_status=AVAILABLE",
-                actual=snap_base.format_record(candidate_node="test_mmr1_s1"),
+                actual=s.format_record(candidate_node="test_mmr1_s1"),
                 result="PASS",
             ),
         ],
@@ -354,13 +320,11 @@ def run_core_14_rep_standby_failure(context):
     snap_route.assert_fields({"user_name": "qa_hint_user", "candidate_type": "READ"},
                              candidate_node="", route_status="UNAVAILABLE",
                              unavailable_reason="NO_READ_CANDIDATE")
-    fault_deadline = time.monotonic() + 12
-    fault_monitor = None
-    while time.monotonic() < fault_deadline:
-        fault_monitor = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
-        if fault_monitor.find_one(node_name="test_mmr1_s1").get("connect_status") == "OFFLINE":
-            break
-        time.sleep(0.25)
+    fault_monitor = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr1_s1;",
+        lambda s: s.find_one(node_name="test_mmr1_s1").get("connect_status") == "OFFLINE",
+        timeout=12, interval=0.25,
+        describe="test_mmr1_s1 endpoint OFFLINE")
     fault_monitor.assert_fields({"node_name": "test_mmr1_s1"},
                                 connect_status="OFFLINE", retry_phase="DOWN_STABLE",
                                 topology_state="VALID_DEGRADED")

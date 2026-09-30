@@ -76,19 +76,12 @@ def run_core_16_rep_failover(context):
     time.sleep(2)
     refresh_promote = ops.admin_psql("REFRESH CLUSTER site_a;", title="刷新 site_a 拓扑")
 
-    deadline = time.time() + 18
-    snap_cluster = None
-    while time.time() < deadline:
-        snap_cluster = ops.admin_psql("SHOW CLUSTERS;")
-        try:
-            row = snap_cluster.find_one(cluster_name="site_a")
-            if row.get("last_trusted_primary") == "test_mmr1_s1":
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-        ops.admin_psql("REFRESH CLUSTER site_a;")
-    snap_cluster.assert_field({"cluster_name": "site_a"}, "last_trusted_primary", "test_mmr1_s1")
+    snap_cluster = ops.console_wait(
+        "SHOW CLUSTERS;",
+        lambda s: s.find_one(cluster_name="site_a").get("last_trusted_primary") == "test_mmr1_s1",
+        timeout=18, interval=1.0, tolerant=True,
+        retry=lambda: ops.admin_psql("REFRESH CLUSTER site_a;"),
+        describe="site_a last_trusted_primary promoted to test_mmr1_s1")
 
     snap_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
     snap_route.assert_field({"candidate_node": "test_mmr1_s1"}, "is_write_target", "true")
@@ -147,15 +140,15 @@ def run_core_16_rep_failover(context):
     set_active_a0 = ops.admin_psql("SET NODE ACTIVE test_mmr1;", title="重新激活 A0 作为从库")
     refresh_a0 = ops.admin_psql("REFRESH CLUSTER site_a;")
 
-    deadline = time.time() + 18
-    snap_rec = None
-    while time.time() < deadline:
-        snap_rec = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
-        rows = snap_rec.find_rows(candidate_node="test_mmr1", candidate_type="READ")
-        if rows and rows[0].get("effective_state") == "active":
-            break
-        time.sleep(1)
-        ops.admin_psql("REFRESH CLUSTER site_a;")
+    def read_candidate_active(snap):
+        rows = snap.find_rows(candidate_node="test_mmr1", candidate_type="READ")
+        return rows and rows[0].get("effective_state") == "active"
+
+    snap_rec = ops.console_wait(
+        "SHOW GROUP_ROUTING qa_rep;", read_candidate_active,
+        timeout=18, interval=1.0,
+        retry=lambda: ops.admin_psql("REFRESH CLUSTER site_a;"),
+        describe="test_mmr1 back as active READ candidate")
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "effective_state", "active")
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "candidate_type", "READ")
     snap_rec.assert_field({"candidate_node": "test_mmr1"}, "route_status", "AVAILABLE")
@@ -279,27 +272,25 @@ def run_core_17_mmr_write_center_failover(context):
         )
 
     # Step 1: Initial baseline (A0 is write target, write_source=WRITE_CLUSTER)
-    snap_init = ops.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
-    snap_init.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
-    snap_init.assert_field({"candidate_node": "test_mmr1"}, "write_source", "WRITE_CLUSTER")
-    snap_init.assert_write_target_count(1, user_name="postgres")
-    snap_init.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
-                            candidate_type="WRITE", route_status="AVAILABLE")
-    ops.add_step(
-        title="MMR 初始写中心检查",
+    ops.console_step(
+        "MMR 初始写中心检查", "SHOW GROUP_ROUTING qa_mmr;",
+        verify=lambda s: (s.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true"),
+                          s.assert_field({"candidate_node": "test_mmr1"}, "write_source", "WRITE_CLUSTER"),
+                          s.assert_write_target_count(1, user_name="postgres"),
+                          s.assert_fields({"candidate_node": "test_mmr1", "user_name": "qa_hint_user"},
+                                          candidate_type="WRITE", route_status="AVAILABLE")),
         coverage="1",
         coverage_check="验证双向多主组初始写中心配置",
         action="控制台执行 SHOW GROUP_ROUTING qa_mmr; 检查双向多主写中心",
-        command=ops.console_result(snap_init),
-        intermediate=snap_init.format_table(),
+        intermediate=lambda s: s.format_table(),
         expected="A0 (test_mmr1) 为唯一写中心，write_source=WRITE_CLUSTER",
         actual="A0 为唯一写中心，单用户下写目标数量唯一",
         result="PASS",
-        checks=[
+        checks=lambda s: [
             ReportCheck(
                 title="A0 为初始写中心",
                 expected="candidate_node=test_mmr1, is_write_target=true, write_source=WRITE_CLUSTER",
-                actual=snap_init.format_record(candidate_node="test_mmr1"),
+                actual=s.format_record(candidate_node="test_mmr1"),
                 result="PASS",
             ),
             ReportCheck(
@@ -316,15 +307,14 @@ def run_core_17_mmr_write_center_failover(context):
     ops.nodes.stop_node("A0", immediate=True)
     stop_a0_transcript = ops.nodes.last_operation_transcript
 
-    deadline = time.time() + 18
-    snap_drift = None
-    while time.time() < deadline:
-        snap_drift = ops.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
-        rows = snap_drift.find_rows(candidate_node="test_mmr2", is_write_target="true")
-        if rows and rows[0].get("write_source") == "PROMOTED_CLUSTER":
-            break
-        time.sleep(1)
+    def write_drifted(snap):
+        rows = snap.find_rows(candidate_node="test_mmr2", is_write_target="true")
+        return rows and rows[0].get("write_source") == "PROMOTED_CLUSTER"
 
+    snap_drift = ops.console_wait(
+        "SHOW GROUP_ROUTING qa_mmr;", write_drifted,
+        timeout=18, interval=1.0,
+        describe="write center drifted to test_mmr2 (PROMOTED_CLUSTER)")
     snap_drift.assert_write_target_count(1, user_name="postgres")
     snap_drift.assert_field({"candidate_node": "test_mmr2"}, "is_write_target", "true")
     snap_drift.assert_field({"candidate_node": "test_mmr2"}, "write_source", "PROMOTED_CLUSTER")
@@ -382,13 +372,13 @@ def run_core_17_mmr_write_center_failover(context):
     # Step 4: Recover A0
     ops.nodes.start_node("A0")
     recover_a0 = ops.nodes.last_operation_transcript
-    deadline = time.time() + 18
-    while time.time() < deadline:
-        snap_rec = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
-        if snap_rec.find_rows(candidate_node="test_mmr1"):
-            break
-        time.sleep(1)
-        ops.admin_psql("REFRESH CLUSTER site_a;")
+    ops.console_wait(
+        "SHOW GROUP_ROUTING qa_rep;",
+        lambda s: bool(s.find_rows(candidate_node="test_mmr1")),
+        timeout=18, interval=1.0,
+        retry=lambda: ops.admin_psql("REFRESH CLUSTER site_a;"),
+        describe="test_mmr1 re-entered qa_rep routing",
+        required=False)
 
     sync_deadline = time.monotonic() + 25
     recovered_row = None

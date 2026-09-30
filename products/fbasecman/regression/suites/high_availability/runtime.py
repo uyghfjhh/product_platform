@@ -18,7 +18,7 @@ from products.fbasecman.case_runtime import FbasecmanCaseRuntime
 from products.fbasecman.process import FbasecmanProcess
 
 from products.fbasecman.environment.cluster_ops import NodeController
-from .console_parser import ConsoleSnapshot
+from .console_parser import ConsoleAssertionError, ConsoleSnapshot
 from platform_regress.execution.forensics import diagnose_crash
 
 LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
@@ -360,6 +360,55 @@ class HighAvailabilityRuntime(FbasecmanCaseRuntime):
 
     def console_result(self, snapshot):
         return self.command_result(snapshot.command, snapshot.returncode, snapshot.raw_output)
+
+    def console_step(self, title, sql=None, *, check=True, snap=None, verify=None,
+                     command=None, **step_kwargs):
+        """``admin_psql`` → 断言 → ``add_step`` 三联的声明式形态。
+
+        ``verify(snap)`` 在记录步骤前执行业务断言，失败时抛
+        ``ConsoleAssertionError``（与原顺序一致：断言失败不落步骤）。
+        ``snap`` 可复用已执行的快照避免重复查询；
+        ``intermediate``/``actual``/``evidence`` 接受 ``fn(snap)`` 惰性求值。
+        """
+        if snap is None:
+            snap = self.admin_psql(sql, title=title, check=check)
+        if verify is not None:
+            verify(snap)
+        for key in ("intermediate", "actual", "evidence", "checks"):
+            if callable(step_kwargs.get(key)):
+                step_kwargs[key] = step_kwargs[key](snap)
+        if command is None:
+            command = self.console_result(snap)
+        self.add_step(title, command=command, **step_kwargs)
+        return snap
+
+    def console_wait(self, sql, predicate, timeout=20.0, interval=0.5,
+                     describe="console condition", retry=None, tolerant=False,
+                     required=True):
+        """轮询 console 快照直到 predicate(snap) 成立，超时抛断言。
+
+        ``retry()`` 在每轮轮询失败后执行（如重发 REFRESH CLUSTER）；
+        ``tolerant`` 容忍 predicate 内部异常继续轮询（默认严格传播）。
+        """
+        deadline = time.monotonic() + timeout
+        snapshot = None
+        while time.monotonic() < deadline:
+            snapshot = self.admin_psql(sql)
+            try:
+                if predicate(snapshot):
+                    return snapshot
+            except Exception:
+                if not tolerant:
+                    raise
+            time.sleep(interval)
+            if retry is not None:
+                retry()
+        if not required:
+            return snapshot
+        raise ConsoleAssertionError(
+            "%s did not hold within %ss:\n%s"
+            % (describe, timeout,
+               snapshot.format_table() if snapshot else "<no snapshot>"))
 
     def client_psql(self, sql, user="postgres", db="qa_rep", check=True):
         """Execute SQL through client proxy port."""

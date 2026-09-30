@@ -6,64 +6,48 @@ import time
 import hashlib
 
 from ..console_parser import ConsoleAssertionError
+
+
 def _digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _rep_route_ready(snap):
+    write = snap.find_rows(candidate_node="test_mmr1", candidate_type="WRITE")
+    read = snap.find_rows(candidate_node="test_mmr1_s1", candidate_type="READ")
+    return (write and write[0].get("route_status") == "AVAILABLE" and
+            read and read[0].get("route_status") == "AVAILABLE")
+
+
 def _wait_rep_route_ready(context, timeout=15):
-    ops = context.ops
-    deadline = time.time() + timeout
-    snapshot = None
-    while time.time() < deadline:
-        snapshot = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
-        write_rows = snapshot.find_rows(candidate_node="test_mmr1", candidate_type="WRITE")
-        read_rows = snapshot.find_rows(candidate_node="test_mmr1_s1", candidate_type="READ")
-        if (write_rows and write_rows[0].get("route_status") == "AVAILABLE" and
-                read_rows and read_rows[0].get("route_status") == "AVAILABLE"):
-            return snapshot
-        time.sleep(1)
-    snapshot.assert_field(
-        {"candidate_node": "test_mmr1", "candidate_type": "WRITE"},
-        "route_status", "AVAILABLE")
-    snapshot.assert_field(
-        {"candidate_node": "test_mmr1_s1", "candidate_type": "READ"},
-        "route_status", "AVAILABLE")
-    return snapshot
+    return context.ops.console_wait(
+        "SHOW GROUP_ROUTING qa_rep;", _rep_route_ready,
+        timeout=timeout, interval=1.0,
+        describe="qa_rep WRITE(test_mmr1)/READ(test_mmr1_s1) candidates AVAILABLE")
 
 
 def _wait_mmr_candidate(context, node_name, write_target=False, timeout=20):
-    ops = context.ops
-    deadline = time.monotonic() + timeout
-    snapshot = None
-    while time.monotonic() < deadline:
-        snapshot = ops.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
-        rows = snapshot.find_rows(candidate_node=node_name, user_name="qa_app_user")
-        if rows and rows[0].get("route_status") == "AVAILABLE":
-            if not write_target or rows[0].get("is_write_target") == "true":
-                return snapshot
-        time.sleep(0.5)
-    raise ConsoleAssertionError(
-        "MMR candidate %s did not become %s within %ss:\n%s" %
-        (node_name, "WRITE" if write_target else "AVAILABLE", timeout,
-         snapshot.format_table() if snapshot else "<no snapshot>")
-    )
+    def ready(snap):
+        rows = snap.find_rows(candidate_node=node_name, user_name="qa_app_user")
+        return (rows and rows[0].get("route_status") == "AVAILABLE" and
+                (not write_target or rows[0].get("is_write_target") == "true"))
+    return context.ops.console_wait(
+        "SHOW GROUP_ROUTING qa_mmr;", ready, timeout=timeout, interval=0.5,
+        describe="MMR candidate %s %s"
+        % (node_name, "WRITE" if write_target else "AVAILABLE"))
 
 
 def _wait_mmr_endpoint_ready(context, node_name, timeout=20):
-    ops = context.ops
-    deadline = time.monotonic() + timeout
-    snapshot = None
-    while time.monotonic() < deadline:
-        snapshot = ops.admin_psql("SHOW ENDPOINT_MONITOR %s;" % node_name)
-        row = snapshot.find_one(node_name=node_name)
-        if (row.get("probe_state") == "READY" and
+    def ready(snap):
+        row = snap.find_one(node_name=node_name)
+        return (row.get("probe_state") == "READY" and
                 row.get("connect_status") == "ONLINE" and
                 row.get("topology_state") == "VALID" and
-                row.get("fault_flags") == "{}"):
-            return snapshot
-        time.sleep(0.25)
-    raise ConsoleAssertionError("MMR endpoint %s not ready: %s" % (
-        node_name, snapshot.format_table() if snapshot else "<no snapshot>"))
+                row.get("fault_flags") == "{}")
+    return context.ops.console_wait(
+        "SHOW ENDPOINT_MONITOR %s;" % node_name, ready,
+        timeout=timeout, interval=0.25,
+        describe="MMR endpoint %s ready" % node_name)
 
 
 def run_core_19_set_node_atomicity(context):
@@ -71,22 +55,22 @@ def run_core_19_set_node_atomicity(context):
     ops = context.ops
     conf = ops.start()
 
-    # Step 1: Initial state check
-    snap_init = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="初始运行态检查")
-    snap_init.assert_candidate_present("test_mmr1_s1", "READ")
-    snap_init.assert_field({"candidate_node": "test_mmr1_s1"}, "effective_state", "active")
-    ops.add_step("初始运行态检查", command=ops.console_result(snap_init),
-                expected="A1 为 active 只读候选", actual=snap_init.format_record(candidate_node="test_mmr1_s1"), result="PASS")
+    ops.console_step(
+        "初始运行态检查", "SHOW GROUP_ROUTING qa_rep;",
+        verify=lambda s: (s.assert_candidate_present("test_mmr1_s1", "READ"),
+                          s.assert_field({"candidate_node": "test_mmr1_s1"},
+                                         "effective_state", "active")),
+        expected="A1 为 active 只读候选",
+        actual=lambda s: s.format_record(candidate_node="test_mmr1_s1"))
 
-    # Step 2: Single node PARTED
     before_conf = conf.read_text(encoding="utf-8")
-    set_parted = ops.admin_psql("SET NODE PARTED test_mmr1_s1;", title="执行单节点 PARTED")
-    snap_parted_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查 PARTED 后路由剔除")
+    set_parted = ops.admin_psql("SET NODE PARTED test_mmr1_s1;")
+    snap_parted_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
     snap_parted_route.assert_candidate_absent("test_mmr1_s1")
     snap_parted_route.assert_fields(
         {"user_name": "qa_app_user", "candidate_type": "READ"},
         candidate_node="", route_status="UNAVAILABLE", unavailable_reason="NO_READ_CANDIDATE")
-    snap_parted_members = ops.admin_psql("SHOW GROUP_MEMBERS;", title="检查成员状态变更为 parted")
+    snap_parted_members = ops.admin_psql("SHOW GROUP_MEMBERS;")
     snap_parted_members.assert_field({"node_name": "test_mmr1_s1", "group_name": "qa_rep"}, "state", "parted")
     snap_parted_members.assert_fields(
         {"node_name": "test_mmr1_s1", "group_name": "qa_rep"},
@@ -102,10 +86,9 @@ def run_core_19_set_node_atomicity(context):
                 expected="effective_state=parted，路由剔除，且配置文件持久化 status=parted",
                 actual="控制台命令成功；成员状态为 parted；路由中无 A1；配置 diff 包含 status=parted", result="PASS")
 
-    # Step 3: Single node ACTIVE
-    set_active = ops.admin_psql("SET NODE ACTIVE test_mmr1_s1;", title="执行单节点 ACTIVE")
-    snap_pending = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查 ACTIVE 后待复探状态")
-    refresh_active = ops.admin_psql("REFRESH CLUSTER site_a;", title="刷新拓扑")
+    set_active = ops.admin_psql("SET NODE ACTIVE test_mmr1_s1;")
+    snap_pending = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
+    refresh_active = ops.admin_psql("REFRESH CLUSTER site_a;")
     snap_active = _wait_rep_route_ready(context)
     snap_active.assert_candidate_present("test_mmr1_s1", "READ")
     snap_active.assert_field({"candidate_node": "test_mmr1_s1"}, "effective_state", "active")
@@ -118,12 +101,11 @@ def run_core_19_set_node_atomicity(context):
                              (snap_pending.format_table(), snap_active.format_table()),
                 expected="A1 恢复为 active 只读候选", actual="A1 effective_state=active, candidate_type=READ", result="PASS")
 
-    # Step 4: Batch valid with deduplication
-    batch_parted = ops.admin_psql("SET NODE PARTED test_mmr1, test_mmr1_s1, test_mmr1;", title="执行合法批量去重")
-    snap_batch_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="检查批量 PARTED 路由剔除")
+    batch_parted = ops.admin_psql("SET NODE PARTED test_mmr1, test_mmr1_s1, test_mmr1;")
+    snap_batch_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
     snap_batch_route.assert_candidate_absent("test_mmr1")
     snap_batch_route.assert_candidate_absent("test_mmr1_s1")
-    snap_batch_members = ops.admin_psql("SHOW GROUP_MEMBERS;", title="检查批量 PARTED 成员状态")
+    snap_batch_members = ops.admin_psql("SHOW GROUP_MEMBERS;")
     snap_batch_members.assert_field({"node_name": "test_mmr1", "group_name": "qa_rep"}, "state", "parted")
     snap_batch_members.assert_field({"node_name": "test_mmr1_s1", "group_name": "qa_rep"}, "state", "parted")
     ops.add_step("批量合法 PARTED 去重", command=ops.console_result(batch_parted),
@@ -131,20 +113,16 @@ def run_core_19_set_node_atomicity(context):
                 expected="重复节点去重执行，A0/A1 均为 parted 并从路由剔除",
                 actual="A0/A1 成员状态均为 parted，路由候选中均不存在", result="PASS")
 
-    # Restore to active
     ops.admin_psql("SET NODE ACTIVE test_mmr1, test_mmr1_s1;")
     ops.admin_psql("REFRESH CLUSTER site_a;")
     _wait_rep_route_ready(context)
 
-    # Step 5: Batch atomicity check with invalid node
     before_conf_text = conf.read_text(encoding="utf-8")
-    # Must fail
     rejected = ops.admin_psql("SET NODE PARTED test_mmr1_s1, NON_EXISTENT_NODE_XYZ;", check=False)
     if rejected.returncode == 0:
         raise ConsoleAssertionError("Expected invalid batch SET NODE command to fail")
 
-    # Assert A1 state was NOT partially altered
-    snap_check = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="原子性检查：A1 状态必须保持 active")
+    snap_check = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
     snap_check.assert_candidate_present("test_mmr1_s1", "READ")
     snap_check.assert_field({"candidate_node": "test_mmr1_s1"}, "effective_state", "active")
     snap_check.assert_fields(
@@ -152,7 +130,6 @@ def run_core_19_set_node_atomicity(context):
         candidate_type="READ", route_status="AVAILABLE")
     rejected.assert_error("NON_EXISTENT_NODE_XYZ", "does not exist")
 
-    # Assert config file was NOT partially modified
     after_conf_text = conf.read_text(encoding="utf-8")
     if before_conf_text != after_conf_text:
         raise ConsoleAssertionError("Config file was partially modified during failed batch command!")
@@ -178,14 +155,12 @@ def run_core_19_set_node_atomicity(context):
     cross_active = ops.admin_psql("SET NODE ACTIVE test_mmr1_s1, test_mmr2_s1;")
     refresh_a = ops.admin_psql("REFRESH CLUSTER site_a;")
     refresh_b = ops.admin_psql("REFRESH CLUSTER site_b;")
-    deadline = time.monotonic() + 20
-    recovered_balance = None
-    while time.monotonic() < deadline:
-        recovered_balance = ops.admin_psql("SHOW GROUP_ROUTING qa_bal_ro;")
-        if all(recovered_balance.find_rows(candidate_node=node, user_name="qa_app_user")
-               for node in ("test_mmr1_s1", "test_mmr2_s1")):
-            break
-        time.sleep(0.5)
+    recovered_balance = ops.console_wait(
+        "SHOW GROUP_ROUTING qa_bal_ro;",
+        lambda s: all(s.find_rows(candidate_node=node, user_name="qa_app_user")
+                      for node in ("test_mmr1_s1", "test_mmr2_s1")),
+        timeout=20, interval=0.5,
+        describe="balance read candidates recovered")
     for node in ("test_mmr1_s1", "test_mmr2_s1"):
         recovered_balance.assert_fields({"candidate_node": node, "user_name": "qa_app_user"},
                                         candidate_type="ROUTE", effective_grouprole="replica",
@@ -202,12 +177,11 @@ def run_core_19_set_node_atomicity(context):
         actual="两备配置状态 parted；回退 A0/B0；恢复 A1/B1 为 replica/ROUTE/AVAILABLE",
         result="PASS")
 
-    # Step 6: Restart persistence check
-    persist_parted = ops.admin_psql("SET NODE PARTED test_mmr1_s1;", title="设置 PARTED 准备验证重启")
+    persist_parted = ops.admin_psql("SET NODE PARTED test_mmr1_s1;")
     ops.restart()
-    snap_restart_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;", title="重启后核对路由剔除")
+    snap_restart_route = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
     snap_restart_route.assert_candidate_absent("test_mmr1_s1")
-    snap_restart_members = ops.admin_psql("SHOW GROUP_MEMBERS;", title="重启后核对成员状态")
+    snap_restart_members = ops.admin_psql("SHOW GROUP_MEMBERS;")
     snap_restart_members.assert_field({"node_name": "test_mmr1_s1", "group_name": "qa_rep"}, "state", "parted")
     snap_restart_members.assert_field(
         {"node_name": "test_mmr1_s1", "group_name": "qa_rep"}, "config_status", "parted")
@@ -216,7 +190,6 @@ def run_core_19_set_node_atomicity(context):
                 expected="进程重启后 A1 仍为 parted 且不在路由候选中",
                 actual="A1 state=parted，重启后路由中无 A1", result="PASS")
 
-    # Clean up
     cleanup_active = ops.admin_psql("SET NODE ACTIVE test_mmr1_s1;")
     cleanup_refresh = ops.admin_psql("REFRESH CLUSTER site_a;")
     cleanup_route = _wait_rep_route_ready(context)
@@ -241,9 +214,8 @@ def run_core_20_write_promoted_refresh_show(context):
         result="PASS",
     )
 
-    # Step 1: Valid SET NODE PROMOTED and WRITE in mmr group
     promoted_before = conf.read_text(encoding="utf-8")
-    set_promoted = ops.admin_psql("SET NODE PROMOTED test_mmr2 IN GROUP qa_mmr;", title="合法设置 promoted 中心为 test_mmr2")
+    set_promoted = ops.admin_psql("SET NODE PROMOTED test_mmr2 IN GROUP qa_mmr;")
     promoted_after = conf.read_text(encoding="utf-8")
     if 'promoted_cluster "site_b"' not in promoted_after:
         raise ConsoleAssertionError("SET NODE PROMOTED did not persist promoted_cluster site_b")
@@ -255,7 +227,7 @@ def run_core_20_write_promoted_refresh_show(context):
                 expected="命令成功，qa_mmr 持久化 promoted_cluster=site_b；正常态不要求 B0 effective_state=promoted",
                 actual="返回码=0；配置包含 promoted_cluster \"site_b\"；B0 正常态保持 active", result="PASS")
 
-    set_b0 = ops.admin_psql("SET NODE WRITE test_mmr2 IN GROUP qa_mmr;", title="合法设置写中心为 test_mmr2")
+    set_b0 = ops.admin_psql("SET NODE WRITE test_mmr2 IN GROUP qa_mmr;")
     snap_write = _wait_mmr_candidate(context, "test_mmr2", write_target=True)
     snap_write.assert_field({"candidate_node": "test_mmr2"}, "is_write_target", "true")
     snap_write.assert_fields({"candidate_node": "test_mmr2", "user_name": "qa_app_user"},
@@ -264,9 +236,7 @@ def run_core_20_write_promoted_refresh_show(context):
     ops.add_step("SET NODE WRITE IN GROUP", command=ops.console_result(set_b0), intermediate=snap_write.format_record(candidate_node="test_mmr2"),
                 expected="B0 成为唯一 write target", actual="test_mmr2 is_write_target=true", result="PASS")
 
-    # Step 2: Write center commands and boundary testing
-    # a. In MMR mode, SET NODE WRITE resolves node to cluster (equivalent to set cluster write)
-    set_a = ops.admin_psql("SET NODE WRITE test_mmr1_s1 IN GROUP qa_mmr;", title="通过从库节点定位集群并设置写中心")
+    set_a = ops.admin_psql("SET NODE WRITE test_mmr1_s1 IN GROUP qa_mmr;")
     snap_site_a = ops.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
     snap_site_a.assert_field({"candidate_node": "test_mmr1"}, "is_write_target", "true")
     snap_site_a.assert_fields({"candidate_node": "test_mmr1_s1", "user_name": "qa_app_user"},
@@ -282,7 +252,6 @@ def run_core_20_write_promoted_refresh_show(context):
         "PASS",
     )
 
-    # b. Non-existent node rejected
     before_failed_commands = _digest(conf)
     failed_node = ops.admin_psql("SET NODE WRITE non_existent_node_xyz IN GROUP qa_mmr;", check=False)
     failed_node.assert_error("non_existent_node_xyz", "does not exist")
@@ -291,7 +260,6 @@ def run_core_20_write_promoted_refresh_show(context):
     ops.add_step("非法节点拒绝执行", command=ops.console_result(failed_node),
                 expected="因节点不存在而明确拒绝", actual=failed_node.raw_output.strip(), result="PASS")
 
-    # c. Balance group cannot set write target
     failed_balance = ops.admin_psql("SET NODE WRITE test_mmr1 IN GROUP qa_bal_rw;", check=False)
     failed_balance.assert_error("qa_bal_rw", "not an MMR group")
     if _digest(conf) != before_failed_commands:
@@ -299,7 +267,6 @@ def run_core_20_write_promoted_refresh_show(context):
     ops.add_step("非 MMR 组拒绝设写中心", command=ops.console_result(failed_balance),
                 expected="因 qa_bal_rw 不是 MMR 组而明确拒绝", actual=failed_balance.raw_output.strip(), result="PASS")
 
-    # d. Non-existent group
     failed_group = ops.admin_psql("SET NODE WRITE test_mmr1 IN GROUP nonexistent_group_abc;", check=False)
     failed_group.assert_error("nonexistent_group_abc", "does not exist")
     if _digest(conf) != before_failed_commands:
@@ -307,25 +274,19 @@ def run_core_20_write_promoted_refresh_show(context):
     ops.add_step("不存在的组拒绝执行", command=ops.console_result(failed_group),
                 expected="因组不存在而明确拒绝", actual=failed_group.raw_output.strip(), result="PASS")
 
-    # Step 3: REFRESH CLUSTER
-    refresh = ops.admin_psql("REFRESH CLUSTER site_a;", title="刷新集群 site_a")
+    refresh = ops.admin_psql("REFRESH CLUSTER site_a;")
     before_probe = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
     initial_seq = int(before_probe.find_one(node_name="test_mmr1_s1")["probe_seq"])
-    deadline = time.monotonic() + 12
-    after_probe = before_probe
-    while time.monotonic() < deadline:
-        after_probe = ops.admin_psql("SHOW ENDPOINT_MONITOR test_mmr1_s1;")
-        if int(after_probe.find_one(node_name="test_mmr1_s1")["probe_seq"]) > initial_seq:
-            break
-        time.sleep(0.25)
-    if int(after_probe.find_one(node_name="test_mmr1_s1")["probe_seq"]) <= initial_seq:
-        raise ConsoleAssertionError("REFRESH was acknowledged but no later probe was observed")
+    after_probe = ops.console_wait(
+        "SHOW ENDPOINT_MONITOR test_mmr1_s1;",
+        lambda s: int(s.find_one(node_name="test_mmr1_s1")["probe_seq"]) > initial_seq,
+        timeout=12, interval=0.25,
+        describe="probe_seq growth after REFRESH")
     ops.add_step("REFRESH CLUSTER", command=ops.console_result(refresh),
                 intermediate="刷新后探测序号确认:\n%s" % after_probe.format_table(),
                 expected="命令返回成功且后续 probe_seq 增长", actual="probe_seq %d -> %s" % (
                     initial_seq, after_probe.find_one(node_name="test_mmr1_s1")["probe_seq"]), result="PASS")
 
-    # Step 4: Full column schema audit for SHOW commands
     expected_schemas = {
         "SHOW DATASOURCES;": [
             "node_name", "cluster_name", "config_storage_db", "host", "port",
@@ -353,7 +314,7 @@ def run_core_20_write_promoted_refresh_show(context):
         ],
     }
     for cmd, expected_cols in expected_schemas.items():
-        snap = ops.admin_psql(cmd, title="审计 %s" % cmd)
+        snap = ops.admin_psql(cmd)
         if not snap.records:
             raise ConsoleAssertionError("Command %s returned no rows!" % cmd)
         actual_cols = list(snap.records[0].keys())
@@ -363,25 +324,23 @@ def run_core_20_write_promoted_refresh_show(context):
                     actual="实际列名: %s" % ", ".join(actual_cols), result="PASS")
 
 
-
 def run_core_21_reload_parameters_and_structure(context):
     """CORE-21: Reload no change, runtime parameters, and structural changes."""
     ops = context.ops
     conf = ops.start()
     pid_before = ops.pid_file.read_text(encoding="utf-8").strip()
 
-    # Step 1: No change reload while executing query
     rc, out = ops.client_psql("SELECT 1;")
-    snap_status1 = ops.admin_psql("SHOW CONFIG_STATUS;", title="Reload 前状态")
+    snap_status1 = ops.admin_psql("SHOW CONFIG_STATUS;")
     gen1 = snap_status1.records[0].get("config_generation", "0")
     registry1 = snap_status1.records[0].get("monitor_registry_generation", "0")
 
-    reload_no_change = ops.admin_psql("RELOAD;", title="执行无变化 Reload")
+    reload_no_change = ops.admin_psql("RELOAD;")
     rc2, out2 = ops.client_psql("SELECT 1;")
     if rc2 != 0 or out2 != "1":
         raise ConsoleAssertionError("Client query failed after no-change reload!")
 
-    snap_status2 = ops.admin_psql("SHOW CONFIG_STATUS;", title="Reload 后状态")
+    snap_status2 = ops.admin_psql("SHOW CONFIG_STATUS;")
     pid_after = ops.pid_file.read_text(encoding="utf-8").strip()
     if pid_after != pid_before:
         raise ConsoleAssertionError("No-change Reload replaced process: before=%s after=%s" % (pid_before, pid_after))
@@ -396,14 +355,13 @@ def run_core_21_reload_parameters_and_structure(context):
                 actual="PID %s -> %s；last_reload_result=%s；客户端返回=%s" % (
                     pid_before, pid_after, last_res, out2), result="PASS")
 
-    # Step 2: Runtime parameter modification (monitor_period)
     conf_text = conf.read_text(encoding="utf-8")
     conf_text_mod = re.sub(r'monitor_period\s+\d+', 'monitor_period 5', conf_text)
     conf.write_text(conf_text_mod, encoding="utf-8")
 
     param_diff = ops.diff_text(conf_text, conf_text_mod, "修改前配置", "monitor_period=5 配置")
-    reload_param = ops.admin_psql("RELOAD;", title="修改参数后 Reload")
-    snap_status3 = ops.admin_psql("SHOW CONFIG_STATUS;", title="检查参数变更 Reload 状态")
+    reload_param = ops.admin_psql("RELOAD;")
+    snap_status3 = ops.admin_psql("SHOW CONFIG_STATUS;")
     last_res3 = snap_status3.records[0].get("last_reload_result", "")
     if last_res3 != "SUCCESS":
         raise ConsoleAssertionError("Expected last_reload_result=SUCCESS on param update, got %r" % last_res3)
@@ -442,7 +400,6 @@ def run_core_21_reload_parameters_and_structure(context):
                        "连续探测间隔 %.2fs、%.2fs" %
                        (last_res3, intervals[0], intervals[1]), result="PASS")
 
-    # Step 3: Structural change: Add a new group
     new_group_block = (
         '\ngroup "qa_temp_group" {\n'
         '    group_mode "replication"\n'
@@ -455,11 +412,11 @@ def run_core_21_reload_parameters_and_structure(context):
     conf_text_mod2 = conf_text_mod2.replace('group_names "qa_rep,', 'group_names "qa_temp_group,qa_rep,')
     conf.write_text(conf_text_mod2, encoding="utf-8")
     structure_diff = ops.diff_text(conf_text_mod, conf_text_mod2, "参数变更配置", "新增 qa_temp_group 配置")
-    reload_structure = ops.admin_psql("RELOAD;", title="追加新组后 Reload")
-    snap_temp = ops.admin_psql("SHOW GROUP_ROUTING qa_temp_group;", title="查询新组路由")
+    reload_structure = ops.admin_psql("RELOAD;")
+    snap_temp = ops.admin_psql("SHOW GROUP_ROUTING qa_temp_group;")
     if not snap_temp.records:
         raise ConsoleAssertionError("Newly added group qa_temp_group not found in SHOW GROUP_ROUTING!")
-    snap_status4 = ops.admin_psql("SHOW CONFIG_STATUS;", title="检查结构变更 Reload 状态")
+    snap_status4 = ops.admin_psql("SHOW CONFIG_STATUS;")
     gen4 = snap_status4.records[0].get("config_generation", "0")
     if int(gen4) <= int(gen1):
         raise ConsoleAssertionError("Expected config_generation to increment, before=%s after=%s" % (gen1, gen4))
@@ -477,10 +434,9 @@ def run_core_21_reload_parameters_and_structure(context):
                 expected="qa_temp_group 路由立即生效且 config_generation 自增",
                 actual="config_generation %s -> %s；路由返回 %d 行" % (gen1, gen4, len(snap_temp.records)), result="PASS")
 
-    # Step 4: Revert group and reload
     conf.write_text(conf_text, encoding="utf-8")
     restore_diff = ops.diff_text(conf_text_mod2, conf_text, "测试配置", "原始配置")
-    reload_restore = ops.admin_psql("RELOAD;", title="恢复原配置后 Reload")
+    reload_restore = ops.admin_psql("RELOAD;")
     snap_removed = ops.admin_psql("SHOW GROUP_ROUTING qa_temp_group;", check=False)
     snap_removed.assert_error("qa_temp_group")
     ops.add_step("恢复配置结构 Reload", command="%s\n\n恢复后查询临时组:\n%s" % (
@@ -498,25 +454,23 @@ def run_core_22_reload_failure_protection(context):
     before_generation = before_status.records[0]["config_generation"]
     before_registry = before_status.records[0]["monitor_registry_generation"]
 
-    # Step 1: Syntax error protection
     original_text = conf.read_text(encoding="utf-8")
     broken_text = original_text + "\nthis_is_an_invalid_syntax_error_token_block {{{\n"
     conf.write_text(broken_text, encoding="utf-8")
 
     broken_diff = ops.diff_text(original_text, broken_text, "合法配置", "语法错误配置")
-    reload_failure = ops.admin_psql("RELOAD;", title="语法错误文件执行 Reload", check=False)
+    reload_failure = ops.admin_psql("RELOAD;", check=False)
     if reload_failure.returncode == 0:
         raise ConsoleAssertionError("Invalid configuration RELOAD unexpectedly succeeded")
     reload_failure.assert_error("unknown parameter")
 
-    snap_status = ops.admin_psql("SHOW CONFIG_STATUS;", title="检查重载失败状态")
+    snap_status = ops.admin_psql("SHOW CONFIG_STATUS;")
     last_res = snap_status.records[0].get("last_reload_result", "")
     if last_res != "FAILED":
         raise ConsoleAssertionError("Expected last_reload_result=FAILED, got %r" % last_res)
     snap_status.assert_fields({}, config_generation=before_generation,
                               monitor_registry_generation=before_registry)
 
-    # Client query must still succeed under old config
     rc, out = ops.client_psql("SELECT 1;")
     if rc != 0 or out != "1":
         raise ConsoleAssertionError("Existing client traffic was broken by invalid config reload!")
@@ -529,17 +483,15 @@ def run_core_22_reload_failure_protection(context):
                 actual="Reload 返回码=%s；last_reload_result=%s；SELECT 1 返回 %s" % (
                     reload_failure.returncode, last_res, out), result="PASS")
 
-    # Restore valid config
     conf.write_text(original_text, encoding="utf-8")
-    restore_reload = ops.admin_psql("RELOAD;", title="恢复合法配置")
+    restore_reload = ops.admin_psql("RELOAD;")
 
-    # Step 2: Persistence directory read-only protection
     backup_dir = ops.backup_dir
     before_persist = conf.read_text(encoding="utf-8")
-    before_members = ops.admin_psql("SHOW GROUP_MEMBERS;", title="写保护前成员状态")
+    before_members = ops.admin_psql("SHOW GROUP_MEMBERS;")
     os.chmod(str(backup_dir), 0o555)
     try:
-        write_failure = ops.admin_psql("SET NODE PARTED test_mmr1_s1;", title="只读备份目录下执行写配置命令", check=False)
+        write_failure = ops.admin_psql("SET NODE PARTED test_mmr1_s1;", check=False)
     finally:
         os.chmod(str(backup_dir), 0o755)
     if write_failure.returncode == 0:
@@ -549,7 +501,7 @@ def run_core_22_reload_failure_protection(context):
     after_persist = conf.read_text(encoding="utf-8")
     if before_persist != after_persist:
         raise ConsoleAssertionError("Configuration changed after persistence failure")
-    after_members = ops.admin_psql("SHOW GROUP_MEMBERS;", title="写保护失败后成员状态")
+    after_members = ops.admin_psql("SHOW GROUP_MEMBERS;")
     before_row = before_members.find_one(node_name="test_mmr1_s1", group_name="qa_rep")
     after_row = after_members.find_one(node_name="test_mmr1_s1", group_name="qa_rep")
     if before_row.get("state") != after_row.get("state"):
