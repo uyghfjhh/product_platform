@@ -63,7 +63,9 @@ PLATFORM_URL=http://127.0.0.1:8766 node tests/license-management.mjs
   必填 `data_root`/`license_file`/`mmr1_port`——默认值依赖 profile 接口
   **异步预取**，测试里显式填写避免竞态。
 - **拓扑**：2D 为 GSAP/SVG（`DeploymentCanvas`），节点 `.topo-node[data-node-id]`
-  （非 react-flow）；点击开节点 Drawer（`数据目录`、`启动节点`）。
+  （非 react-flow）；点节点标题/正文开节点详情 Drawer（`数据目录`、`启动节点`），
+  点卡片中部的"💻 SQL 控制台"行开 SQL 工作台。**注意**：`.topo-node` 几何中心
+  正好落在 SQL 快捷行上，测试须点 `.node-label-text` 等标题区进入详情抽屉。
 - **测试页**（regress-console）：用例行 `div.case-row`，名称 `.case-name`
   （文本是 `c.name`，**target 在 title 属性**）；搜索框 placeholder
   `搜索用例名称、Core ID (如 CORE-13)、中文描述...`；`查看报告` 开

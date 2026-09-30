@@ -19,12 +19,22 @@
 
 ## 下次优先处理（不能当作已完成）
 
-1. 补齐 cman 既有集群导入时的辅助回归配置重新派生、旧 test_context 失效规则；确认逐节点数据目录自定义与 cman runtime 的固定根目录约定一致。不能在此之前直接进行 cman 新路径真机验收。
-2. 为 Cman 模板明确限制暂不支持的节点目录布局，或补齐完整映射；参数校验再覆盖共享预加载库实际文件存在性。
-3. 最新的实际目录符号链接进入平台项目目录阻断规则需增加专门测试（已添加实现，尚未跑该规则专门用例）。
-4. 再跑最终全量与更新后的 browser-smoke；检查计划失效、接管版本不匹配、远程失败和安装工具混版本等路径。
-5. 完成上述检查后，在无活动任务的窗口重启运行平台加载新 API，核验四个既有环境；让用户审阅具体方案后再做真机部署，不自动使用当前集群做初始化验证。
+1. ~~补齐 cman 既有集群导入时的辅助回归配置重新派生、旧 test_context 失效规则；确认逐节点数据目录自定义与 cman runtime 的固定根目录约定一致。~~ **已完成**（见下"后续批次进展"）。
+2. ~~为 Cman 模板明确限制暂不支持的节点目录布局；参数校验再覆盖共享预加载库实际文件存在性。~~ **已完成**：目录布局显式拒绝（约定 `<root>/<name>`），预加载库 `.so` 存在性已纳入探测。
+3. ~~符号链接进入平台项目目录阻断规则的专门测试。~~ **已完成**：两条专项用例（data_root 符号链接入平台目录、两节点目录经符号链接解析到同一实际目录）。
+4. ~~再跑最终全量与更新后的 browser-smoke~~。**已完成**：全量 385 项通过；browser-smoke 修正节点点击落点（卡片中心命中 SQL 快捷行是既有设计，详情抽屉须点标题区）；部署工作台隔离浏览器验收通过。远程失败与安装工具混版本路径仍未覆盖。
+5. ~~重启运行平台加载新 API，核验既有环境。~~ **已完成**：机器重启后的空闲窗口启动服务，模板目录（mac/mmr/cman）与三环境拓扑核验正常（fbase-mmr 6、fbase-mac 3、cman-lab 14）。真机部署仍需用户审阅方案。
 6. B 批次：多主机／凭据资源、现有集群修改的真实差异计划、分阶段恢复与 React Flow 自由拓扑编辑。
+
+## 后续批次进展（2026-09-30 续）
+
+- **cman 导入辅助配置派生**（`products/fbasecman/deployment/templates.py::import_files`）：导入 `mmr.fbasecman_regress` 时按实测 facts 重新派生 `regress.override.yaml` 与合并版 `regress.yaml`——端口（含 `mmr<i>_standby<j>` 历史标量键与 `*_standbys` 列表同步）、`mmr_host`/`mmr_postgres_dir`/`mmr_data_root`、`enable_citus`（取自部署配置 mmr 集群 extensions，VALIDATE_SCRIPT 新增 `cluster_extensions` 事实）、framework 输出目录。缺节点或目录不满足 `<root>/<name>` 约定时显式拒绝。
+- **test_context 失效规则**：`Workbench.associate()` 在部署配置内容摘要变化时调用产品 `deployment_invalidate` 钩子（fbasecman 删除 `test_context.yaml`）；worker 侧 `after_command` 钩子在 `deployment.create/clean/rejoin/restore`（无论成败，部分节点可能已重建）后同样失效。启停与 failover/switchover/reset 不触发——节点身份未变。
+- **cman 目录布局限制**：`compile_template` 节点覆盖只允许改端口，`data_dir` 必须等于 `<data_root>/<name>`，否则 422。端口覆盖现在会同步 `mmr<i>_standby<j>` 标量键（原先只更新 `*_standbys` 列表导致标量失配）。
+- **预加载库存在性**：`shared_preload_libraries` 成员在插件声明中标记 `preload_library`，探测核对 `pg_config --pkglibdir` 下对应 `.so` 真实存在（此前只查 `.control`）。
+- **平台钩子契约**：`deployment_import_files(settings, facts, target, environment_id)` 增加 environment_id 参数（fbase-database 透传兼容）；新增 `deployment_invalidate(settings, environment)` 可选钩子。
+- **浏览器冒烟修正**：`browser-smoke.mjs` 节点点击改点 `.node-label-text`——卡片几何中心命中"💻 SQL 控制台"行是设计行为（遗留语义：DB 节点主击区进 SQL），详情抽屉走标题区。README 备忘已更新。
+- 验证：全量 385 passed（新增 11 项）；tsc/Vite build 通过；`deployment-workbench.mjs` 隔离验收通过；`browser-smoke.mjs` 对运行中实例通过。
 
 ## 继续工作定位
 
@@ -33,7 +43,7 @@
 - backend/platform_app/api/routes_operations.py、actions.py：计划任务快照与执行验收。
 - products/*/deployment/templates.py：产品模板编译。
 - frontend/src/components/DeploymentWizard.tsx：新工作台。
-- tests/test_deployment_workbench.py：12 项后端专项。
+- tests/test_deployment_workbench.py：20 项后端专项（含符号链接阻断、cman 导入派生、test_context 失效、预加载库存在性）。
 - frontend/tests/deployment-workbench-fixture.py 与 deployment-workbench.mjs：隔离浏览器验收，JSON 夹具路径由服务启动打印。
 
 临时调试脚本 frontend/tests/_mobile_dbg.mjs 与工作区 main 文件不属于本批，未纳入提交。临时隔离服务已关闭；没有创建活动目标／自动继续任务。

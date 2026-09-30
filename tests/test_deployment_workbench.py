@@ -281,6 +281,269 @@ def test_worker_checks_deployment_health_before_succeeding(workbench, monkeypatc
     assert task["status"] == "FAILED" and "健康验收失败" in task["reason"]
 
 
+def test_symlinked_data_root_inside_platform_is_rejected(workbench, tmp_path):
+    client, _, spec, _ = workbench
+    inside = ROOT / "data" / "symlinked-instances"
+    inside.mkdir(parents=True, exist_ok=True)
+    link = tmp_path / "linked-root"
+    link.symlink_to(inside)
+    # The literal path passes compile_spec; only the resolved canonical path
+    # lands inside the platform checkout, which inspect_plan must reject.
+    _, plan = create_plan(workbench, {**spec, "data_root": str(link)})
+    assert not plan["ready"]
+    assert any(
+        not check["ok"] and check["title"] == "实际数据目录位于平台项目内"
+        for check in plan["checks"]
+    )
+    assert (
+        client.post(
+            f"/api/v1/deployment/plans/{plan['id']}/associate"
+        ).status_code
+        == 422
+    )
+
+
+def test_symlinked_node_dirs_resolving_together_are_rejected(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    shared = tmp_path / "shared-actual"
+    shared.mkdir()
+    links = []
+    for name in ("link-a", "link-b"):
+        link = tmp_path / name
+        link.symlink_to(shared)
+        links.append(link)
+    cfg, _, _ = compile_spec(service.settings, DeploymentSpec(**spec), "fixture")
+    names = list(cfg["instances"])
+    nodes = [
+        {
+            "name": name,
+            "port": cfg["instances"][name]["port"],
+            "data_dir": cfg["instances"][name]["data_dir"],
+        }
+        for name in names
+    ]
+    nodes[0]["data_dir"] = str(links[0] / "node")
+    nodes[1]["data_dir"] = str(links[1] / "node")
+    draft = client.post(
+        "/api/v1/deployment/drafts", json={"spec": {**spec, "nodes": nodes}}
+    ).json()
+    result = client.post(f"/api/v1/deployment/drafts/{draft['id']}/plan")
+    assert result.status_code == 200, result.text
+    plan = result.json()
+    assert not plan["ready"]
+    assert any(
+        not check["ok"] and check["title"] == "实际数据目录冲突"
+        for check in plan["checks"]
+    )
+
+
+def _cman_compiled(service, spec, tmp_path, port):
+    """Compile the cman template and materialize node PG_VERSION files."""
+    from products.fbasecman.deployment.templates import compile_template
+
+    cman_spec = DeploymentSpec(
+        **{
+            **spec,
+            "product_id": "fbasecman",
+            "template_id": "cman",
+            "base_port": port,
+            "data_root": str(tmp_path / "cman-data"),
+        }
+    )
+    config, target, _ = compile_template(service.settings, cman_spec, "fixture")
+    for node in config["instances"].values():
+        path = Path(node["data_dir"])
+        path.mkdir(parents=True)
+        (path / "PG_VERSION").write_text("15")
+    return config, target
+
+
+def test_cman_import_rederives_regression_files(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, target = _cman_compiled(service, spec, tmp_path, 45620)
+    text = yaml.safe_dump(config, sort_keys=False)
+    _, plan = create_plan(
+        workbench,
+        {
+            **spec,
+            "product_id": "fbasecman",
+            "template_id": "cman",
+            "mode": "import",
+            "source_yaml": text,
+            "target": target,
+        },
+    )
+    assert plan["ready"], plan["checks"]
+    assert "regress.override.yaml" in plan["files"]
+    assert "regress.yaml" in plan["files"]
+    override = yaml.safe_load(
+        (
+            Path(plan["config_path"]).parent / "regress.override.yaml"
+        ).read_text()
+    )
+    primary = config["instances"]["test_mmr1"]
+    standby = config["instances"]["test_mmr1_s1"]
+    assert override["database"]["ports"]["mmr1"] == primary["port"]
+    assert override["database"]["ports"]["mmr1_standby1"] == standby["port"]
+    assert override["database"]["ports"]["mmr1_standbys"][0] == standby["port"]
+    assert override["database"]["mmr_data_root"] == str(tmp_path / "cman-data")
+    assert override["database"]["mmr_postgres_dir"] == spec["home"]
+    # cman 编译产物的 mmr 集群声明了 citus 扩展。
+    assert override["database"]["enable_citus"] is True
+    merged = yaml.safe_load(
+        (Path(plan["config_path"]).parent / "regress.yaml").read_text()
+    )
+    assert merged["database"]["ports"]["mmr1"] == primary["port"]
+    assert merged["fbasecman"]["fbasecman_bin"]
+
+
+def test_cman_import_rejects_nonconforming_layout(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, target = _cman_compiled(service, spec, tmp_path, 45640)
+    moved = tmp_path / "elsewhere" / "renamed-node"
+    moved.mkdir(parents=True)
+    (moved / "PG_VERSION").write_text("15")
+    config["instances"]["test_mmr1_s1"]["data_dir"] = str(moved)
+    draft = client.post(
+        "/api/v1/deployment/drafts",
+        json={
+            "spec": {
+                **spec,
+                "product_id": "fbasecman",
+                "template_id": "cman",
+                "mode": "import",
+                "source_yaml": yaml.safe_dump(config),
+                "target": target,
+            }
+        },
+    ).json()
+    result = client.post(f"/api/v1/deployment/drafts/{draft['id']}/plan")
+    assert result.status_code == 422
+    assert "节点名" in result.json()["detail"]
+
+
+def test_cman_node_overrides_restricted_to_conventional_layout(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    cfg, _ = _cman_compiled(service, spec, tmp_path, 45660)
+    nodes = [
+        {
+            "name": name,
+            "port": row["port"],
+            "data_dir": row["data_dir"],
+        }
+        for name, row in cfg["instances"].items()
+    ]
+    nodes[0]["data_dir"] = str(tmp_path / "custom" / "dir")
+    draft = client.post(
+        "/api/v1/deployment/drafts",
+        json={
+            "spec": {
+                **spec,
+                "product_id": "fbasecman",
+                "template_id": "cman",
+                "data_root": str(tmp_path / "cman-data"),
+                "nodes": nodes,
+            }
+        },
+    ).json()
+    result = client.post(f"/api/v1/deployment/drafts/{draft['id']}/plan")
+    assert result.status_code == 422
+    assert "目录" in result.json()["detail"]
+
+
+def _register_imported_environment(service, client, config, environment_id):
+    path = Path(service.settings.data_dir) / "imported.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+    service.store.put_environment(
+        {
+            "id": environment_id,
+            "product_id": "fbasecman",
+            "title": "既有集群",
+            "host": "127.0.0.1",
+            "port": config["instances"]["test_mmr1"]["port"],
+            "database_name": "postgres",
+            "database_user": "postgres",
+            "deployment_config": str(path),
+            "deployment_target": "mmr.fbasecman_regress",
+        }
+    )
+    return path
+
+
+def test_associate_invalidates_stale_test_context(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, _ = _cman_compiled(service, spec, tmp_path, 45680)
+    _register_imported_environment(service, client, config, "cman-imported")
+    stale = (
+        service.settings.output_dir
+        / "fbasecman"
+        / "cman-imported"
+        / "output"
+        / "env"
+        / "test_context.yaml"
+    )
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale identifiers")
+    client.post("/api/v1/environments/cman-imported/deployment-draft")
+    # 把草稿里的拓扑改到另一组端口——导入的是不同集群，旧上下文必须作废。
+    moved = dict(config)
+    moved["instances"] = dict(config["instances"])
+    moved["instances"]["test_mmr1"] = {
+        **config["instances"]["test_mmr1"],
+        "port": config["instances"]["test_mmr1"]["port"] + 400,
+    }
+    draft = client.get("/api/v1/deployment/drafts/cman-imported").json()
+    updated = client.put(
+        "/api/v1/deployment/drafts/cman-imported",
+        json={
+            "expected_revision": draft["revision"],
+            "spec": {**draft["spec"], "source_yaml": yaml.safe_dump(moved)},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    result = client.post("/api/v1/deployment/drafts/cman-imported/plan")
+    assert result.status_code == 200, result.text
+    plan = result.json()
+    assert plan["ready"], plan["checks"]
+    linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
+    assert linked.status_code == 200, linked.text
+    assert not stale.exists()
+
+
+def test_associate_keeps_test_context_when_config_unchanged(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    config, _ = _cman_compiled(service, spec, tmp_path, 45700)
+    _register_imported_environment(service, client, config, "cman-same")
+    context = (
+        service.settings.output_dir
+        / "fbasecman"
+        / "cman-same"
+        / "output"
+        / "env"
+        / "test_context.yaml"
+    )
+    context.parent.mkdir(parents=True, exist_ok=True)
+    context.write_text("current identifiers")
+    client.post("/api/v1/environments/cman-same/deployment-draft")
+    plan = client.post("/api/v1/deployment/drafts/cman-same/plan").json()
+    linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
+    assert linked.status_code == 200, linked.text
+    # 部署配置逐字节一致时，既有夹具上下文仍然有效。
+    assert context.read_text() == "current identifiers"
+
+
+def test_preload_library_file_must_exist(workbench):
+    client, _, spec, _ = workbench
+    (Path(spec["home"]) / "lib" / "fdd_mmr.so").unlink()
+    _, plan = create_plan(workbench, {**spec, "template_id": "mmr"})
+    assert not plan["ready"]
+    assert any(
+        check["title"] == "扩展 fdd_mmr" and not check["ok"]
+        for check in plan["checks"]
+    )
+
+
 def test_worker_rechecks_data_created_after_queueing(workbench):
     client, service, _, _ = workbench
     draft, plan = create_plan(workbench)

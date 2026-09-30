@@ -182,8 +182,8 @@ class FbaseProvider:
     def compile_deployment(self, settings, spec, environment_id):
         return importlib.import_module("products.fbase-database.deployment.templates").compile_template(settings, spec, environment_id)
 
-    def deployment_import_files(self, settings, facts, target):
-        return importlib.import_module("products.fbase-database.deployment.templates").import_files(settings, facts, target)
+    def deployment_import_files(self, settings, facts, target, environment_id=None):
+        return importlib.import_module("products.fbase-database.deployment.templates").import_files(settings, facts, target, environment_id)
 
     def validate_target(self, settings, target):
         targets = {case["target"] for case in exported_cases()}

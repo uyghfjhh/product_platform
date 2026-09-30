@@ -135,6 +135,27 @@ class FbasecmanProvider:
         from products.fbasecman.deployment.templates import compile_template
         return compile_template(settings, spec, environment_id)
 
+    def deployment_import_files(self, settings, facts, target, environment_id=None):
+        from products.fbasecman.deployment.templates import import_files
+        return import_files(settings, facts, target, environment_id)
+
+    def deployment_invalidate(self, settings, environment):
+        """部署配置重发布或重建后，绑定旧集群身份的夹具上下文作废。"""
+        stale = (
+            evidence_root(settings, environment["id"])
+            / "output" / "env" / "test_context.yaml"
+        )
+        stale.unlink(missing_ok=True)
+
+    def after_command(self, store, settings, environment, task_id, action, success):
+        # 重建数据目录的动作（无论成败，部分节点可能已重建）会使
+        # system_identifier/密码上下文失效；启停与角色切换不影响。
+        if action in {
+            "deployment.create", "deployment.clean",
+            "deployment.rejoin", "deployment.restore",
+        }:
+            self.deployment_invalidate(settings, environment)
+
     def validate_target(self, settings, target):
         if target in {"all", "failed"}:
             return True

@@ -50,6 +50,14 @@ def compile_template(settings, spec, environment_id):
     }
     if spec.template_id == "mmr":
         plugins["fbase_mac"] = {"required": True, "extension": "fbase_mac"}
+    preloads = [
+        name
+        for name, opts in cluster["plugins"].items()
+        if opts.get("preload", True)
+    ]
+    for name in preloads:
+        # 探测同时核对预加载库的 .so 是否真实存在。
+        plugins[name]["preload_library"] = name
     parameters = {
         **cluster["postgresql"]["settings"],
         **spec.parameters,
@@ -59,11 +67,7 @@ def compile_template(settings, spec, environment_id):
         "log_directory": "log",
         "wal_level": "logical",
         "hot_standby": "on",
-        "shared_preload_libraries": [
-            name
-            for name, opts in cluster["plugins"].items()
-            if opts.get("preload", True)
-        ],
+        "shared_preload_libraries": preloads,
     }
     if spec.template_id == "mmr":
         parameters.update(
@@ -191,7 +195,7 @@ def compile_template(settings, spec, environment_id):
     return config, target, auxiliary
 
 
-def import_files(settings, facts, target):
+def import_files(settings, facts, target, environment_id=None):
     cluster = (
         "mac"
         if target in {"logical.fbase_regress", "streaming.mac"}

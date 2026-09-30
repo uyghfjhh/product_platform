@@ -107,3 +107,70 @@ class FbasecmanProcessTest(unittest.TestCase):
         self.assertIn('ports "6432"', rendered)
         self.assertIn("promhttp_server_port 7778", rendered)
         self.assertIn('log_min_messages "debug1"', rendered)
+
+
+class DeploymentInvalidationTest(unittest.TestCase):
+    """After re-publishing or rebuilding a deployment, the stale fixture
+    context bound to the old cluster identity must be removed."""
+
+    def _provider_and_context(self, tmp):
+        from platform_app.config import Settings
+        from products.fbasecman.provider import PROVIDER
+
+        settings = Settings(
+            data_dir=tmp / "data",
+            pgcluster_root=tmp / "pgcluster",
+            license_key_dir=tmp / "keys",
+            license_vendor="测试",
+        )
+        environment = {"id": "cman-x", "product_id": "fbasecman"}
+        context = (
+            settings.output_dir
+            / "fbasecman"
+            / "cman-x"
+            / "output"
+            / "env"
+            / "test_context.yaml"
+        )
+        context.parent.mkdir(parents=True, exist_ok=True)
+        context.write_text("stale")
+        return PROVIDER, settings, environment, context
+
+    def test_rebuilding_actions_invalidate_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for action in (
+                "deployment.create",
+                "deployment.clean",
+                "deployment.rejoin",
+                "deployment.restore",
+            ):
+                provider, settings, environment, context = self._provider_and_context(
+                    Path(tmp)
+                )
+                provider.after_command(None, settings, environment, "t", action, True)
+                self.assertFalse(context.exists(), action)
+
+    def test_failed_rebuild_still_invalidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            provider, settings, environment, context = self._provider_and_context(
+                Path(tmp)
+            )
+            provider.after_command(
+                None, settings, environment, "t", "deployment.create", False
+            )
+            self.assertFalse(context.exists())
+
+    def test_non_rebuilding_actions_keep_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for action in (
+                "deployment.start",
+                "deployment.stop",
+                "deployment.failover",
+                "deployment.switchover",
+                "deployment.reset",
+            ):
+                provider, settings, environment, context = self._provider_and_context(
+                    Path(tmp)
+                )
+                provider.after_command(None, settings, environment, "t", action, True)
+                self.assertTrue(context.exists(), action)

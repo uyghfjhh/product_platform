@@ -53,12 +53,18 @@ def build_profile(
     # Citus 必须位于 shared_preload_libraries 首位，否则实例拒绝启动。
     preloads = (["citus"] if use_citus else []) + ["fdd_mmr"]
     mmr_extensions = ["fbase_mac", "fdd_mmr", "fb_license"] + (["citus"] if use_citus else [])
+    plugins = {
+        name: {"required": True, "extension": name} for name in mmr_extensions
+    }
+    for name in preloads:
+        # 探测同时核对预加载库的 .so 是否真实存在。
+        plugins[name]["preload_library"] = name
     installations = {
         "regress_postgres": {
             "provider": "fbase",
             "home": db["mmr_postgres_dir"],
             "license": {"source_file": license_file, "data_file": "license.dat"},
-            "plugins": {name: {"required": True, "extension": name} for name in mmr_extensions},
+            "plugins": plugins,
         }
     }
     instances = {}

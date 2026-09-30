@@ -93,7 +93,7 @@ from pgclusterlib.config import load
 from pgclusterlib.runtime import Runtime
 config=load(sys.argv[1]);target=sys.argv[2];config.validate(target)
 names=Runtime(config).target_instances(target)
-print(json.dumps({"nodes":[{"name":name,"host":config.instance(name)["host_config"]["address"],"port":config.instance(name)["port"],"data_dir":config.instance(name)["data_dir"],"installation":config.instance(name)["installation"]} for name in names],"installations":config.installations}))
+print(json.dumps({"nodes":[{"name":name,"host":config.instance(name)["host_config"]["address"],"port":config.instance(name)["port"],"data_dir":config.instance(name)["data_dir"],"installation":config.instance(name)["installation"]} for name in names],"installations":config.installations,"cluster_extensions":{kind+"."+name:cluster.get("extensions") or [] for kind,attr in (("mmr","mmr_clusters"),("streaming","streaming_clusters"),("citus","citus_clusters")) for name,cluster in (getattr(config,attr) or {}).items()}}))
 """
 
 
@@ -325,7 +325,9 @@ class Workbench:
                 None,
             )
             if import_files:
-                for name, text in import_files(self.settings, facts, target).items():
+                for name, text in import_files(
+                    self.settings, facts, target, key
+                ).items():
                     if Path(name).name != name:
                         raise ValueError("产品辅助文件名称无效")
                     (directory / name).write_text(text)
@@ -433,15 +435,33 @@ class Workbench:
                 raise ConflictError("环境有活动任务，请等待任务完成")
             # Re-check under the environment lock before publishing the pointer.
             self.verify(key, inspect=False)
+            previous = self.store.get_environment(expected["id"])
+            old_digest = None
+            if previous and previous.get("deployment_config"):
+                try:
+                    old_digest = digest(
+                        Path(previous["deployment_config"]).read_text()
+                    )
+                except OSError:
+                    pass
             profile = self.settings.data_dir / "profiles" / expected["id"]
             profile.mkdir(parents=True, exist_ok=True)
             for name in plan["files"]:
                 text = (Path(plan["config_path"]).parent / name).read_text()
                 self.store._atomic_write(profile / name, text)
-            if self.store.get_environment(expected["id"]):
+            if previous:
                 self.store.update_environment(expected["id"], expected)
             else:
                 self.store.put_environment(expected)
+            # 部署配置内容变化后，绑定旧集群身份的回归上下文必须作废。
+            if old_digest != plan["config_sha256"]:
+                invalidate = getattr(
+                    provider_for(self.settings, expected["product_id"]),
+                    "deployment_invalidate",
+                    None,
+                )
+                if callable(invalidate):
+                    invalidate(self.settings, expected)
         return expected
 
 

@@ -57,7 +57,9 @@ try {
   await page.getByRole('dialog').locator('.ant-modal-close').click();
   await page.locator('.topo-node').first().waitFor({ timeout: 20000 });
   assert.equal(await page.locator('.topo-node').count(), 14);
-  await page.locator('.topo-node').first().click();
+  // 点击节点标题打开详情抽屉；卡片正中是"SQL 控制台"快捷行，
+  // 几何中心点击会命中它（开 SQL 工作台而非详情）。
+  await page.locator('.topo-node').first().locator('.node-label-text').click();
   await page.getByText('数据目录').last().waitFor();
   await page.getByRole('button', { name: '启动节点' }).waitFor();
   await page.locator('.ant-drawer-close').last().click();
