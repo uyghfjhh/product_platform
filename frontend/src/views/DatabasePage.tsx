@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Typography } from 'antd';
 import { PlayCircleOutlined, ReloadOutlined, DatabaseOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons';
+
+const StudioPanel = lazy(() => import('../components/StudioPanel'));
 
 import { api, post, type Environment, type Product } from '../platform/api';
 import CodeEditor from '../components/LazyCodeEditor';
@@ -459,6 +461,24 @@ export default function DatabasePage({ environment, environments = [], onSelectE
                 ) : <Empty description="点击刷新读取参数（默认显示非默认值与常用项）" />,
               },
             ]} />
+        </section>
+
+        <section className="work-section">
+          <div className="section-heading">
+            <div>
+              <Typography.Title level={5} style={{ margin: 0 }}>数据管理器</Typography.Title>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Prisma Studio——浏览表数据与结构；经由平台 BFF 连接所选节点
+              </Typography.Text>
+            </div>
+          </div>
+          <Suspense fallback={<Empty description="正在加载数据管理器…" />}>
+            <StudioPanel
+              key={`${environment.id}:${selectedPort || environment.port}`}
+              environmentId={environment.id}
+              port={selectedPort || environment.port}
+            />
+          </Suspense>
         </section>
       </>}
     </>

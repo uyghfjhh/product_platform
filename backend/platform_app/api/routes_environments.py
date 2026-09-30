@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import HTTPException
+from fastapi import Body, HTTPException
 
 from ..actions import actions_for_environment
 from ..catalog import get_product
@@ -13,6 +13,7 @@ from ..database import (
 )
 from ..discovery import discover_cases
 from ..product_catalog import discover_products
+from ..studio import studio_dispatch
 from ..topology import configured_topology, observed_status
 from .schemas import (
     CancelBackendInput, EnvironmentInput, QueryInput, RegressionBindingInput,
@@ -198,6 +199,11 @@ def register(app, settings: Settings, store) -> None:
         if not done:
             raise HTTPException(status_code=404, detail="后端不存在或已结束")
         return {"status": "ok", "pid": pid, "terminated": item.terminate}
+
+    @app.post("/api/v1/environments/{environment_id}/studio")
+    def studio_bff(environment_id: str, port: int | None = None, item: dict = Body(...)):
+        """Prisma Studio BFF 协议端点——错误经 Either 元组返回，不走 HTTP 状态。"""
+        return studio_dispatch(_admin_env(environment_id, port), item)
 
     @app.get("/api/v1/environments/{environment_id}/configuration")
     def environment_configuration(environment_id: str):

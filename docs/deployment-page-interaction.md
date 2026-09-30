@@ -4,9 +4,18 @@
 
 集群拓扑只展示现有平面视图，隐藏 3D 切换，界面不出现 GSAP／SVG／Three.js 等框架名。节点数量与在线／已停止／未知状态在图上方汇总，状态提示不再遮住节点。点击节点打开详情／节点操作／SQL 抽屉；底部不再展示整份部署 YAML，也不再为页面自动请求该文件。
 
-数据库管理是单独的导航页，切换环境后提供已有的节点选择、对象浏览和 SQL 工作台。当前仍是基础功能，尚未集成完整第三方管理器。
+数据库管理是单独的导航页，切换环境后提供节点选择、对象浏览、SQL 工作台、实例运行状态（会话/锁/复制/参数）与嵌入式数据管理器。
 
-**选定方向（待实施）**：`@prisma/studio-core`（Apache-2.0，React 18/19 兼容）。Prisma Studio 本体的嵌入式 React 组件：schema 树浏览、表数据分页/筛选/排序/行编辑、关联查看、SQL 编辑器＋操作日志，覆盖管理平台需要的主要面。比 iframe 外挂（pgweb/DbGate/CloudBeaver/pgAdmin）更贴合：连接走环境登记，认证与审计天然继承，无需第二套连接配置。
+**选定方向（已实施）**：`@prisma/studio-core@0.33.0`（Apache-2.0，React 18/19 兼容，版本精确锁定）。Prisma Studio 嵌入式 React 组件：schema 切换、表数据分页/筛选/排序/行编辑、Visualizer、Console。实施细节：
+
+- 前端 `frontend/src/components/StudioPanel.tsx`：`createStudioBFFClient({url: /api/v1/environments/{id}/studio?port=N, customPayload: {environment_id, port}})` + `createPostgresAdapter` + `<Studio>`；`React.lazy` 懒加载（独立 chunk ~3.6MB gzip 1.1MB，按需加载不拖慢首屏）；节点端口或环境变化经 `key` 重挂载。
+- 后端 `backend/platform_app/studio.py`：`POST /api/v1/environments/{id}/studio` 分发 `query`/`sequence`/`transaction`/`sql-lint` 四种 procedure，Either 元组 `[error, result]` 返回；`query-insights` 明确返回未实现。
+- 参数翻译 `_translate_parameters`：kysely `$N` → psycopg `%s`，状态机跳过单/双引号、`$tag$` 美元引用、行注释、块注释；按占位符出现序重排参数（`$2` 先于 `$1` 或重复引用时绑定仍正确）。
+- 序列化 `_encode_value`：datetime/date/time→ISO、Decimal→str、int8 超 JS 安全整数→str、bytea→`\x` hex、`transformations: {col: "json-parse"}` → JSON 字符串。
+- `schema` → `set_config('search_path', %s)` 参数化绑定，无注入面。
+- `sql-lint` = `EXPLAIN` 解析/规划级校验，事务内执行强制回滚（`EXPLAIN ANALYZE` 也不落盘）；`statement_position` 减 `EXPLAIN ` 前缀长度映射回原 SQL 偏移。
+- `transaction` 非 autocommit 全量执行后 commit，任一步失败 rollback 返回错误元组；`sequence` 双查询逐条容错按 `[[err,res],[err,res]]` 返回。
+- 浏览器验收 `frontend/tests/studio-panel-check.mjs`：真实环境挂载、BFF 全 200、切换节点 BFF 指向新端口、零页面错误。
 
 接入设计（已核实协议，可落地）：
 
