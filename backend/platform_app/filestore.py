@@ -510,17 +510,43 @@ class FileStore:
             "payload": payload,
         }
 
-    def list_events(self, task_id: str, after: int = 0) -> list[dict]:
-        with self._locked():
-            path = self._task_events(task_id)
-            events = {}
-            for line in path.read_bytes().splitlines() if path.is_file() else []:
+    def _read_events_since(self, path: Path, after: int) -> dict[int, dict]:
+        """Parse events.jsonl; when ``after`` is given, scan backwards from the
+        tail and stop at the first event already covered — sequences are
+        monotonically increasing so nothing earlier can qualify."""
+        events: dict[int, dict] = {}
+        if not path.is_file():
+            return events
+        lines = path.read_bytes().splitlines()
+        if after <= 0:
+            for line in lines:
                 try:
                     event = json.loads(line)
                 except ValueError:
                     continue
                 if isinstance(event, dict) and isinstance(event.get("sequence"), int):
                     events[event["sequence"]] = event
+            return events
+        # Tail→head scan: stop at the first event already covered. Sequences
+        # are monotonically increasing so nothing earlier can qualify; the
+        # first occurrence wins (later file line, same as forward dedup).
+        for line in reversed(lines):
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            seq = event.get("sequence") if isinstance(event, dict) else None
+            if not isinstance(seq, int):
+                continue
+            if seq <= after:
+                break
+            if seq not in events:
+                events[seq] = event
+        return events
+
+    def list_events(self, task_id: str, after: int = 0) -> list[dict]:
+        with self._locked():
+            events = self._read_events_since(self._task_events(task_id), after)
             task = self.get_task(task_id) or {}
             events.update({event["sequence"]: event for event in task.get("pending_events", [])})
             return [events[key] for key in sorted(events) if key > after]

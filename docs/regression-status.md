@@ -9,7 +9,7 @@
 | 产品 | 用例数 | 执行路径 | 实测基线 | 未完成原因 |
 | --- | --- | --- | --- | --- |
 | fbase-database | 228（mac 58 + mmr 170） | 平台原生 `RegressionEngine`，声明式步骤 | mac 56 PASS + 2 保真 FAIL；mmr 164 PASS + 1 保真 FAIL（2026-09-29 优雅退出修复后全量复跑） | 见 §4 定性；5 条 `default_enabled=False` 未入批 |
-| fbasecman | 212（144 平台宿主 executor + 68 native） | 平台引擎 + 平台 SDK 原生用例；144 条经 `RuntimeExecutorCase`/`_GlobalCachePlatformCase` 宿主，`LegacySuiteCase`/`SuiteNativeCase` 已删除 | 见 §4.3 分套件 | **144 条 executor 已完成 `rt.*`→`ops.*`/`context` 形态改写**（`def case_x(context)` + `fbasecman_ops` PEP 562 转发 facade，`context_executor` 钩子）；runtime 构造注入 resolver `env`/`context_data`，不再自行 legacy 加载；四套件真机批跑 137 PASS / 1 flaky（core_19 复跑 PASS）；native 覆盖 common 4、sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18 |
+| fbasecman | 212（144 平台宿主 executor + 68 native） | 平台引擎 + 平台 SDK 原生用例；144 条经 `RuntimeExecutorCase`/`_GlobalCachePlatformCase` 宿主，`LegacySuiteCase`/`SuiteNativeCase` 已删除 | 见 §4.3 分套件 | **144 条 executor 已完成 `rt.*`→`ops.*`/`context` 形态改写并去除门面**（`def case_x(context)` + `ops = context.ops` 直连套件 runtime，`fbasecman_ops` 转发 facade 已物理删除）；runtime 构造注入 resolver `env`/`context_data`，不再自行 legacy 加载；high_availability/handover runtime 已收敛到共享 `FbasecmanCaseRuntime` 基类；真机验证 high_availability 10/10、ha_commands 76/76、handover 抽样 PASS；native 覆盖 common 4、sql_parse 4、ha_commands 16、tmp 1、outstanding 11、rw_toggle 14、guc 18 |
 
 **唯一执行面**：`python -m platform_regress.cli --product-dir <产品> [--suite S | target | failed]`。vendored 诊断入口已物理删除：`run.sh`、`tools/cli.py`、各套件 `suite.py`/`plugin.py`/`run_case`、`suites/registry.py`、vendored `unit_tests/` 与 legacy 树内重复的 `products/fbasecman/` 副本全部移除；`products/fbasecman/cli/run.sh` 收敛为 `platform_case.py` 薄壳；`products/fbasecman/regression/run.py` 保留 `--check-profile`（target 存在性改查 `catalog.json`，不再依赖 registry）。
 
@@ -30,7 +30,7 @@
 | `suites/` | contracts（CaseSpec/SuitePlugin/validate_cases）、registry（preflight 策略+quiet_env 挂点）、failed（last_failed/case_status/rerun）、executor（`RuntimeExecutorCase`/`RuntimeBinding`/`context_executor` 宿主）；原 `LegacySuiteCase`/`LegacyCaseBinding` 适配器已随 144 条迁移完成物理删除 | 已上收 |
 | `requirements.py` | 依赖门注册表（clusters/commands/plugins/groups/nodes/node/system_time_control/roles/extensions 按旧序），产品 `register_requirement(before=)` 注入专属 evaluator，不满足统一 BLOCKED | 已上收（15 单测） |
 | `reporting/` | model、renderer、junit、html、export（CaseResult 事实模型→双格式；BLOCKED/CANCELLED→SKIPPED） | 已上收 |
-| `steps.py` | 声明式步骤执行器：sql/command/wait_sql/background_sql/wait_background_sql/node_action/cluster_action/system_time_shift | 已上收 |
+| `steps/` | 声明式步骤执行器（包）：base（断言求值+步骤记录契约）、sql_exec（psql 执行）、command（argv 传输）、sql_steps（sql/wait/background 族）、cluster（pg_ctl/节点/时钟族）、`__init__` 分发器 | 已上收并按职责拆包 |
 
 平台侧测试：**254 passed**（含 `test_resource_ledger` 6 项：台账登记/死主清扫/取消抑制/ipcs 解析）；前端生产构建通过。
 

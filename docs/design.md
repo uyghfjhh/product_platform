@@ -258,8 +258,9 @@ fbasecman、多活和等保的既有回归实现是迁移行为基准，参考�
    不得宣称完成。
 
 fbasecman 212 条已全部达到本完成标准：68 条 SDK-native 用例 + 144 条
-executor 用例（`def case_x(context)` + `fbasecman_ops` 产品操作面转发，
-runtime 构造注入 resolver `env`/`context_data`，不再自行加载 legacy 配置、
+executor 用例（`def case_x(context)` + `ops = context.ops` 直连套件
+runtime，`fbasecman_ops` 转发门面已删除；runtime 构造注入 resolver
+`env`/`context_data`，不再自行加载 legacy 配置、
 不再经过 suite `run_case`/runner/registry/framework）。executor 与 runtime
 方法库作为产品知识保留在 `products/fbasecman/` 内，其通用原语全部为平台件。
 
