@@ -189,7 +189,9 @@ def run(request):
             except (OSError, ValueError):
                 claim = None
             managed = claim in (None, node["name"])
-        existing = managed or node.get("existing", request["mode"] != "new")
+        existing = managed or node.get(
+            "existing", request["mode"] not in {"new", "free"}
+        )
         checks.append(
             {
                 "title": node["name"] + " 数据目录",

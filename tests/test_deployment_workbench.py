@@ -952,6 +952,51 @@ def test_foreign_managed_dir_does_not_count_as_resume_checkpoint(workbench):
     assert checks and not checks[0]["ok"]
 
 
+def test_free_topology_compiles_and_generates_plan(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    free = {
+        **spec,
+        "mode": "free",
+        "cluster_name": "playground",
+        "template_id": "free",
+        "nodes": [
+            {"name": "pg1", "role": "primary", "port": 45440,
+             "data_dir": str(tmp_path / "pg1")},
+            {"name": "pg2", "role": "standby", "port": 45441,
+             "data_dir": str(tmp_path / "pg2")},
+            {"name": "pg3", "role": "standby", "port": 45442,
+             "data_dir": str(tmp_path / "pg3")},
+        ],
+    }
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**free), "free-env"
+    )
+    assert target == "streaming.playground"
+    cluster = config["streaming_clusters"]["playground"]
+    assert cluster["primary"] == "pg1"
+    assert [row["instance"] for row in cluster["standbys"]] == ["pg2", "pg3"]
+    draft, plan = create_plan(workbench, free)
+    assert plan["ready"], plan["checks"]
+    assert plan["action"] == "deployment.create"
+    assert len(plan["operations"]) == 3
+
+
+def test_free_topology_requires_exactly_one_primary(workbench, tmp_path):
+    _, service, spec, _ = workbench
+    for roles in (("standby", "standby"), ("primary", "primary")):
+        free = {
+            **spec,
+            "mode": "free",
+            "nodes": [
+                {"name": f"n{i}", "role": role, "port": 45450 + i,
+                 "data_dir": str(tmp_path / f"n{i}")}
+                for i, role in enumerate(roles)
+            ],
+        }
+        with pytest.raises(ValueError, match="主节点"):
+            compile_spec(service.settings, DeploymentSpec(**free), "free-env")
+
+
 def test_preload_library_file_must_exist(workbench):
     client, _, spec, _ = workbench
     (Path(spec["home"]) / "lib" / "fdd_mmr.so").unlink()

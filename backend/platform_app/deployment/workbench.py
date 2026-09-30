@@ -59,11 +59,6 @@ def templates(settings):
 
 
 def compile_spec(settings, spec, environment_id):
-    if not any(
-        row["product_id"] == spec.product_id and row["id"] == spec.template_id
-        for row in templates(settings)
-    ):
-        raise ValueError("产品部署模板不存在")
     if any(
         key in PROTECTED or not re.fullmatch(r"[a-zA-Z_]\w*(?:\.\w+)*", key)
         for key in spec.parameters
@@ -85,6 +80,15 @@ def compile_spec(settings, spec, environment_id):
         if not isinstance(config, dict) or not spec.target:
             raise ValueError("导入需要有效 pgcluster YAML 和目标")
         return config, spec.target, {}
+    if spec.mode == "free":
+        from .freeform import compile_freeform
+
+        return compile_freeform(spec)
+    if not any(
+        row["product_id"] == spec.product_id and row["id"] == spec.template_id
+        for row in templates(settings)
+    ):
+        raise ValueError("产品部署模板不存在")
     if not all((spec.home, spec.data_root, spec.license_file)):
         raise ValueError("请填写数据库安装目录、数据根目录及 License 文件")
     if Path(spec.data_root).is_relative_to(ROOT) or Path(spec.home).is_relative_to(
@@ -551,7 +555,9 @@ class Workbench:
             )
         else:
             plan["action"] = (
-                "deployment.create" if spec.mode == "new" else "deployment.health"
+                "deployment.create"
+                if spec.mode in {"new", "free"}
+                else "deployment.health"
             )
         if "operations" not in plan:
             plan["operations"] = [
@@ -561,7 +567,7 @@ class Workbench:
                     "port": node["port"],
                     "data_dir": node["data_dir"],
                     "operation": "初始化、启动并建立复制关系"
-                    if spec.mode == "new"
+                    if spec.mode in {"new", "free"}
                     else "接管登记并检查健康（不初始化）",
                 }
                 for node in facts["nodes"]

@@ -10,6 +10,7 @@ class NodeOverride(BaseModel):
     host: str = Field(default="", pattern=r"^$|^[a-zA-Z][a-zA-Z0-9_]*$", max_length=63)
     port: int = Field(ge=1024, le=65535)
     data_dir: str
+    role: Literal["primary", "standby"] = "standby"
 
     @field_validator("data_dir")
     @classmethod
@@ -58,7 +59,8 @@ class DeploymentSpec(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     product_id: str
     template_id: str
-    mode: Literal["new", "adopt", "import"] = "new"
+    mode: Literal["new", "adopt", "import", "free"] = "new"
+    cluster_name: str = Field(default="cluster", pattern=r"^[a-zA-Z][a-zA-Z0-9_]*$", max_length=63)
     host: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.:-]*$", max_length=253)
     hosts: list[HostResource] = Field(default_factory=list, max_length=16)
     home: str = ""

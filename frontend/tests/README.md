@@ -34,6 +34,8 @@ PLATFORM_URL=http://127.0.0.1:8766 node tests/license-management.mjs
 | 脚本 | 覆盖 |
 |---|---|
 | `browser-smoke.mjs` | 工作台加载、环境创建/选择、API 联动（`npm run test:browser`） |
+| `deployment-workbench.mjs` | 部署向导全流程：草稿/布局/计划/关联（需隔离 fixture 服务） |
+| `free-topo-check.mjs` | 自由拓扑编辑器：React Flow 画布、节点增删改、计划生成与 YAML（需隔离 fixture 服务） |
 | `license-management.mjs` | License 管理页：生成密钥/修改口令/删除版本按钮与指纹列 |
 | `scene-replay.mjs` | 场景画布回放：注入 scene.* 事件驱动拓扑/实体渲染 |
 | `scene-live.mjs` | 场景画布实时事件流（SSE 推送路径） |

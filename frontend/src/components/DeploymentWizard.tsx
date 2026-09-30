@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Alert, App, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal, Radio, Select, Space, Steps, Table, Tag, Typography } from 'antd';
 import { api, type Environment, type Task } from '../api';
+import FreeTopologyEditor from './FreeTopologyEditor';
 
 type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number };
 type HostResource = { name: string; address: string; ssh_user: string; ssh_port?: number | null; ssh_identity_file: string; ssh_connect_timeout: number; home: string };
-type Node = { name: string; host?: string; port: number; data_dir: string };
+type Node = { name: string; host?: string; port: number; data_dir: string; role?: 'primary' | 'standby' };
 type Spec = {
-  title: string; product_id: string; template_id: string; mode: 'new' | 'adopt' | 'import';
+  title: string; product_id: string; template_id: string; mode: 'new' | 'adopt' | 'import' | 'free';
+  cluster_name?: string;
   host: string; hosts: HostResource[]; home: string; data_root: string; license_file: string; base_port: number;
   nodes: Node[]; parameters: Record<string, unknown>; source_yaml: string; target: string;
 };
@@ -82,10 +84,15 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     const [product_id, template_id] = values.template_key.split(':');
     const parameters = JSON.parse(values.parameters_text || '{}') as Record<string, unknown>;
     if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('高级参数需要 JSON 对象');
-    const spec: Spec = { title: values.title, product_id, template_id, mode: values.mode,
+    const spec: Spec = { title: values.title, product_id, template_id: values.mode === 'free' ? 'free' : template_id,
+      mode: values.mode, cluster_name: 'cluster',
       host: values.host, hosts: values.mode === 'import' ? [] : hosts.filter((item) => item.name && item.address),
       home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
-      base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir }) => ({ name, host: hosts.find((item) => item.address === host)?.name || '', port, data_dir })),
+      base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir, role }) => ({
+        name,
+        host: values.mode === 'free' ? (host || '') : (hosts.find((item) => item.address === host)?.name || ''),
+        port, data_dir, role: role || 'standby',
+      })),
       source_yaml: values.source_yaml || '', target: values.target || '' };
     const saved = await api<Draft>(draft ? `/deployment/drafts/${draft.id}` : '/deployment/drafts', {
       method: draft ? 'PUT' : 'POST', body: JSON.stringify({ spec, expected_revision: draft?.revision || 0 }),
@@ -107,8 +114,11 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     if (step === 0) { await save(); setStep(1); }
     else if (step === 1) {
       const saved = await save();
-      const layout = await api<{ nodes: Node[]; target: string }>(`/deployment/drafts/${saved.id}/layout`, { method: 'POST' });
-      setNodes(layout.nodes); setStep(2);
+      if (saved.spec.mode !== 'free') {
+        const layout = await api<{ nodes: Node[]; target: string }>(`/deployment/drafts/${saved.id}/layout`, { method: 'POST' });
+        setNodes(layout.nodes);
+      }
+      setStep(2);
     } else if (step === 2) {
       const saved = await save();
       const generated = await api<Plan>(`/deployment/drafts/${saved.id}/plan`, { method: 'POST' });
@@ -148,7 +158,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         <Form.Item label="方案名称" name="title"><Input placeholder="例如：等保开发环境" /></Form.Item>
         <Form.Item label="部署模板" name="template_key"><Select disabled={Boolean(environment)} options={templates.map((item) => ({ value: `${item.product_id}:${item.id}`, label: `${item.product_title} · ${item.title}` }))}
           onChange={(key) => { const selected = templates.find((item) => `${item.product_id}:${item.id}` === key); form.setFieldValue('base_port', selected?.base_port); setNodes([]); }} /></Form.Item>
-        <Form.Item label="配置来源" name="mode"><Radio.Group options={[{ value: 'new', label: '新建实例' }, { value: 'adopt', label: '接管已有实例' }, { value: 'import', label: '导入部署 YAML' }]} onChange={() => setNodes([])} /></Form.Item>
+        <Form.Item label="配置来源" name="mode"><Radio.Group options={[{ value: 'new', label: '新建实例' }, { value: 'adopt', label: '接管已有实例' }, { value: 'import', label: '导入部署 YAML' }, { value: 'free', label: '自由拓扑' }]} onChange={() => setNodes([])} /></Form.Item>
         <Alert type="info" message={draft ? `稳定环境 ID：${draft.id}` : '环境 ID 会自动生成；名称修改不会改变测试、任务和报告的关联。'} />
       </div>
       <div style={{ display: step === 1 ? 'block' : 'none' }}>
@@ -197,6 +207,15 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         </>}
       </div>
       <div style={{ display: step === 2 ? 'block' : 'none' }}>
+        {mode === 'free' ? (
+          <FreeTopologyEditor
+            nodes={nodes.map((node) => ({ name: node.name, host: node.host || '', port: node.port, data_dir: node.data_dir, role: node.role || 'standby' }))}
+            hosts={hosts}
+            basePort={form.getFieldValue('base_port') || 15432}
+            dataRoot={form.getFieldValue('data_root') || ''}
+            onChange={(next) => setNodes(next)}
+          />
+        ) : <>
         <Alert type="info" message="固定回归模板保留节点名称与复制关系；可调整端口和数据目录。" style={{ marginBottom: 12 }} />
         <Table rowKey="name" pagination={false} size="small" scroll={{ x: 700 }} dataSource={nodes} columns={[
           { title: '节点', dataIndex: 'name' },
@@ -210,6 +229,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         ]} />
         <Collapse style={{ marginTop: 16 }} items={[{ key: 'parameters', label: '高级数据库参数', children:
           <Form.Item name="parameters_text" extra={'JSON 对象，例如 {"max_connections": 200}；结构参数由拓扑管理。'}><Input.TextArea rows={5} disabled={mode === 'import'} /></Form.Item> }]} />
+        </>}
       </div>
     </Form>
     {step === 3 && plan && <>
