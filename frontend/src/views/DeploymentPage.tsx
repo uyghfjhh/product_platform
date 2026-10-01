@@ -9,6 +9,7 @@ import type { TopologyData, TopologyNode } from '../platform/topology';
 import SharedDeploymentCanvas from '../components/DeploymentCanvas';
 import EnvironmentModal from '../components/EnvironmentModal';
 import DeploymentWizard from '../components/DeploymentWizard';
+import ExecutionTerminal from '../components/ExecutionTerminal';
 import { deploymentAdapter, deploymentFrontend } from '../products/deploymentRegistry';
 
 type Props = {
@@ -45,6 +46,7 @@ export default function DeploymentPage({
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardEnvironment, setWizardEnvironment] = useState<Environment | undefined>();
   const [envEditing, setEnvEditing] = useState<Environment | null>(null);
+  const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
   // adapter 工厂每次调用返回新对象——必须 memo，否则下方 effect 依赖每轮渲染都变，
@@ -106,7 +108,7 @@ export default function DeploymentPage({
     setLoading(true);
     try {
       const task = await operationRequest(environment.id, action.id, target, {}, action.changes_environment);
-      openTask(task.id);
+      setTerminalTaskId(task.id);
     } catch (error) {
       message.error((error as Error).message);
     } finally {
@@ -325,6 +327,18 @@ export default function DeploymentPage({
                 <dt>所属集群</dt><dd>{selectedNode.group || '未分组'}</dd>
                 <dt>节点角色</dt><dd>{selectedNode.role === 'primary' ? '主写入库 (Primary)' : '流复制从库 (Standby)'}</dd>
                 <dt>数据目录</dt><dd><code style={{ fontSize: 11 }}>{selectedNode.data_dir}</code></dd>
+                {selectedNode.extensions && selectedNode.extensions.length > 0 && (
+                  <>
+                    <dt>已加载扩展</dt>
+                    <dd>
+                      <Space size={4} wrap>
+                        {selectedNode.extensions.map((ext) => (
+                          <Tag key={ext} color="purple">{ext}</Tag>
+                        ))}
+                      </Space>
+                    </dd>
+                  </>
+                )}
               </dl>
             </div>
 
@@ -367,6 +381,8 @@ export default function DeploymentPage({
         )}
       </Drawer>
 
+      <ExecutionTerminal taskId={terminalTaskId} onInspect={openTask}
+        onFinished={() => void reload()} />
       <DeploymentWizard open={wizardOpen} environment={wizardEnvironment} onClose={() => setWizardOpen(false)}
         openTask={openTask} onSaved={async (id) => { await reload(); onSelectEnvironment?.(id); }} />
       <EnvironmentModal
