@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Select, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Popover, Select, Space, Tag, Typography } from 'antd';
 import { AimOutlined, CheckCircleFilled, CloseCircleFilled, LinkOutlined } from '@ant-design/icons';
 
 import { api, post, type Environment, type Product, type RegressionBinding } from '../platform/api';
+
+type NodeStatus = { running?: boolean | null; known?: boolean; message?: string };
+type ProbeResult =
+  | { kind: 'cluster'; online: number; total: number; nodes: Record<string, NodeStatus> }
+  | { kind: 'endpoint'; ok: boolean };
 
 /** 测试页就地绑定栏：展示/切换当前测试 profile 绑定的执行环境（§6.2）。 */
 export default function TestBindingBar({ product, profileId, environments, bindings, onChanged }: {
@@ -13,7 +18,7 @@ export default function TestBindingBar({ product, profileId, environments, bindi
   onChanged: () => Promise<void> | void;
 }) {
   const { message } = App.useApp();
-  const [connectivity, setConnectivity] = useState<'unknown' | 'checking' | 'ok' | 'fail'>('unknown');
+  const [probe, setProbe] = useState<'checking' | ProbeResult | null>(null);
 
   const profile = product?.test_profiles?.find((item) => item.id === profileId);
   const compatible = environments.filter((item) => {
@@ -27,20 +32,33 @@ export default function TestBindingBar({ product, profileId, environments, bindi
     && item.profile_id === (profileId || 'default'));
   const bound = compatible.find((item) => item.id === binding?.environment_id);
 
-  useEffect(() => { setConnectivity('unknown'); }, [binding?.environment_id]);
+  useEffect(() => { setProbe(null); }, [binding?.environment_id]);
 
-  async function probe() {
+  async function runProbe() {
     if (!bound) return;
-    setConnectivity('checking');
+    setProbe('checking');
     try {
-      const [error] = await post<[{ message?: string } | null, unknown]>(
-        `/environments/${encodeURIComponent(bound.id)}/studio`, {
-          procedure: 'query', query: { sql: 'SELECT 1', parameters: [] },
-        });
-      if (error) throw new Error(error.message || '连接失败');
-      setConnectivity('ok');
+      const nodes = await api<Record<string, NodeStatus>>(
+        `/environments/${encodeURIComponent(bound.id)}/topology/status`);
+      const entries = Object.values(nodes);
+      setProbe({
+        kind: 'cluster',
+        online: entries.filter((item) => item.running === true).length,
+        total: entries.length,
+        nodes,
+      });
     } catch {
-      setConnectivity('fail');
+      // 无部署拓扑的环境退化为单点连通性探测。
+      try {
+        const [error] = await post<[{ message?: string } | null, unknown]>(
+          `/environments/${encodeURIComponent(bound.id)}/studio`, {
+            procedure: 'query', query: { sql: 'SELECT 1', parameters: [] },
+          });
+        if (error) throw new Error(error.message || '连接失败');
+        setProbe({ kind: 'endpoint', ok: true });
+      } catch {
+        setProbe({ kind: 'endpoint', ok: false });
+      }
     }
   }
 
@@ -94,15 +112,44 @@ export default function TestBindingBar({ product, profileId, environments, bindi
           onChange={(id) => void rebind(id)}
           aria-label="切换绑定环境"
         />
-        {connectivity === 'ok' && (
-          <Tag icon={<CheckCircleFilled />} color="success">已连通</Tag>
+        {probe === 'checking' && <Tag color="processing">探测中</Tag>}
+        {probe !== null && probe !== 'checking' && probe.kind === 'endpoint' && (
+          <Tag icon={probe.ok ? <CheckCircleFilled /> : <CloseCircleFilled />}
+            color={probe.ok ? 'success' : 'error'}>
+            {probe.ok ? '接入点已连通' : '连接失败'}
+          </Tag>
         )}
-        {connectivity === 'fail' && (
-          <Tag icon={<CloseCircleFilled />} color="error">连接失败</Tag>
+        {probe !== null && probe !== 'checking' && probe.kind === 'cluster' && (
+          <Popover
+            placement="bottomLeft"
+            title="节点状态"
+            content={(
+              <div className="cluster-probe-nodes">
+                {Object.entries(probe.nodes).map(([name, item]) => (
+                  <div key={name} className="cluster-probe-node">
+                    {item.running === true
+                      ? <CheckCircleFilled className="probe-ok" />
+                      : <CloseCircleFilled className="probe-fail" />}
+                    <Typography.Text code>{name}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      {item.running === true ? '运行中' : item.running === false ? '已停止' : '未知'}
+                    </Typography.Text>
+                  </div>
+                ))}
+              </div>
+            )}
+          >
+            <Tag
+              icon={probe.online === probe.total ? <CheckCircleFilled /> : <CloseCircleFilled />}
+              color={probe.online === probe.total ? 'success' : 'warning'}
+              style={{ cursor: 'pointer' }}
+            >
+              集群 {probe.online}/{probe.total} 在线
+            </Tag>
+          </Popover>
         )}
-        {connectivity === 'checking' && <Tag color="processing">探测中</Tag>}
-        <Button size="small" type="text" icon={<LinkOutlined />} onClick={() => void probe()}>
-          探测连通性
+        <Button size="small" type="text" icon={<LinkOutlined />} onClick={() => void runProbe()}>
+          探测集群状态
         </Button>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {bound.host}:{bound.port}

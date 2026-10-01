@@ -1745,6 +1745,16 @@ button, input, textarea { font-family: inherit; }
 }
 .test-binding-icon { color: var(--accent, #38bdf8); }
 
+.cluster-probe-nodes { max-height: 320px; overflow: auto; min-width: 220px; }
+.cluster-probe-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.cluster-probe-node .probe-ok { color: var(--success, #52c41a); }
+.cluster-probe-node .probe-fail { color: var(--danger, #ff4d4f); }
+
 /* ===== 部署页 PSQL 片段（语义变量，不随主题撕裂） ===== */
 .psql-snippet-card {
   padding: 12px 14px;
