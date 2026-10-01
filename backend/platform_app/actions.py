@@ -162,6 +162,18 @@ def _check_database(store: FileStore, settings: Settings, task_id: str, environm
                          observation.kind, observation.details)
 
 
+def _poll_observer(observer, store: FileStore, task_id: str) -> None:
+    """Progress observation is advisory — a product observer bug must never
+    kill the command it watches."""
+    try:
+        observer.poll(store, task_id)
+    except Exception as exc:  # noqa: BLE001 - recorded for diagnosis, not fatal
+        try:
+            store.tasks.add_event(task_id, "observer.error", {"error": str(exc)})
+        except Exception:  # noqa: BLE001 - store may itself be unavailable
+            pass
+
+
 def _run_command(
     store: FileStore, task_id: str, command: list[str], cwd: Path,
     changes_environment: bool, observer=None,
@@ -244,11 +256,11 @@ def _run_command(
                 if process.poll() is not None and eof:
                     break
                 if observer:
-                    observer.poll(store, task_id)
+                    _poll_observer(observer, store, task_id)
                 if eof:
                     time.sleep(0.1)
             if observer:
-                observer.poll(store, task_id)
+                _poll_observer(observer, store, task_id)
             if buffered:
                 store.tasks.add_event(
                     task_id,

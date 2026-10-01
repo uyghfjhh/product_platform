@@ -178,6 +178,8 @@ button, input, textarea { font-family: inherit; }
 .action-row { margin-top: 19px; }
 .task-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid #e1e7e4; margin-bottom: 16px; }
 .task-summary h5 { margin: 0 0 3px !important; }
+.task-progress { margin: -6px 0 16px; }
+.task-progress .ant-typography { font-size: 12px; }
 .drawer-section { margin: 23px 0 0; padding-bottom: 22px; border-bottom: 1px solid #e1e7e4; }
 .drawer-section .section-heading { margin-bottom: 11px; }
 .flow-surface { height: 184px; border: 1px solid #e1e7e4; border-radius: 5px; background: #fbfcfb; }

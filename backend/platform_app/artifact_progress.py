@@ -34,6 +34,8 @@ class ArtifactProgressObserver:
             except (OSError, ValueError, AttributeError):
                 continue
             for index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
                 key = (case, index)
                 result = str(step.get("result") or step.get("status") or "RUNNING")
                 previous = self.seen.get(key)
@@ -65,7 +67,7 @@ class ArtifactProgressObserver:
                     )
                 if result == "PASS" and key not in self.observed_steps:
                     for entry in step.get("execution") or []:
-                        output = entry.get("text", "")
+                        output = entry.get("text", "") if isinstance(entry, dict) else str(entry)
                         facts = self.parse_observations(output)
                         for fact in facts:
                             entity_id = fact.details["entity_id"]

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, App, Button, Drawer, Empty, Select, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Drawer, Empty, Progress, Select, Space, Tag, Typography } from 'antd';
 import { CloseCircleOutlined, PauseOutlined, PlayCircleOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
 
 import { api, post, type Event, type Task, statusColor } from '../platform/api';
@@ -71,6 +71,17 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
 
   const current = events[position];
   const stepEvents = useMemo(() => events.filter((item) => item.event_type === 'step.started'), [events]);
+  // Suite progress: the regression CLI prints `[n/m] suite.case VERDICT t`s per
+  // case on stdout; each line arrives as a command.output event.
+  const caseProgress = useMemo(() => {
+    let done = 0, total = 0, label = '';
+    for (const event of events) {
+      if (event.event_type !== 'command.output') continue;
+      const match = /^\[(\d+)\/(\d+)\]\s+(\S+)/.exec(String(event.payload?.line || ''));
+      if (match) { done = Math.max(done, Number(match[1])); total = Number(match[2]); label = match[3]; }
+    }
+    return total ? { done, total, label } : null;
+  }, [events]);
   const selectedStep = current ? stepEvents.filter((item) => item.sequence <= current.sequence).length - 1 : -1;
 
   function seek(index: number) {
@@ -98,6 +109,14 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
           <Space><Tag color={statusColor(task.status)}>{task.status}</Tag>{!terminal.has(task.status) && <Button danger icon={<CloseCircleOutlined />} onClick={() => void cancel()}>终止操作</Button>}</Space>
         </div>
         {task.reason && <Alert type={task.status === 'SUCCEEDED' ? 'success' : 'warning'} message={task.reason} showIcon />}
+        {caseProgress && <div className="task-progress">
+          <Progress
+            percent={Math.round((caseProgress.done / caseProgress.total) * 100)}
+            status={!terminal.has(task.status) ? 'active' : (task.status === 'SUCCEEDED' ? 'success' : 'exception')}
+            format={() => `${caseProgress.done}/${caseProgress.total}`}
+          />
+          <Typography.Text type="secondary">最近完成: {caseProgress.label}</Typography.Text>
+        </div>}
         <section className="drawer-section">
           <div className="section-heading"><Typography.Title level={5}>产品状态回放</Typography.Title><Typography.Text type="secondary">{events.length ? `事件 ${position + 1} / ${events.length}` : '等待结构化事件'}</Typography.Text></div>
           <SceneReplay events={events} position={position} />
