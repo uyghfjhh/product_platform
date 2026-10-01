@@ -114,7 +114,8 @@ def test_product_case_runs_via_platform_cli(tmp_path):
     env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(root / "backend"), str(root)))}
     process = subprocess.run(
         [sys.executable, "-m", "platform_regress.cli", "--product-dir", str(package),
-         "--output-dir", str(output), "--state-dir", str(tmp_path / "state"), "demo.query"],
+         "--output-dir", str(output), "--state-dir", str(tmp_path / "state"),
+         "--result-json", "demo.query"],
         cwd=root, env=env, capture_output=True, text=True, timeout=20, check=False,
     )
     assert process.returncode == 0, process.stdout + process.stderr
@@ -398,7 +399,6 @@ def test_fixture_cleanup_runs_when_case_fails(tmp_path, monkeypatch):
 
 def test_platform_process_and_tcp_protocol_lifecycle(tmp_path):
     import socket
-    import time
 
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))

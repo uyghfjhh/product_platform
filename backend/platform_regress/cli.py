@@ -33,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="HTML 报告标题")
     parser.add_argument("--suite-name", default="regression",
                         help="JUnit testsuites 的 name 属性")
+    parser.add_argument("--result-json", action="store_true",
+                        help="每条用例结束后在 stdout 追加一行 JSON verdict（默认关闭，"
+                             "机器消费请用此开关；人类阅读默认只看进度行）")
     args = parser.parse_args(argv)
     product_dir = args.product_dir.resolve()
     module_path = product_dir / "cases.py"
@@ -244,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
                     }, ensure_ascii=False) + "\n")
             except OSError:
                 pass
-        print(json.dumps(result.to_dict(), ensure_ascii=False), flush=True)
+        if args.result_json:
+            print(json.dumps(result.to_dict(), ensure_ascii=False), flush=True)
         if result.verdict == "CANCELLED":
             break
     cleanup_sessions()
