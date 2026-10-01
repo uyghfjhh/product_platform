@@ -5,8 +5,8 @@ import importlib.util
 from fastapi import APIRouter, FastAPI
 
 from .config import Settings
-from .product_catalog import discover_products
 from .filestore import FileStore
+from .product_catalog import discover_products
 
 
 def register_product_routes(app: FastAPI, settings: Settings, store: FileStore) -> None:

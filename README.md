@@ -1,125 +1,64 @@
-# 公司产品公共管理平台 (product_platform)
+# 公司产品公共管理平台
 
-公司产品公共管理平台是统一面向公司各数据库与中间件产品的综合管理与自动化验证中枢。平台深度融合 `fbasecman_regress_v2` 全量自动化测试套件,采用 `pgcluster` 引擎统一实现底层 14 节点双 MMR 高可用集群的拓扑编排与生命周期管理。
+面向数据库产品的部署、回归验证、报告、License 与数据库管理工作台。公共服务和 SDK 位于 backend，产品知识集中在 products；数据库管理使用统一 Studio。
 
-**北极星**:一个产品接入零成本(适配器包、核心零修改)、功能覆盖测试到报告全链条、每条结论都有证据支撑的公司级产品平台。
-
-## 文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [docs/design.md](docs/design.md) | v3 目标架构:平台公共部署/回归/License 内核、单目录产品包、数据与事件契约、实施路线 |
-| [docs/progress.md](docs/progress.md) | 当前代码进度、旧方案历史记录与工作区约束;旧 P1–P8 不再是实施路线 |
-| [docs/platform-v2-capabilities.md](docs/platform-v2-capabilities.md) | v2 公共能力、产品调用迁移、行为变化与验收边界 |
-| [backend/platform_regress/SDK.md](backend/platform_regress/SDK.md) | 回归 SDK v2 公开接口、生命周期、SQL 会话与产品迁移 |
-| [products/demo/README.md](products/demo/README.md) | 最小产品接入样例:manifest、Provider、SDK 用例和前端注册 |
-
-## 核心特性
-
-1. **多环境图形化编排(pgcluster 引擎)**:自动规划主从端口、数据目录与复制关系;一键创建/启动/停止/重启/状态/清理/体检/恢复集群;自动初始化角色认证、库表视图、MMR 拓扑与 `test_context.yaml`。
-2. **自动化测试与多环境绑定**:全局切换"当前产品"与"绑定环境";支持单用例、整套件、失败项快速重跑;导出标准 JUnit XML 与 HTML 报告。
-3. **Web 任务链主入口**:`web.sh` Web 控制台默认 8080,后台守护运行;回归目标(单用例/套件/`failed`/`all`)统一经平台 `RegressionEngine` 执行,产物与判定由平台落库。产品 `cli/run.sh` 为平台用例执行的薄壳(等价 `platform_regress.cli`,自动注入环境上下文)。
-4. **License 签发**:Python 重写的生成/下载/密钥管理,兼容既有产品格式,无后台申请队列。
-5. **AI 失败诊断**:证据溯源式诊断,引用不存在的证据即拒绝;AI 不修改确定性判定。
-
-## 快速开始
+## 运行
 
 ```bash
-# Web 控制台(默认 http://<IP>:8080)
-./web.sh setup      # 首次:初始化虚拟环境并安装依赖
-./web.sh build      # 编译前端静态资源产物 (生成 frontend/dist)
-./web.sh start      # 启动(可带参数:./web.sh start 9000 0.0.0.0)
-./web.sh status | logs | restart | stop
-
-# 回归测试:Web 控制台操作(推荐)或 REST API
-#   POST /api/v1/operations  {"environment_id":"cman-mmr","action":"tests.fbasecman",
-#                            "target":"all|failed|<suite>|<suite.case>","acknowledge_change":true}
-# 任务进程统一调用平台引擎,例如:
-.venv/bin/python -m platform_regress.cli \
-  --product-dir products/fbasecman --output-dir <输出目录> \
-  --context-json '<环境上下文 JSON>' [target|--suite <套件>|failed]
-
-# fbasecman 命令行(对齐旧 ./run.sh 用法;环境自动解析回归绑定)
-cd products/fbasecman
-./cli/run.sh run ha_commands                    # 套件
-./cli/run.sh run ha_commands.xxx                # 单条
-./cli/run.sh run failed|all [-e <环境>] [--junit [P]] [--html [P]]
-./cli/run.sh show [suite]                       # 列用例目录
-./cli/run.sh env status|start|stop|restart|heal|clean|setup  # 转平台 deployment.*
-./cli/run.sh doctor                             # 环境体检(deployment.doctor)
-./cli/run.sh clean [--output] [--prune-logs]    # 清产物
-./cli/run.sh outout clean | web | test
-./cli/stable.sh show                            # 常稳命令
+./web.sh setup
+./web.sh build
+./web.sh start                 # 默认 8080
+./web.sh status
+./web.sh logs
+./web.sh stop
 ```
 
-## 平台使用要点
+依赖只声明在 pyproject.toml，uv.lock 固定解析版本；安装执行 uv sync --frozen --extra dev。前端构建同步生成产品注册和 API 类型。
 
-- **查看测试报告**：等保、多活及其他产品可在用例行点击“查看报告”，浏览执行步骤、预期与实际结果、失败原因和原始报告，并下载原文；绑定环境后可导出 HTML／JUnit。fbasecman 使用专属拓扑报告。旧结果没有步骤文件时仍展示归档结论。
-
-- **环境登记**:选择产品,填写环境 ID、主机、端口、数据库与用户;部署另填 pgcluster YAML 路径与目标(如 `mmr.fbasecman_regress`)。
-- **生成方案**:部署页生成 `data/profiles/<环境>/pgcluster.yaml` + `regress.override.yaml`,只写本地文件并校验;`.pgcluster-managed` 标记是清理与实例管理边界。
-- **测试夹具**:部署后"准备测试夹具"创建测试库、角色、多活组与 `test_context.yaml`(会修改数据库,仅在专用测试环境执行);旧代码在隔离进程内运行,平台不导入旧框架 `framework` 包。
-- **License**:密钥库默认在 `data/license/keys`(`v1.N` 目录,厂商信息在同级 `config.json`);`PRODUCT_PLATFORM_LICENSE_KEYS`/`PRODUCT_PLATFORM_LICENSE_VENDOR` 可覆盖,迁移期可把旧 `fd_licenser` 密钥目录整体指入或拷入。签发为 Python 实现(Ed25519/Argon2id/XChaCha20),格式与签名由平台自验证,不再调用旧 C 校验器;自动测试只用临时密钥。
-- **API 与数据**:接口文档见服务 `/docs`,前缀 `/api/v1`;任务日志在 `data/platform/operations/`,用例报告与证据在 `output/fbasecman/<环境>/output/runs/`。元数据已全量落 `FileStore` 文件存储,备份即文件级拷贝;SQLite 已彻底废除。
-- **数据分层**:`data/` 是控制面状态（环境/任务/绑定/结论/诊断/profile,不能乱删）;`output/` 是回归产物耗材区（`regression/` 平台结果、`fbasecman/` vendored 证据,可整棵删除重跑）;`PRODUCT_PLATFORM_OUTPUT_DIR` 可整体换路径。
-
-## 目录结构
+## 目录职责
 
 ```text
-product_platform/
-├── backend/platform_app/          # 平台服务(FastAPI + FileStore 文件存储 + Huey 文件队列)
-│   ├── api/                        #   HTTP API 包(schemas + meta/licenses/environments/operations/results 五域路由)
-│   ├── actions.py                  #   任务执行器:环境锁/子进程/取消/事件/结果发布
-│   ├── providers.py                #   产品提供者分发(待全部迁入适配器)
-│   ├── filestore.py                #   文件元数据存储(环境/任务/事件/结果,原子写 + flock)
-│   ├── queue.py + cli.py           #   FileHuey 队列;启动入口(API + consumer)
-│   ├── config.py + catalog.py      #   全局配置;产品目录
-│   ├── license.py                  #   License 生成与密钥管理(Python 重写)
-│   ├── diagnostics.py              #   AI 失败诊断(证据捆绑 + 引用防幻觉校验)
-│   ├── database.py + topology.py + scene.py   # SQL 查询;拓扑驱动分发(驱动见 pgcluster_topology.py);场景动画事件
-│   └── product_catalog.py          # 产品 manifest 发现与契约校验
-├── frontend/src/                   # React 19 + TS + AntD 前端
-│   ├── views/                      #   部署/测试(多活·等保·fbasecman)/License 页面
-│   ├── components/                 #   TaskDrawer/LogViewer/DeploymentCanvas 等
-│   └── platform/                 #   公共外壳/API/报告/拓扑类型
-├── products/                       # 每个产品一个代码目录
-│   ├── fbase-database/             # FBase 适配、CLI、cases.json 声明式用例目录
-│   ├── fbasecman/                  # fbasecman 适配、CLI、用例、frontend/ 和 regression/
-│   └── demo/                       # 无数据库依赖的产品接入样例
-├── tests/                          # 平台自身测试(340+ 项 pytest)
-├── data/                           # 控制面状态：环境/任务/绑定/结果/诊断/profile（不可随意删除）
-│   ├── platform/                   # FileHuey 队列、锁、操作/Web 日志
-│   ├── environments/ + profiles/   # 环境记录与生成的部署方案
-│   └── results/ + diagnoses/       # 结论与 AI 诊断记录
-├── output/                         # 回归产物耗材区（可整棵删除重跑）
-│   ├── regression/<env>/           # 平台结果/last_failed/history
-│   └── fbasecman/<env>/output/     # vendored 逐用例证据 + junit/report.html
-├── docs/                           # design.md(设计文档)+ progress.md(进度)
-├── web.sh                          # Web 控制台管理(默认 8080)
-└── pyproject.toml + uv.lock         # Python 工程(uv 管理)
+backend/platform_app/       公共服务、应用服务、文件控制面与任务执行
+backend/platform_regress/   产品无关回归 SDK
+frontend/                  公共界面与浏览器验收
+products/<产品>/           产品声明、模板、领域用例与前端扩展
+cli/                       平台 CLI 和验证入口
+tests/                     公共服务和 SDK 测试
+docs/                      当前设计、SDK 契约与实施状态
+data/                      持久控制面，必须备份
+  environments/            环境登记
+  profiles/<环境>/         部署配置与测试夹具上下文
+  resources/<产品>/<环境>/  外部资源回收账本
+  regression/<产品>/<环境>/ 失败重跑记录、执行历史、稳定性状态
+  tasks/                   任务事实和分段事件
+  deployment-*/            草稿、不可变计划、已审阅申请
+runtime/                   文件队列、PID、进程锁，停服务后才能清理
+logs/                      Web 和按任务 ID 保存的执行日志
+output/<产品>/<环境>/runs/<执行ID>/
+  run.json                 本次执行身份
+  cases/<用例目标>/         结果、步骤、报告及证据
+  suite-result.json        本次聚合
+  report.html + junit.xml   导出报告
 ```
 
-## 开发与构建
+源码目录不保存运行产物；output 不保存连接凭据、失败重跑状态或资源归属。清理报告不会丢失资源回收账本。日志、锁、队列与事实事件采用不同的保留规则；运行中不能删除锁文件。
+
+默认根目录为项目下 data、runtime、logs、output，分别可通过 PRODUCT_PLATFORM_DATA_DIR、PRODUCT_PLATFORM_RUNTIME_DIR、PRODUCT_PLATFORM_LOGS_DIR、PRODUCT_PLATFORM_OUTPUT_DIR 配置。目标实例 PGDATA 属于数据库主机，不属于这些耗材目录。
+
+## 验证
 
 ```bash
-./cli/check.sh quick     # 日常反馈：七项 review 回归 + SDK 公共能力/存储/执行器
-./cli/check.sh full      # 完整 pytest（包含 License、产品接入与子进程路径）
+./cli/check.sh quick
+./cli/check.sh full
 (cd frontend && npm run build)
+git diff --check
 ```
 
-全量验证 = `./cli/check.sh full` + 前端构建 + `git diff --check`。quick 是明确的针对性子集，不替代发布前完整验收；直接运行 `pytest tests/` 仍执行全部测试。
+## 接入与边界
 
-- 脚本向下兼容探测虚拟环境与 python3.12→3.8;业务夹具用系统 `psql` 管道,避免驱动冲突。
-- 前端改动需在 `frontend/` 执行 `npm run build`,产物输出 `frontend/dist/` 由 FastAPI 静态托管。
-- 新增依赖按 [设计文档](docs/design.md) 的实施阶段安装，不引入浮动版本。
+- [设计](docs/design.md)：公共能力、产品边界和任务协议。
+- [SDK](backend/platform_regress/SDK.md)：公开类型、生命周期和证据。
+- [Demo](products/demo/README.md)：最小产品接入示例。
+- [当前实施状态](docs/progress.md)。
 
-## 会话工作规则(AI/开发必读)
-
-1. 工作树有大量未提交修改与未跟踪产物;**禁止 `git reset`、批量清理、删除 core/锁文件**;只编辑明确涉及的文件,编辑前先核对当前内容。
-2. **目标产品代码归 `products/<product_id>/`**;平台核心不得新增产品分支。旧回归工程已归入对应产品的 `regression/`，不再保留顶层 `regress/` 或平台产品适配器目录；目标协议见 [docs/design.md](docs/design.md)。
-3. AI 不修改确定性测试判定;报告解析不从展示文本猜测结论。
-4. **用例编写准则（重要）**：新用例必须用所在套件现有的领域动词编写（如 `ops.check`、`ops.psql` 四元组、`console_step`/`console_wait`、`assert_console_table`、`ops.summary`），不得回退"裸命令+手工断言+手工 add_step"的旧写法；改动既有用例时才顺手清理其周边的旧式写法，**不做全量重写**——复杂分支、并发与故障注入保持显式步骤，不为"声明式"抽象而牺牲可调试性。
-5. 回归测试、数据库集群部署和 License 通用能力归平台；迁移期可隔离调用旧资产，但新实现不继续复制旧框架。部署统一数据库集群引擎，不回退旧 `env setup/start/stop/heal`。
-6. `http://192.168.0.12:8081` 仅为视觉参考,禁止 iframe 嵌入或依赖其进程;平台本体在 8080。
-7. 可能有**并行会话**同时修改本仓库;编辑前重新读文件,以当前内容为准。
-8. 每完成一个阶段:更新 `docs/progress.md`,跑全量验证;文档主张必须与代码事实核对。
+不保留旧目录映射、旧 CLI 别名或报告镜像。读取判定只使用结构化事实，不从展示文本推断成功；AI 不改变确定性判定。编辑前核对工作区已有改动，不批量重置仓库，不删除实际数据库目录。

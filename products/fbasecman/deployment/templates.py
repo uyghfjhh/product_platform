@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from .profile import _merge, build_profile, evidence_root
+from .profile import _merge, build_profile
 
 
 def templates(settings):
@@ -171,7 +171,6 @@ def import_files(settings, facts, target, environment_id=None):
         for index, port in enumerate(standbys[:3], 1):
             ports[f"{group}_standby{index}"] = port
     installation = facts["installations"][nodes["test_mmr1"]["installation"]]
-    output_root = evidence_root(settings, environment_id) / "output"
     regression = {
         "database": {
             "enable_citus": "citus" in extensions,
@@ -182,8 +181,10 @@ def import_files(settings, facts, target, environment_id=None):
             "ports": ports,
         },
         "framework": {
-            "output_dir": str(output_root),
-            "environment_output_dir": str(output_root / "env"),
+            "output_dir": str(settings.artifact_dir("fbasecman", environment_id)),
+            "runtime_dir": str(settings.runtime_dir / "products" / "fbasecman" / environment_id),
+            "state_dir": str(settings.regression_state_dir("fbasecman", environment_id)),
+            "environment_output_dir": str(settings.profile_dir(environment_id) / "fixture"),
         },
     }
     merged = deepcopy(base)

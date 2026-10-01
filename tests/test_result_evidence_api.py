@@ -17,7 +17,7 @@ def test_archived_result_evidence_is_readable_without_product_code(tmp_path):
         "host": "127.0.0.1", "port": 5432,
     }).raise_for_status()
     target = "mac.audit.log_access_restrictions"
-    output = settings.output_dir / "regression" / "lab" / target
+    output = settings.artifact_dir("fbase-database", "lab") / "runs" / "test-run" / "cases" / target
     evidence = output / "artifacts" / "execution" / "report.txt"
     evidence.parent.mkdir(parents=True)
     evidence.write_text("original verdict\n", encoding="utf-8")
@@ -26,7 +26,7 @@ def test_archived_result_evidence_is_readable_without_product_code(tmp_path):
         "target": target, "execution_id": "execution", "verdict": "FAIL",
         "evidence": [reference],
     }), encoding="utf-8")
-    app.state.store.put_result("fbase-database", "lab", target, "default", "FAIL",
+    app.state.store.results.put_result("fbase-database", "lab", target, "default", "FAIL",
                                "old failure", str(output))
 
     route = f"/api/v1/environments/lab/results/{target}/evidence"
@@ -54,7 +54,7 @@ def test_result_evidence_rejects_external_artifact_directory(tmp_path):
     (outside / "result.json").write_text(json.dumps({
         "target": target, "evidence": ["secret.txt"],
     }), encoding="utf-8")
-    app.state.store.put_result("fbase-database", "lab", target, "default", "PASS",
+    app.state.store.results.put_result("fbase-database", "lab", target, "default", "PASS",
                                "", str(outside))
     response = client.get(f"/api/v1/environments/lab/results/{target}/evidence")
     assert response.status_code == 404
@@ -69,7 +69,7 @@ def report_setup(tmp_path, target="mac.audit.log_access_restrictions"):
         "host": "127.0.0.1", "port": 5432,
     }).raise_for_status()
     # Suite invocation paths must work as well as flat single-case directories.
-    base = settings.output_dir / "regression" / "lab" / "mac" / target
+    base = settings.artifact_dir("fbase-database", "lab") / "runs" / "test-run" / "cases" / "mac" / target
     base.mkdir(parents=True)
     payload = {"schema_version": "1.0", "target": target, "execution_id": "run",
                "verdict": "FAIL", "reason": "assertion failed", "evidence": [],
@@ -137,7 +137,7 @@ def test_report_and_result_list_select_same_latest_cli_run(tmp_path):
     payload = json.loads((base / "result.json").read_text())
     payload["verdict"] = "PASS"
     (old / "result.json").write_text(json.dumps(payload))
-    store.put_result("fbase-database", "lab", target, "default", "PASS", "", str(old))
+    store.results.put_result("fbase-database", "lab", target, "default", "PASS", "", str(old))
     os.utime(base / "result.json", (time.time() + 1, time.time() + 1))
     result = client.get("/api/v1/environments/lab/results").json()[0]
     assert result["status"] == "FAIL"

@@ -1,7 +1,6 @@
 """JUnit XML report generator for fbasecman_regress_v2 test suites."""
 
 import json
-import os
 import re
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -105,7 +104,7 @@ def generate_junit_xml(
                 )
                 err_el.text = c.get("details") or c.get("message") or ""
             elif status in ("SKIPPED", "UNTESTED"):
-                skip_el = ET.SubElement(
+                ET.SubElement(
                     tc_el,
                     "skipped",
                     {

@@ -21,13 +21,15 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 from platform_app.config import load_settings  # noqa: E402
 from platform_app.filestore import FileStore  # noqa: E402
+from platform_app.local_execution import run_local_operation  # noqa: E402
+from platform_app.operations import OperationRequest  # noqa: E402
 from platform_app.product_catalog import discover_products  # noqa: E402
 from platform_app.providers import command_for, provider_for  # noqa: E402
 
-TEST_ACTIONS = {
-    "fbasecman": "tests.fbasecman",
-    "fbase-database": "tests.fbase",
-}
+
+def _test_action(settings, product_id):
+    manifest = discover_products(settings.products_root).get(product_id)
+    return next((action.id for action in manifest.actions if action.capability == "tests"), None) if manifest else None
 
 
 def _products(settings):
@@ -47,34 +49,34 @@ def _resolve_product(settings, store, target: str,
                      env_id: str | None, product_id: str | None) -> tuple[str, dict]:
     """按 --env/--product/bindings.yaml 选定产品与环境。"""
     if env_id:
-        environment = store.get_environment(env_id)
+        environment = store.environments.get_environment(env_id)
         if environment is None:
             raise SystemExit(f"环境不存在: {env_id}")
         return environment["product_id"], environment
     if product_id:
         candidates = [product_id]
     elif target in {"all", "failed"}:
-        candidates = [pid for pid in _products(settings) if pid in TEST_ACTIONS]
+        candidates = [pid for pid in _products(settings) if _test_action(settings, pid)]
     else:
         candidates = [
             pid for pid in _products(settings)
-            if pid in TEST_ACTIONS and target in _catalog_targets(settings, pid)
+            if _test_action(settings, pid) and target in _catalog_targets(settings, pid)
         ]
         if not candidates:
-            candidates = [pid for pid in _products(settings) if pid in TEST_ACTIONS]
+            candidates = [pid for pid in _products(settings) if _test_action(settings, pid)]
     bound = [
         pid for pid in candidates
-        if any(b["product_id"] == pid for b in store.list_regression_bindings())
+        if any(b["product_id"] == pid for b in store.bindings.list_regression_bindings())
     ]
     if len(bound) > 1:
         # 多产品歧义：优先选中绑定环境当前可连通的产品
         reachable = [
             pid for pid in bound
             if any(
-                (env := store.get_environment(b["environment_id"]))
+                (env := store.environments.get_environment(b["environment_id"]))
                 and env.get("host") and env.get("port")
                 and _tcp_check(env["host"], env["port"], timeout=1.0)
-                for b in store.list_regression_bindings()
+                for b in store.bindings.list_regression_bindings()
                 if b["product_id"] == pid
             )
         ]
@@ -87,9 +89,9 @@ def _resolve_product(settings, store, target: str,
         raise SystemExit("没有已绑定环境的产品可执行 %s，请先在 Web 或 "
                          "platform_app cli 中建立绑定" % target)
     product = bound[0]
-    bindings = [b for b in store.list_regression_bindings()
+    bindings = [b for b in store.bindings.list_regression_bindings()
                 if b["product_id"] == product]
-    environment = store.get_environment(bindings[0]["environment_id"])
+    environment = store.environments.get_environment(bindings[0]["environment_id"])
     if environment is None:
         raise SystemExit("绑定指向的环境已不存在: %s" % bindings[0]["environment_id"])
     return product, environment
@@ -110,12 +112,12 @@ def _spec_output_dir(command: list[str]) -> Path | None:
 
 def cmd_run(args) -> int:
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     product, environment = _resolve_product(
         settings, store, args.target, args.env, args.product)
     profile = args.profile
     if profile is None:
-        bindings = [b for b in store.list_regression_bindings()
+        bindings = [b for b in store.bindings.list_regression_bindings()
                     if b["product_id"] == product
                     and b["environment_id"] == environment["id"]]
         profile = bindings[0]["profile_id"] if bindings else "default"
@@ -128,20 +130,19 @@ def cmd_run(args) -> int:
         args.watch = True
         settings = load_settings()
         return _watch_loop(settings, environment, args) or code
-    action = TEST_ACTIONS[product]
+    action = _test_action(settings, product)
     spec = command_for(settings, environment, action, args.target, parameters)
-    command = list(spec.command)
-    output_dir = _spec_output_dir(command)
+    output_dir = _spec_output_dir(spec.command)
+    parameters.update(export_reports=True, stream_output=True)
+    # The profile selects the same bound test topology as the HTTP submission.
+    parameters.setdefault("cluster", profile)
+    print(f"[run] product={product} env={environment['id']} target={args.target}", flush=True)
+    task = run_local_operation(settings, store, OperationRequest(
+        environment_id=environment["id"], action=action, target=args.target,
+        parameters=parameters, acknowledge_change=True))
     if output_dir is not None:
-        # 统一在输出目录产出自包含报告，结束后打印绝对路径。
-        command += ["--html", "report.html", "--junit", "junit.xml",
-                    "--report-title", f"{product} 回归报告"]
-    env = dict(os.environ)
-    print(f"[run] product={product} env={environment['id']} "
-          f"target={args.target}", flush=True)
-    print(f"[run] {' '.join(command)}", flush=True)
-    process = subprocess.run(command, cwd=spec.cwd, env=env)
-    if output_dir is not None:
+        runs = list((output_dir / "runs").glob("*"))
+        output_dir = max(runs, key=lambda path: path.stat().st_mtime) if runs else output_dir
         _print_report_paths(output_dir)
         suite_result = output_dir / "suite-result.json"
         if suite_result.is_file():
@@ -149,7 +150,8 @@ def cmd_run(args) -> int:
             print("[run] verdicts: " + " ".join(
                 f"{key}={value}" for key, value in sorted(counts.items())
                 if value), flush=True)
-    return process.returncode
+    print(f"[task] {task['id']} {task['status']}: {task.get('reason') or ''}")
+    return 0 if task["status"] == "SUCCEEDED" else 1
 
 
 def _watch_fingerprint(settings, environment) -> dict[str, float]:
@@ -157,7 +159,7 @@ def _watch_fingerprint(settings, environment) -> dict[str, float]:
     watched = [settings.product_regress_root(environment["product_id"])]
     env_yaml = settings.data_dir / "environments" / f"{environment['id']}.yaml"
     watched.append(env_yaml)
-    profile_dir = (settings.environment_dir / "profiles" / environment["id"])
+    profile_dir = (settings.profiles_dir / environment["id"])
     if profile_dir.is_dir():
         watched.append(profile_dir)
     fingerprint = {}
@@ -203,7 +205,7 @@ def _watch_loop(settings, environment, args) -> int:
 
 def cmd_show(args) -> int:
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     product, environment = _resolve_product(
         settings, store, args.target, args.env, args.product)
     provider = provider_for(settings, product)
@@ -215,10 +217,10 @@ def cmd_show(args) -> int:
         raise SystemExit(f"目录中没有目标: {args.target}")
     for case in matched:
         print(json.dumps(case, ensure_ascii=False))
-    result = store.get_result(product, environment["id"], args.target)
+    result = store.results.get_result(product, environment["id"], args.target)
     if result:
         print(json.dumps({"latest_result": result}, ensure_ascii=False, indent=2))
-    evidence = (settings.output_dir / "regression" / environment["id"]
+    evidence = (settings.artifact_dir(product, environment["id"])
                 / args.target)
     if evidence.is_dir():
         print(f"[evidence] {evidence}")
@@ -235,7 +237,7 @@ def _tcp_check(host: str, port: int, timeout: float = 2.0) -> bool:
 
 def cmd_doctor(args) -> int:
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     failures = 0
 
     def report(ok: bool, label: str, detail: str = ""):
@@ -257,10 +259,10 @@ def cmd_doctor(args) -> int:
                    f"{len(discovered)} 条用例")
         else:
             report(root.is_dir(), f"{product_id} 回归资源", str(root))
-    bindings = store.list_regression_bindings()
+    bindings = store.bindings.list_regression_bindings()
     report(bool(bindings), "回归绑定", f"{len(bindings)} 条")
     for binding in bindings:
-        env = store.get_environment(binding["environment_id"])
+        env = store.environments.get_environment(binding["environment_id"])
         label = f"{binding['product_id']}:{binding['profile_id']} -> {binding['environment_id']}"
         if env is None:
             report(False, label, "环境记录缺失")
@@ -272,7 +274,7 @@ def cmd_doctor(args) -> int:
         if env.get("host") and env.get("port"):
             report(_tcp_check(env["host"], env["port"]),
                    f"{env['id']} 连通性", f"{env['host']}:{env['port']}")
-    for task in store.unfinished_tasks():
+    for task in store.tasks.unfinished_tasks():
         report(False, "未结束任务",
                f"{task['id']} {task['action']} {task['target']}")
     return 1 if failures else 0
@@ -281,7 +283,7 @@ def cmd_doctor(args) -> int:
 def cmd_pack(args) -> int:
     """导出故障分析包（bug bundle）：环境/结果/证据/报告/历史打成 zip。"""
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     _, environment = _resolve_product(
         settings, store, args.target or "all", args.env, args.product)
     from platform_app import bundle
@@ -298,7 +300,7 @@ def cmd_pack(args) -> int:
 def cmd_reset(args) -> int:
     """重置环境：清理残留进程并重启集群，等待健康检查通过。"""
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     _, environment = _resolve_product(
         settings, store, "all", args.env, args.product)
     target = args.node or environment.get("deployment_target")
@@ -310,6 +312,7 @@ def cmd_reset(args) -> int:
     # are removed, so live clusters are never touched.
     try:
         import pwd
+
         from platform_regress.ledger import sweep_orphaned_sysv_shm
         removed = sweep_orphaned_sysv_shm(
             owner=pwd.getpwuid(os.geteuid()).pw_name)
@@ -326,7 +329,7 @@ def cmd_reset(args) -> int:
 def cmd_clean(args) -> int:
     """清理运行产物：回归输出目录、失败标记、遗留锁文件。"""
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     removed = []
 
     def remove_tree(path: Path):
@@ -335,14 +338,14 @@ def cmd_clean(args) -> int:
             shutil.rmtree(path)
             removed.append(str(path))
 
-    envs = ([store.get_environment(args.env)] if args.env
-            else store.list_environments())
+    envs = ([store.environments.get_environment(args.env)] if args.env
+            else store.environments.list_environments())
     for env in envs:
         if env is None:
             continue
-        remove_tree(settings.output_dir / "regression" / env["id"])
+        remove_tree(settings.artifact_dir(env["product_id"], env["id"]))
         runs = (settings.output_dir / env["product_id"] / env["id"]
-                / "output" / "runs")
+                / "runs")
         remove_tree(runs)
         remove_tree(runs.parent / "last_failed.json")
     locks = settings.data_dir / "locks"

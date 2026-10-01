@@ -15,7 +15,9 @@ import json
 from pathlib import Path
 
 from platform_regress.reporting.html import generate_html_report
-from platform_regress.reporting.junit import collect_results_from_runs, generate_junit_xml
+from platform_regress.reporting.junit import (
+    generate_junit_xml,
+)
 
 _STATUS_MAP = {
     "PASS": "PASS",
@@ -53,46 +55,11 @@ def row_from_case_result(result):
 
 
 def collect_results_from_run(output_dir):
-    """Collect report rows for one CLI run output directory.
-
-    Prefers the platform fact model (``suite-result.json`` for multi-target
-    runs, ``result.json`` for single-target runs and per-target child
-    directories); when those are absent (e.g. interrupted runs), falls back
-    to scanning the per-case artifact tree ``runs/<suite>/<case>/summary.json``
-    that ``CaseRuntime.write_summary`` still produces.
-    """
-    output_dir = Path(output_dir)
-    suite_file = output_dir / "suite-result.json"
-    if suite_file.is_file():
-        try:
-            data = json.loads(suite_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-        rows = [row_from_case_result(item) for item in data.get("results") or []]
-        if rows:
-            return rows
+    """Collect authoritative CaseResult files from a canonical run directory."""
     rows = []
-    direct = output_dir / "result.json"
-    if direct.is_file():
-        try:
-            rows.append(row_from_case_result(
-                json.loads(direct.read_text(encoding="utf-8"))))
-        except (OSError, ValueError):
-            pass
-    for child in sorted(output_dir.iterdir()):
-        if not child.is_dir() or child.name.startswith((".", "_")):
-            continue
-        result_file = child / "result.json"
-        if not result_file.is_file():
-            continue
-        try:
-            rows.append(row_from_case_result(
-                json.loads(result_file.read_text(encoding="utf-8"))))
-        except (OSError, ValueError):
-            continue
-    if rows:
-        return rows
-    return collect_results_from_runs(output_dir / "runs")
+    for path in sorted((Path(output_dir) / "cases").glob("*/result.json")):
+        rows.append(row_from_case_result(json.loads(path.read_text())))
+    return rows
 
 
 def rows_from_results(results):

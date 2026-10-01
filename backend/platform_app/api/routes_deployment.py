@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from ..deployment.models import DiscoveryInput, DraftInput
 from ..deployment.probes import probe
 from ..deployment.workbench import Workbench, templates
-from .schemas import OperationInput
+from ..operations import OperationError
+from .schemas import public_task
 
 
 class ImportInput(BaseModel):
@@ -28,6 +29,8 @@ def register(app, settings, store):
     def call(function, *args, **kwargs):
         try:
             return function(*args, **kwargs)
+        except OperationError:
+            raise
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
@@ -101,12 +104,11 @@ def register(app, settings, store):
     def plan(plan_id: str):
         row = call(service.plan, plan_id)
         attempts = []
-        for task in store.list_tasks(500):
-            try:
-                snapshot = json.loads(task["parameters"]).get("_deployment_snapshot")
-            except (KeyError, ValueError):
+        for request in store.deployments.deployment_requests():
+            if request["plan_id"] != plan_id or not request.get("task_id"):
                 continue
-            if snapshot and snapshot.get("plan_id") == plan_id:
+            task = store.tasks.get_task(request["task_id"])
+            if task:
                 attempts.append(
                     {
                         "task_id": task["id"],
@@ -136,40 +138,4 @@ def register(app, settings, store):
 
     @app.post("/api/v1/deployment/plans/{plan_id}/apply", status_code=202)
     def apply(plan_id: str, item: ApplyInput):
-        row = call(service.verify, plan_id)
-        if not row["action"]:
-            raise HTTPException(422, "该方案没有可自动执行的操作")
-        if row["action"] == "deployment.create" and not item.acknowledge_change:
-            raise HTTPException(422, "请确认此方案将初始化并部署新实例")
-        call(service.associate, plan_id)
-        # 同一计划可重放恢复：每次 apply 是独立尝试；仍在进行中的重复提交由
-        # associate 的活动任务检查拦截，已终结的尝试不阻塞恢复重放。
-        base_key = "deployment-plan:" + plan_id
-        prior = [
-            task
-            for task in store.list_tasks(500)
-            if (task.get("submission_key") or "").startswith(base_key)
-        ]
-        submission_key = (
-            base_key if not prior else f"{base_key}:attempt-{len(prior) + 1}"
-        )
-        try:
-            return app.state.start_operation(
-                OperationInput(
-                    environment_id=row["environment_id"],
-                    action=row["action"],
-                    target=row["target"],
-                    acknowledge_change=item.acknowledge_change,
-                    deployment_plan_id=plan_id,
-                    submission_key=submission_key,
-                )
-            )
-        except Exception as exc:
-            # 配置已关联但任务未入队：环境指向的是"已声明未执行"的意图态，
-            # 计划快照与重放机制不变——修复后重新 apply 即可继续。
-            raise HTTPException(
-                500,
-                "部署配置已关联到环境，但任务入队失败：%s。"
-                "环境当前指向该计划配置；修复后可重新执行部署（幂等，已受管节点将跳过）。"
-                % exc,
-            ) from exc
+        return public_task(call(app.state.deployments.apply, plan_id, item.acknowledge_change))

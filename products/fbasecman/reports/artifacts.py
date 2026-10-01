@@ -5,7 +5,6 @@ from pathlib import Path
 
 from platform_app.config import Settings
 
-from products.fbasecman.deployment.profile import evidence_root
 from products.fbasecman.observations import (
     parse_group_members,
     parse_group_routing,
@@ -21,18 +20,19 @@ TARGET = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 
 
 def report_root(settings: Settings, environment_id: str | None) -> Path:
-    if environment_id:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", environment_id):
-            raise ValueError("环境 ID 无效")
-        return evidence_root(settings, environment_id)
-    return settings.product_regress_root("fbasecman")
+    if not environment_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", environment_id):
+        raise ValueError("需要已登记的环境 ID")
+    return settings.artifact_dir("fbasecman", environment_id)
 
 
 def case_directory(settings: Settings, target: str, environment_id: str | None = None) -> Path:
     if not TARGET.fullmatch(target):
         raise ValueError("需要完整用例目标 suite.case")
-    suite, name = target.split(".", 1)
-    return report_root(settings, environment_id) / "output" / "runs" / suite / name
+    root = report_root(settings, environment_id)
+    candidates = [p for p in root.glob("runs/*/cases/" + target) if p.is_dir()]
+    if not candidates:
+        raise FileNotFoundError("当前环境没有该用例报告")
+    return max(candidates, key=lambda path: (path / "result.json").stat().st_mtime if (path / "result.json").is_file() else path.stat().st_mtime)
 
 
 def case_artifacts(settings: Settings, target: str, environment_id: str | None = None) -> dict:
@@ -42,29 +42,22 @@ def case_artifacts(settings: Settings, target: str, environment_id: str | None =
     if environment_id:
         config_dirs.insert(0, settings.data_dir / "profiles" / environment_id)
     return ArtifactRepository(directory).describe(target, parsed=lambda: parse_report(
-        target, report_root(settings, environment_id), config_dirs=config_dirs))
+        target, directory, config_dirs=config_dirs))
 
 
 def recent_case_statuses(settings: Settings, environment_id: str | None = None) -> dict[str, dict]:
-    root = report_root(settings, environment_id) / "output" / "runs"
-    from platform_regress.evidence.artifacts import scan_run_summaries
-    found = scan_run_summaries(root)
-    for report in root.glob("*/*/report.txt"):
-        target = report.parent.parent.name + "." + report.parent.name
-        if target in found:
-            continue
-        try:
-            head = report.read_text(encoding="utf-8", errors="replace")[:400]
-            match = re.search(r"(?m)^(?:结论|Status):\s*(PASS|FAIL|RUNNING)", head)
-            if match:
-                found[target] = {
-                    "status": match.group(1),
-                    "duration": "-",
-                    "has_report": True,
-                    "modified_at": report.stat().st_mtime,
-                }
-        except OSError:
-            continue
+    if not environment_id:
+        return {}
+    root = report_root(settings, environment_id)
+    import json
+    found = {}
+    for path in root.glob("runs/*/cases/*/result.json"):
+        payload = json.loads(path.read_text())
+        target = payload["target"]
+        mtime = path.stat().st_mtime
+        if target not in found or mtime > found[target]["modified_at"]:
+            found[target] = {"status": payload["verdict"], "duration": str(payload.get("duration_seconds", "-")),
+                             "has_report": (path.parent / "report.txt").is_file(), "modified_at": mtime}
     return found
 
 
@@ -73,7 +66,7 @@ class CaseProgressObserver:
     def __init__(self, settings, environment_id, target, started_at):
         from platform_app.artifact_progress import ArtifactProgressObserver
         self.observer = ArtifactProgressObserver(
-            report_root(settings, environment_id) / "output" / "runs",
+            report_root(settings, environment_id) / "runs",
             target, started_at, parse_observations=self.parse_observations)
 
     @staticmethod
@@ -108,11 +101,19 @@ def case_log(settings: Settings, target: str, filename: str, *,
 def export_source_report(settings: Settings, environment_id: str, format_name: str) -> str:
     if format_name not in {"junit", "html"}:
         raise ValueError("未知报告格式")
-    root = report_root(settings, environment_id) / "output" / "runs"
+    root = report_root(settings, environment_id) / "runs"
     if not root.is_dir():
         raise FileNotFoundError("当前环境尚无测试报告")
-    if format_name == "junit":
-        from platform_regress.reporting.junit import export_junit_from_runs
-        return export_junit_from_runs(root)
-    from platform_regress.reporting.html import export_html_from_runs
-    return export_html_from_runs(root)
+    import json
+
+    from platform_regress.reporting.export import export_html, export_junit
+    newest = {}
+    for path in root.glob("*/cases/*/result.json"):
+        item = json.loads(path.read_text())
+        target = item["target"]
+        if target not in newest or path.stat().st_mtime > newest[target][0]:
+            newest[target] = (path.stat().st_mtime, item)
+    if not newest:
+        raise FileNotFoundError("当前环境尚无测试报告")
+    rows = [item for _, item in newest.values()]
+    return export_junit(rows) if format_name == "junit" else export_html(rows)

@@ -43,7 +43,7 @@ class VerifyCluster(RegressionCase):
 用例对象可以顺序复用；其每次运行状态必须重置。context 不支持并发写入。
 
 `CaseEnvironment` 定义 `nodes`、`node_groups`、`node_aliases`、`users`、`user`、
-`product_id`、`environment_id`、`cluster`、`history_root` 等公共字段。
+`product_id`、`environment_id`、`cluster`、`state_root`、`ledger_root`、`runtime_root` 等公共字段。
 `NodeEndpoint` 定义 host/port 与可选 data_dir/role。产品额外字段由产品自己
 定义类型；平台不把产品二进制、配置模板或业务参数变成公共字段。
 
@@ -130,9 +130,9 @@ Runtime 实现 `CaseRuntimeProtocol` 的 enter/exit/finish/stop；不提供方�
 `teardown_before_finish` 声明是否在写报告前释放资源；诊断失败不能覆盖业务异常，
 但会记录 diagnostic_failed 事件。部分 setup 也清理，teardown 失败记录清理 ERROR。
 
-`ReportRuntime` 通过 `ReportSpec`、workspace、output_root 和 context_data 显式构造。
+`ReportRuntime` 通过 `ReportSpec`、workspace、case_dir、lock_dir 和 context_data 显式构造。
 它提供报告与 journal 基础能力，**不解析产品环境、不读取产品上下文文件、不自动
-猜测输出位置**。产品负责解析配置后注入。所有产物和套件锁位于指定 output_root。
+猜测输出位置**。产品负责解析配置后注入。产物位于 case_dir，套件锁位于 runtime 的 lock_dir。
 
 ## 公共入口与稳定性
 
@@ -185,3 +185,8 @@ EnvironmentRef/RegressionContext 与 runtime 双 executor 入口均已移除。
 命令的 input_text 通过受超时/取消控制的 communicate 同时写入和读取，不能假设
 输入写入已在 start_command 返回前完成；后台命令应配对 finish_command，且不直接
 读取其 stdout。未结束命令由用例清理回收。
+
+
+## 目录
+
+CLI 使用 --output-dir <产品环境产物根> --state-dir <持久状态根>，生成 runs/<执行ID>/cases/<目标>。失败重跑与 history.jsonl 写入 state-dir。应用层注入独立 ledger_root（data/resources）及 runtime_root（runtime/products）；外部资源操作不能将账本放入 output。

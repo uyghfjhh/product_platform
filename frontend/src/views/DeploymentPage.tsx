@@ -9,7 +9,6 @@ import type { TopologyData, TopologyNode } from '../platform/topology';
 import SharedDeploymentCanvas from '../components/DeploymentCanvas';
 import EnvironmentModal from '../components/EnvironmentModal';
 import DeploymentWizard from '../components/DeploymentWizard';
-import SqlWorkbenchDrawer from '../components/SqlWorkbenchDrawer';
 import { deploymentAdapter, deploymentFrontend } from '../products/deploymentRegistry';
 
 type Props = {
@@ -20,7 +19,7 @@ type Props = {
   onSelectEnvironment?: (id: string) => void;
   openTask: (taskId: string) => void;
   reload: () => Promise<void>;
-  onOpenDatabase?: (node?: TopologyNode) => void;
+  onOpenDatabase?: (node?: TopologyNode, view?: 'sql') => void;
 };
 
 type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean; defaults?: { data_root?: string; license_file?: string } };
@@ -42,7 +41,6 @@ export default function DeploymentPage({
   const [observed, setObserved] = useState<Record<string, { running: boolean | null; message: string }> | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
-  const [sqlNode, setSqlNode] = useState<TopologyNode | null>(null);
   const [envModalOpen, setEnvModalOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardEnvironment, setWizardEnvironment] = useState<Environment | undefined>();
@@ -117,7 +115,7 @@ export default function DeploymentPage({
   }
 
   function handleOpenSqlWorkbench(node: TopologyNode) {
-    setSqlNode(node);
+    onOpenDatabase?.(node, 'sql');
   }
 
   function copyText(text: string) {
@@ -127,6 +125,13 @@ export default function DeploymentPage({
 
   return (
     <div className={productAdapter.workspaceClass}>
+      {environment?.desired_deployment_plan_id && environment.deployment_status !== 'APPLIED' && (
+        <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+          message="配置已关联，尚未完成部署验收"
+          description={environment.deployment_status === 'PENDING'
+            ? '部署申请等待执行或验收；当前配置不代表实例已完成部署。'
+            : '上次部署未通过验收，请查看任务结果并重新检查方案。'} />
+      )}
       {/* Multi-Environment Switcher Bar */}
       <div
           className="deployment-env-switcher-card"
@@ -362,11 +367,6 @@ export default function DeploymentPage({
         )}
       </Drawer>
 
-      <SqlWorkbenchDrawer
-        environment={environment}
-        node={sqlNode}
-        onClose={() => setSqlNode(null)}
-      />
       <DeploymentWizard open={wizardOpen} environment={wizardEnvironment} onClose={() => setWizardOpen(false)}
         openTask={openTask} onSaved={async (id) => { await reload(); onSelectEnvironment?.(id); }} />
       <EnvironmentModal

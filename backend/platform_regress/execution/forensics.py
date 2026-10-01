@@ -1,12 +1,10 @@
 """Crash forensics, core dump discovery, and GDB backtrace extraction for C proxies."""
 
-import glob
 import os
 import re
 import shutil
 import signal
 import subprocess
-import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 

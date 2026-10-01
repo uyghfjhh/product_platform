@@ -28,7 +28,9 @@ class CaseEnvironment(TypedDict, total=False):
     product_id: str
     environment_id: str
     cluster: str
-    history_root: str | Path
+    state_root: str | Path
+    ledger_root: str | Path
+    runtime_root: str | Path
 
 
 def validate_environment(value: dict[str, Any] | None) -> CaseEnvironment:

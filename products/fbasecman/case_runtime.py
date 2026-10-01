@@ -59,7 +59,7 @@ class FbasecmanCaseRuntime(ReportRuntime):
         spec = ReportSpec(case.name, case.target, case.summary,
                           getattr(case, "suite_name", None) or getattr(case, "suite_id", "suite"),
                           tuple(getattr(case, "source_sections", ())))
-        super().__init__(Path(root), spec, output_root=env.output_dir,
+        super().__init__(Path(root), spec, case_dir=env.output_dir, lock_dir=env.runtime_dir,
                          context_data=context_data or {})
         self.proxy_log = self.run_root / "fbasecman.log"
         self._port_seed = 1

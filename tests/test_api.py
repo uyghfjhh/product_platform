@@ -146,16 +146,16 @@ def test_environment_delete_waits_for_tasks_and_removes_their_events(tmp_path):
         "id": "lab", "product_id": "fbasecman", "title": "隔离环境",
         "host": "127.0.0.1", "port": 5432,
     }).raise_for_status()
-    task = app.state.store.create_task("lab", "database.check", "lab", {}, None)
-    app.state.store.add_event(task["id"], "observation.captured", {"state": "ready"})
+    task = app.state.store.tasks.create_task("lab", "database.check", "lab", {}, None)
+    app.state.store.tasks.add_event(task["id"], "observation.captured", {"state": "ready"})
 
     assert client.delete("/api/v1/environments/lab").status_code == 409
-    assert app.state.store.get_environment("lab") is not None
+    assert app.state.store.environments.get_environment("lab") is not None
 
-    app.state.store.transition_task(task["id"], ("QUEUED",), "SUCCEEDED")
+    app.state.store.tasks.transition_task(task["id"], ("QUEUED",), "SUCCEEDED")
     assert client.delete("/api/v1/environments/lab").status_code == 200
-    assert app.state.store.get_task(task["id"]) is None
-    assert app.state.store.list_events(task["id"]) == []
+    assert app.state.store.tasks.get_task(task["id"]) is None
+    assert app.state.store.tasks.list_events(task["id"]) == []
 
 
 def test_product_test_action_requires_matching_environment(tmp_path):
@@ -178,34 +178,34 @@ def test_test_result_is_published_before_task_finishes(tmp_path, monkeypatch):
 
     config = settings_for(tmp_path)
     store = create_app(config, enqueuer=lambda task_id: None).state.store
-    store.put_environment({
+    store.environments.put_environment({
         "id": "database", "product_id": "fbase-database", "title": "数据库环境",
         "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
         "database_user": "postgres", "deployment_config": None,
         "deployment_target": None,
     })
-    task = store.create_task("database", "tests.fbase", "mmr", {"cluster": "mmr"}, None)
+    task = store.tasks.create_task("database", "tests.fbase", "mmr", {"cluster": "mmr"}, None)
     monkeypatch.setattr(actions, "command_for_task", lambda *_: (["true"], tmp_path))
     monkeypatch.setattr(actions, "_run_command", lambda *_args, **_kwargs: (True, "执行完成"))
     # Successful task publication requires attributable result facts.
-    output = config.output_dir / "regression" / "database" / "mmr"
+    output = config.artifact_dir("fbase-database", "database") / "runs" / "test-run" / "cases" / "mmr.installation.runtime_prerequisites"
     output.mkdir(parents=True)
     import json
-    (output / "suite-result.json").write_text(json.dumps({"results": [{
+    (output / "result.json").write_text(json.dumps({
         "target": "mmr.installation.runtime_prerequisites", "operation_id": task["id"],
         "verdict": "PASS", "reason": None,
-    }]}))
-    original_put_result = store.put_result
+    }))
+    original_put_result = store.results.put_result
     statuses_at_publication = []
 
     def record_publication(*args):
-        statuses_at_publication.append(store.get_task(task["id"])["status"])
+        statuses_at_publication.append(store.tasks.get_task(task["id"])["status"])
         original_put_result(*args)
 
-    monkeypatch.setattr(store, "put_result", record_publication)
+    monkeypatch.setattr(store.results, "put_result", record_publication)
     run_task(store, config, task["id"])
 
     assert statuses_at_publication == ["RUNNING"]
-    assert store.get_task(task["id"])["status"] == "SUCCEEDED"
-    assert store.list_results("database")[0]["status"] == "PASS"
-    assert store.list_events(task["id"])[-1]["event_type"] == "operation.finished"
+    assert store.tasks.get_task(task["id"])["status"] == "SUCCEEDED"
+    assert store.results.list_results("database")[0]["status"] == "PASS"
+    assert store.tasks.list_events(task["id"])[-1]["event_type"] == "operation.finished"

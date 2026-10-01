@@ -24,6 +24,7 @@ from pathlib import Path
 from platform_app.config import load_settings
 from platform_app.filestore import FileStore
 from platform_regress.cli import main as run_platform_case
+
 from products.fbasecman.deployment.profile import evidence_root, profile_paths
 
 PRODUCT = "fbasecman"
@@ -39,11 +40,11 @@ def _resolve_environment_id(store, requested):
     if env_var:
         return env_var
     bound = {row["environment_id"]
-             for row in store.list_regression_bindings()
+             for row in store.bindings.list_regression_bindings()
              if row["product_id"] == PRODUCT}
     if len(bound) == 1:
         return bound.pop()
-    candidates = [row["id"] for row in store.list_environments()
+    candidates = [row["id"] for row in store.environments.list_environments()
                   if row.get("product_id") == PRODUCT]
     if len(candidates) == 1:
         return candidates[0]
@@ -54,7 +55,7 @@ def _resolve_environment_id(store, requested):
 
 def _environment(store, requested):
     environment_id = _resolve_environment_id(store, requested)
-    environment = store.get_environment(environment_id)
+    environment = store.environments.get_environment(environment_id)
     if environment is None:
         raise SystemExit("环境 %s 不存在" % environment_id)
     return environment
@@ -76,20 +77,22 @@ def _suites():
 
 def _deployment_action(environment_id, action_id, dry_run=False):
     """经平台 command_for 同步执行 deployment.* 命令（与 Web/队列同一实现）。"""
-    from platform_app.actions import environment_lock
+    from platform_app.local_execution import run_local_operation
+    from platform_app.operations import OperationRequest
     from platform_app.providers import command_for
 
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     environment = _environment(store, environment_id)
     target = environment.get("deployment_target") or ""
     spec = command_for(settings, environment, action_id, target, {})
     if dry_run:
         print(" ".join(str(part) for part in spec.command))
         return 0
-    with environment_lock(settings.platform_dir, environment["id"]):
-        return subprocess.run([str(part) for part in spec.command],
-                              cwd=str(spec.cwd)).returncode
+    task = run_local_operation(settings, store, OperationRequest(
+        environment_id=environment["id"], action=action_id, target=target,
+        acknowledge_change=True, parameters={"stream_output": True}))
+    return 0 if task["status"] == "SUCCEEDED" else 1
 
 
 def _env(args) -> int:
@@ -115,7 +118,7 @@ def _clean(args, output_only=False) -> int:
     from products.fbasecman.cli.clean import run_clean
 
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     environment = _environment(store, args.environment)
     result = run_clean(
         settings.product_regress_root(PRODUCT),
@@ -157,7 +160,7 @@ def _run(args, configs) -> int:
         print("Use './run.sh show <suite>' to list cases.")
         return 0
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
     environment = _environment(store, args.environment)
     environment_id = environment["id"]
     _, override = profile_paths(settings, environment_id)
@@ -165,8 +168,10 @@ def _run(args, configs) -> int:
         "regress_source": str(settings.product_regress_root(PRODUCT)),
         "regress_override": str(override),
         "regress_report_root": str(evidence_root(settings, environment_id)),
-        "history_root": str(settings.output_dir / "regression" / environment_id),
+        "state_root": str(settings.artifact_dir(PRODUCT, environment_id)),
     }
+    context.update(ledger_root=str(settings.resource_dir(PRODUCT, environment_id)),
+                   runtime_root=str(settings.runtime_dir / "products" / PRODUCT / environment_id))
     if configs:
         context["regress_extra_configs"] = [
             str(Path(path).resolve()) for path in configs]
@@ -174,7 +179,7 @@ def _run(args, configs) -> int:
     context.update(suite_case_context(settings, environment))
 
     target = "failed" if args.target == "faild" else args.target
-    output_base = settings.output_dir / "regression" / environment_id
+    output_base = settings.artifact_dir(PRODUCT, environment_id)
     report_root = evidence_root(settings, environment_id)
     argv = ["--product-dir", str(PRODUCT_DIR),
             "--context-json", json.dumps(context)]
@@ -184,10 +189,11 @@ def _run(args, configs) -> int:
             argv.append("failed")
     elif "." in target:
         argv += ["--output-dir",
-                 str(args.output_dir or output_base / target), target]
+                 str(args.output_dir or output_base), target]
     else:
-        argv += ["--output-dir", str(args.output_dir or output_base / target),
+        argv += ["--output-dir", str(args.output_dir or output_base),
                  "--suite", target]
+    argv += ["--state-dir", str(settings.regression_state_dir(PRODUCT, environment_id))]
     for node in args.node:
         argv += ["--node", node]
     if args.user:
@@ -199,7 +205,9 @@ def _run(args, configs) -> int:
         path = Path(value)
         argv += [flag, str(path if path.is_absolute() else report_root / path)]
     print("环境 %s；产物 → %s" % (environment_id, argv[argv.index("--output-dir") + 1]))
-    return run_platform_case(argv)
+    from platform_app.resources import resource_lock
+    with resource_lock(settings, environment):
+        return run_platform_case(argv)
 
 
 def _show(args) -> int:

@@ -111,24 +111,13 @@ class CaseContext:
 
     @property
     def ledger(self):
-        """Persistent registry of engine-owned external resources.
-
-        Entries outlive the process so a force-killed run's postmasters,
-        listeners and shared memory can be reclaimed by the next run on the
-        same environment.  The ledger root is per-environment:
-        ``<output_dir>/../ledgers``.
-        """
+        """Resource ownership must survive artifact cleanup and process crashes."""
         if self._ledger is None:
             from .ledger import ResourceLedger
-
-            # Prefer the environment-level root recorded by the CLI so suite
-            # runs and single-case runs share one ledger; fall back to the
-            # case output directory's parent when it is not injected.
-            root = (
-                self.environment.get("history_root")
-                or Path(self.output_dir).resolve().parent
-            )
-            self._ledger = ResourceLedger(Path(root) / "ledgers")
+            root = self.environment.get("ledger_root")
+            if root is None:
+                raise Blocked("外部资源操作需要持久化 ledger_root")
+            self._ledger = ResourceLedger(Path(root))
         return self._ledger
 
     def defer_cleanup(self, action: Callable[[], None], *, priority: int = 0) -> None:

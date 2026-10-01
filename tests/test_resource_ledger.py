@@ -70,8 +70,9 @@ def test_cancellation_still_interrupts_work_phase(tmp_path):
 
 def test_context_ledger_is_per_environment(tmp_path):
     context = _context(tmp_path, cancelled=lambda: False)
+    context.environment["ledger_root"] = str(tmp_path / "state" / "resources")
     ledger = context.ledger
-    assert ledger.root == (tmp_path / "out").resolve().parent / "ledgers"
+    assert ledger.root == tmp_path / "state" / "resources"
     assert context.ledger is ledger
 
 

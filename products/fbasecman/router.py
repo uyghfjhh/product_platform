@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from platform_app.topology import configured_topology
-from products.fbasecman.deployment.profile import evidence_root, profile_paths, save_profile
+from products.fbasecman.deployment.profile import profile_paths, save_profile
 from products.fbasecman.reports.artifacts import (
     case_artifacts,
     case_log,
@@ -36,7 +36,7 @@ def create_router(settings, store) -> APIRouter:
     router = APIRouter()
 
     def product_environment(environment_id: str) -> dict:
-        environment = store.get_environment(environment_id)
+        environment = store.environments.get_environment(environment_id)
         if environment is None or environment["product_id"] != "fbasecman":
             raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
         return environment
@@ -45,7 +45,7 @@ def create_router(settings, store) -> APIRouter:
     def profile(environment_id: str):
         product_environment(environment_id)
         deployment, override = profile_paths(settings, environment_id)
-        context = evidence_root(settings, environment_id) / "output" / "env" / "test_context.yaml"
+        context = settings.profile_dir(environment_id) / "fixture" / "test_context.yaml"
         defaults = ProfileInput()
         return {
             "generated": deployment.is_file() and override.is_file(),
@@ -72,7 +72,7 @@ def create_router(settings, store) -> APIRouter:
             configured_topology(settings, candidate)
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        store.update_environment(environment_id, candidate)
+        store.environments.update_environment(environment_id, candidate)
         return profile(environment_id)
 
     @router.get("/api/v1/fbasecman/cases/{target}/artifacts")
@@ -81,6 +81,8 @@ def create_router(settings, store) -> APIRouter:
             product_environment(environment_id)
         try:
             return case_artifacts(settings, target, environment_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -90,6 +92,8 @@ def create_router(settings, store) -> APIRouter:
             product_environment(environment_id)
         try:
             return recent_case_statuses(settings, environment_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -123,6 +127,8 @@ def create_router(settings, store) -> APIRouter:
                 settings, target, filename, environment_id=environment_id,
                 last_lines=last_lines,
             )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except FileNotFoundError as exc:

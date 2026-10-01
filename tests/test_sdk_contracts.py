@@ -448,7 +448,7 @@ def test_report_runtime_preserves_baseline_report_bytes(tmp_path):
         "sample", "demo.sample", "Report preservation", "demo", ("section 1",)
     )
     runtime = sdk.ReportRuntime(
-        tmp_path, spec, output_root=tmp_path / "output", context_data={}
+        tmp_path, spec, case_dir=tmp_path / "case", lock_dir=tmp_path / "runtime", context_data={}
     )
     runtime.started_at = datetime(2026, 9, 30, 10, 0, 0)
     runtime.finished_at = datetime(2026, 9, 30, 10, 0, 1)

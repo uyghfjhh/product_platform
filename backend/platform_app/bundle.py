@@ -36,31 +36,14 @@ def _add_tree(archive: zipfile.ZipFile, root: Path, prefix: str,
         archive.write(path, prefix + "/" + str(path.relative_to(root)))
 
 
-def _run_dirs(evidence_root: Path, target: str) -> list[Path]:
-    """Locate ``runs/<suite>/<case>/`` directories matching a dotted target."""
-    suite, _, case = target.partition(".")
-    runs = evidence_root / "output" / "runs"
-    if not suite or not case or not runs.is_dir():
-        return []
-    matched = [directory for directory in (runs / suite).glob(case + "*")
-               if directory.is_dir()] if (runs / suite).is_dir() else []
-    return matched
-
-
 def build_bug_bundle(settings, store, environment_id: str,
                      target: str | None = None) -> bytes:
     """Build the bug-bundle zip payload for one environment (and target)."""
-    environment = store.get_environment(environment_id)
+    environment = store.environments.get_environment(environment_id)
     if environment is None:
         raise KeyError(environment_id)
-    regression_root = settings.output_dir / "regression" / environment_id
-    product_id = environment.get("product_id")
-    evidence_root = (
-        settings.output_dir / product_id / environment_id
-        if isinstance(product_id, str) and product_id
-        else settings.output_dir / "_none" / environment_id
-    )
-    profile_root = settings.environment_dir / "profiles" / environment_id
+    regression_root = settings.artifact_dir(environment["product_id"], environment_id)
+    profile_root = settings.profiles_dir / environment_id
     buffer = io.BytesIO()
     state = {"bytes": 0, "skipped": 0}
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -77,30 +60,22 @@ def build_bug_bundle(settings, store, environment_id: str,
         if environment_file.is_file():
             archive.write(environment_file, "environment.yaml")
         _add_tree(archive, profile_root, "profile", state)
-        if target:
-            _add_tree(archive, regression_root / target,
-                      "regression/" + target, state)
-            for index, directory in enumerate(
-                    _run_dirs(evidence_root, target)):
-                _add_tree(archive, directory,
-                          "runs/%d" % index, state)
-        else:
-            _add_tree(archive, regression_root, "regression", state)
-            _add_tree(archive, evidence_root / "output" / "runs",
-                      "runs", state)
-        for name in ("report.html", "junit.xml", "last_failed.json",
-                     "history.jsonl", "suite-result.json"):
-            candidate = regression_root / name
-            if candidate.is_file():
-                archive.write(candidate, "reports/" + name)
-        history = _read_history(regression_root / "history.jsonl", target)
+        for directory in regression_root.glob("runs/*/cases/*"):
+            if target and directory.name != target:
+                continue
+            _add_tree(archive, directory, "runs/" + directory.parent.parent.name + "/cases/" + directory.name, state)
+        for directory in regression_root.glob("runs/*"):
+            for name in ("report.html", "junit.xml", "suite-result.json", "run.json"):
+                candidate = directory / name
+                if candidate.is_file():
+                    archive.write(candidate, "runs/" + directory.name + "/" + name)
+        history = _read_history(settings.regression_state_dir(environment["product_id"], environment_id) / "history.jsonl", target)
         if history:
-            archive.writestr("reports/case-history.json",
-                             json.dumps(history, ensure_ascii=False, indent=2))
+            archive.writestr("reports/case-history.json", json.dumps(history, ensure_ascii=False, indent=2))
         # Recent task events involving this environment help diagnose queue
         # or lifecycle issues without access to the live store.
         events = []
-        for task in store.list_tasks()[-50:]:
+        for task in store.tasks.list_tasks()[-50:]:
             if task.get("environment_id") != environment_id:
                 continue
             events.append({"task": task.get("id"),
@@ -143,8 +118,12 @@ def _read_history(path: Path, target: str | None) -> dict:
 def flaky_summary(settings, environment_id: str,
                   window: int = 5) -> dict:
     """Recent per-target verdict history for flaky detection (last N runs)."""
-    path = (settings.output_dir / "regression" / environment_id
-            / "history.jsonl")
+    import yaml
+    record = settings.environment_records_dir / (environment_id + ".yaml")
+    environment = yaml.safe_load(record.read_text()) if record.is_file() else None
+    if not environment:
+        return {}
+    path = settings.regression_state_dir(environment["product_id"], environment_id) / "history.jsonl"
     stats = _read_history(path, None)
     summary = {}
     for case, record in stats.items():

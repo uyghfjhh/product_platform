@@ -52,9 +52,9 @@ class StableConfig(object):
             validate=True, profile="stable",
         )
         self.values = _merge(DEFAULTS, self.runtime_config.config.get("stable", {}))
-        self.output_dir = self.runtime_config.output_dir / "stable"
-        self.runtime_dir = self.output_dir / "runtime"
-        self.state_file = self.runtime_dir / "state.json"
+        self.output_dir = self.runtime_config.output_dir
+        self.runtime_dir = self.runtime_config.runtime_dir / "stable"
+        self.state_file = Path(self.runtime_config.config["framework"]["state_dir"]) / "stable.json"
 
     def duration(self, kind):
         return parse_duration(self.values["%s_duration" % kind])

@@ -65,6 +65,10 @@ class RegressionConfig(object):
         return self.root_dir / self.config["framework"]["output_dir"]
 
     @property
+    def runtime_dir(self):
+        return Path(self.config["framework"]["runtime_dir"])
+
+    @property
     def env_output_dir(self):
         configured = self.config.get("framework", {}).get("environment_output_dir")
         if configured:

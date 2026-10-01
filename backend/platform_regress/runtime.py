@@ -2,7 +2,7 @@
 
 ``ReportRuntime`` 承担每个回归用例的公共生命周期：
 
-- 运行目录 ``output/runs/<suite>/<case>`` 的重建与 workdir/logs 布局；
+- 调用方指定 case_dir 的工作目录与 workdir/logs 布局；
 - ``StepJournal`` 崩溃安全的步骤落盘 + ``record_step``/``evidence_step`` 记录；
 - ``run_command`` 命令执行包装（自动记账 + 非零失败）；
 - ``write_report`` 报告骨架：步骤时间线合并、FAIL 诊断钩子、
@@ -13,7 +13,6 @@
 例如 ``products.fbasecman.case_runtime.FbasecmanCaseRuntime``。
 """
 
-import shutil
 import re
 import time
 from dataclasses import dataclass
@@ -63,23 +62,20 @@ class ReportRuntime:
     failure_class = CaseFailure
     lock_name = None
 
-    def __init__(self, workspace: Path, spec: ReportSpec, *, output_root: Path,
+    def __init__(self, workspace: Path, spec: ReportSpec, *, case_dir: Path, lock_dir: Path,
                  context_data: dict):
         self.root = Path(workspace)
         self.report_spec = spec
         self.context = dict(context_data)
         self.suite_id = spec.suite_id
-        output_root = Path(output_root)
-        self._lock_dir = output_root
-        self.run_root = output_root / "runs" / self.suite_id / spec.name
-        if not self.run_root.resolve().is_relative_to((output_root / "runs").resolve()):
-            raise ValueError("report directory escapes output root")
-        if self.run_root.exists():
-            shutil.rmtree(str(self.run_root))
+        self._lock_dir = Path(lock_dir)
+        self.run_root = Path(case_dir)
+        if any(path.is_symlink() for path in (self.run_root, *self.run_root.parents)):
+            raise ValueError("report directory cannot traverse symlinks")
         self.workdir = self.run_root / "workdir"
         self.logs_dir = self.run_root / "logs"
-        self.workdir.mkdir(parents=True)
-        self.logs_dir.mkdir(parents=True)
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.started_at = datetime.now()
         self.finished_at = None
         self._step_order = 0

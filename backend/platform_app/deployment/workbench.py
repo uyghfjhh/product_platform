@@ -13,7 +13,7 @@ import yaml
 
 from ..config import ROOT
 from ..filestore import ConflictError
-from ..providers import provider_for
+from ..providers import provider_extensions
 from .models import DeploymentSpec
 from .probes import probe
 
@@ -48,12 +48,11 @@ def templates(settings):
 
     output = []
     for product in discover_products(settings.products_root).values():
-        provider = provider_for(settings, product.id)
-        method = getattr(provider, "deployment_templates", None)
-        if method:
+        deployment = provider_extensions(settings, product.id).deployment
+        if deployment:
             output.extend(
                 {**item, "product_id": product.id, "product_title": product.title}
-                for item in method(settings)
+                for item in deployment.deployment_templates(settings)
             )
     return output
 
@@ -95,7 +94,10 @@ def compile_spec(settings, spec, environment_id):
         ROOT / "data"
     ):
         raise ValueError("数据库安装和数据目录不能位于平台控制面目录")
-    return provider_for(settings, spec.product_id).compile_deployment(
+    deployment = provider_extensions(settings, spec.product_id).deployment
+    if deployment is None:
+        raise ValueError("产品没有部署模板能力")
+    return deployment.compile_deployment(
         settings, spec, environment_id
     )
 
@@ -486,11 +488,11 @@ class Workbench:
     def save(self, key, spec, expected_revision):
         key = key or "env-" + uuid.uuid4().hex[:16]
         path = self.draft_path(key)
-        with self.store._locked():
+        with self.store.backend.transaction():
             old = self.draft(key) if path.is_file() else None
             if (old["revision"] if old else 0) != expected_revision:
                 raise ConflictError("草稿已变化，请重新加载")
-            if self.store.get_environment(key) and old is None:
+            if self.store.environments.get_environment(key) and old is None:
                 # Existing environment adoption starts only through import_current.
                 raise ConflictError("已有环境需要先导入当前配置")
             row = {
@@ -499,11 +501,11 @@ class Workbench:
                 "revision": expected_revision + 1,
                 "spec": spec.model_dump(),
             }
-            self.store._atomic_write(path, json.dumps(row, ensure_ascii=False))
+            self.store.backend.write_control_file(path, json.dumps(row, ensure_ascii=False))
         return row
 
     def import_current(self, key):
-        environment = self.store.get_environment(key)
+        environment = self.store.environments.get_environment(key)
         if not environment:
             raise KeyError("当前环境不存在")
         existing = self.draft_path(key)
@@ -548,10 +550,10 @@ class Workbench:
             "revision": 1,
             "spec": spec.model_dump(),
         }
-        with self.store._locked():
+        with self.store.backend.transaction():
             if existing.is_file():
                 return self.draft(key)
-            self.store._atomic_write(existing, json.dumps(row, ensure_ascii=False))
+            self.store.backend.write_control_file(existing, json.dumps(row, ensure_ascii=False))
         return row
 
     def layout(self, key):
@@ -590,7 +592,7 @@ class Workbench:
                 raise ValueError("产品辅助文件名称无效")
             (directory / name).write_text(text)
         # Imports preserve compatible auxiliary files rather than discarding test mappings.
-        previous = self.store.get_environment(key)
+        previous = self.store.environments.get_environment(key)
         if spec.mode == "import" and previous and previous.get("deployment_config"):
             previous_dir = Path(previous["deployment_config"]).parent
             for name in ("regress.override.yaml", "regress.yaml"):
@@ -598,11 +600,7 @@ class Workbench:
                 if old.is_file():
                     (directory / name).write_text(old.read_text())
         if spec.mode == "import":
-            import_files = getattr(
-                provider_for(self.settings, spec.product_id),
-                "deployment_import_files",
-                None,
-            )
+            import_files = provider_extensions(self.settings, spec.product_id).import_files
             if import_files:
                 for name, text in import_files(
                     self.settings, facts, target, key
@@ -678,7 +676,7 @@ class Workbench:
             ),
             "部署失败不会自动删除数据；重试需要重新检查",
         ]
-        self.store._atomic_write(
+        self.store.backend.write_control_file(
             directory / "plan.json", json.dumps(plan, ensure_ascii=False)
         )
         return plan
@@ -712,13 +710,14 @@ class Workbench:
             "database_user": "postgres",
             "deployment_config": plan["config_path"],
             "deployment_target": plan["target"],
+            "desired_deployment_plan_id": plan["id"],
         }
 
     def verify(self, key, *, inspect=True):
         plan = self.plan(key)
         if self.draft(plan["environment_id"])["revision"] != plan["draft_revision"]:
             raise ConflictError("草稿已修改，请重新生成计划")
-        current = self.store.get_environment(plan["environment_id"])
+        current = self.store.environments.get_environment(plan["environment_id"])
         expected = self.environment(plan)
         if current != plan["baseline"] and not (
             current and all(current.get(k) == v for k, v in expected.items())
@@ -734,17 +733,20 @@ class Workbench:
                 raise ValueError("目标主机状态已变化，请重新检查方案")
         return plan
 
-    def associate(self, key):
+    def associate(self, key, request_id=None):
         plan = self.verify(key)
         expected = self.environment(plan)
-        from ..actions import environment_lock
+        from ..resources import resource_lock, validate_registration
 
-        with environment_lock(self.settings.platform_dir, expected["id"]):
-            if self.store._has_active_task(expected["id"]):
+        with resource_lock(self.settings, expected):
+            validate_registration(self.store, expected)
+            if self.store.deployments.has_pending_deployment(expected["id"], request_id):
+                raise ConflictError("环境有待执行部署申请")
+            if self.store.tasks.has_active_task(expected["id"]):
                 raise ConflictError("环境有活动任务，请等待任务完成")
             # Re-check under the environment lock before publishing the pointer.
             self.verify(key, inspect=False)
-            previous = self.store.get_environment(expected["id"])
+            previous = self.store.environments.get_environment(expected["id"])
             old_digest = None
             if previous and previous.get("deployment_config"):
                 try:
@@ -757,21 +759,18 @@ class Workbench:
             profile.mkdir(parents=True, exist_ok=True)
             for name in plan["files"]:
                 text = (Path(plan["config_path"]).parent / name).read_text()
-                self.store._atomic_write(profile / name, text)
+                self.store.backend.write_control_file(profile / name, text)
             if previous:
-                self.store.update_environment(expected["id"], expected)
+                self.store.environments.update_environment(expected["id"], expected)
             else:
-                self.store.put_environment(expected)
+                self.store.environments.put_environment(expected)
             # 部署配置内容变化后，绑定旧集群身份的回归上下文必须作废。
             if old_digest != plan["config_sha256"]:
-                invalidate = getattr(
-                    provider_for(self.settings, expected["product_id"]),
-                    "deployment_invalidate",
-                    None,
-                )
-                if callable(invalidate):
+                invalidate = provider_extensions(self.settings, expected["product_id"]).invalidate
+                if invalidate:
                     invalidate(self.settings, expected)
-        return expected
+        self.store.environments.mark_deployment(expected["id"], key, "PENDING")
+        return self.store.environments.get_environment(expected["id"])
 
 
 def worker_environment(settings, store, environment, snapshot):

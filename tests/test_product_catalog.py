@@ -119,6 +119,7 @@ def test_new_product_provider_loads_from_its_directory(tmp_path, monkeypatch):
         "    def command(self, settings, environment, action, target, parameters):\n"
         "        return CommandSpec(['true', target], settings.data_dir)\n"
         "    def discover(self, settings): return []\n"
+        "    def publish_result(self, store, settings, environment, task, terminal, reason): return terminal, reason\n"
         "    def observe_database(self, environment): return []\n"
         "    def observe_runtime(self, settings, environment): return []\n"
         "    def validate_target(self, settings, target): return True\n"
@@ -187,6 +188,7 @@ def test_new_product_action_runs_through_api_and_worker(tmp_path, monkeypatch):
         "    def command(self, settings, environment, action, target, parameters):\n"
         "        return CommandSpec(['true'], settings.data_dir)\n"
         "    def discover(self, settings): return []\n"
+        "    def publish_result(self, store, settings, environment, task, terminal, reason): return terminal, reason\n"
         "    def observe_database(self, environment): return []\n"
         "    def observe_runtime(self, settings, environment): return []\n"
         "    def validate_target(self, settings, target): return True\n"
@@ -209,4 +211,4 @@ def test_new_product_action_runs_through_api_and_worker(tmp_path, monkeypatch):
     assert response.status_code == 202, response.text
     assert queued == [response.json()["id"]]
     run_task(app.state.store, settings, queued[0])
-    assert app.state.store.get_task(queued[0])["status"] == "SUCCEEDED"
+    assert app.state.store.tasks.get_task(queued[0])["status"] == "SUCCEEDED"

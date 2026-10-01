@@ -94,10 +94,10 @@ def test_setting_reload_failure_still_restores_auto_conf(tmp_path):
 
 
 def publication_setup(tmp_path):
-    settings = SimpleNamespace(output_dir=tmp_path / "output")
+    settings = __import__("test_api").settings_for(tmp_path)
     store = FileStore(tmp_path / "data")
     environment = {"id": "lab", "product_id": "demo"}
-    root = settings.output_dir / "regression/lab"
+    root = settings.artifact_dir("demo", "lab") / "runs" / "test-run" / "cases"
     root.mkdir(parents=True)
     return settings, store, environment, root
 
@@ -119,7 +119,7 @@ def test_publisher_rejects_stale_facts_and_success_without_facts(tmp_path):
         case_targets={"smoke.case"},
     )
     assert status == "FAILED"
-    assert store.list_results("lab")[0]["status"] == "ERROR"
+    assert store.results.list_results("lab")[0]["status"] == "ERROR"
 
 
 def test_publisher_uses_matching_rows_instead_of_aggregate_counts(tmp_path):
@@ -142,6 +142,9 @@ def test_publisher_uses_matching_rows_instead_of_aggregate_counts(tmp_path):
             }
         )
     )
+    case = root / "smoke.case"
+    case.mkdir()
+    (case / "result.json").write_text(json.dumps({"target": "smoke.case", "operation_id": "new", "verdict": "FAIL", "reason": "bad"}))
     status, _ = publish_regression_results(
         store,
         settings,
@@ -152,7 +155,7 @@ def test_publisher_uses_matching_rows_instead_of_aggregate_counts(tmp_path):
         case_targets={"smoke.case", "smoke.old"},
     )
     assert status == "FAILED"
-    assert [row["target"] for row in store.list_results("lab")] == ["smoke.case"]
+    assert [row["target"] for row in store.results.list_results("lab")] == ["smoke.case"]
 
 
 def test_log_collector_rotation_and_truncation(tmp_path):
@@ -526,7 +529,7 @@ def test_report_constructor_rejects_symlink_escape(tmp_path):
         ReportRuntime(
             tmp_path,
             ReportSpec("case", "demo.case", "case", "demo"),
-            output_root=output,
+            case_dir=output / "runs" / "demo" / "case", lock_dir=tmp_path / "runtime",
             context_data={},
         )
     assert (sentinel / "keep").read_text() == "evidence"

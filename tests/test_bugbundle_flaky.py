@@ -43,7 +43,7 @@ def test_flaky_endpoint_aggregates_history(tmp_path):
     config = settings_for(tmp_path)
     client = TestClient(create_app(config, enqueuer=lambda task_id: None))
     make_env(client)
-    history = config.output_dir / "regression" / "lab-cman"
+    history = config.regression_state_dir("fbasecman", "lab-cman")
     history.mkdir(parents=True)
     with (history / "history.jsonl").open("w", encoding="utf-8") as handle:
         for verdict in ("PASS", "FAIL", "PASS", "PASS", "FAIL"):
@@ -64,17 +64,19 @@ def test_bug_bundle_packs_environment_result_and_reports(tmp_path):
     config = settings_for(tmp_path)
     client = TestClient(create_app(config, enqueuer=lambda task_id: None))
     make_env(client)
-    regression = config.output_dir / "regression" / "lab-cman"
-    case_dir = regression / "suite.case_a" / "artifacts" / "exec-1"
+    regression = config.artifact_dir("fbasecman", "lab-cman") / "runs" / "test-run"
+    case_dir = regression / "cases" / "suite.case_a" / "artifacts" / "exec-1"
     case_dir.mkdir(parents=True)
     (case_dir / "steps.json").write_text(
         json.dumps({"steps": [{"title": "s1", "result": "FAIL"}]}),
         encoding="utf-8")
     (regression / "report.html").write_text("<html/>", encoding="utf-8")
-    (regression / "history.jsonl").write_text(
+    state = config.regression_state_dir("fbasecman", "lab-cman")
+    state.mkdir(parents=True)
+    (state / "history.jsonl").write_text(
         json.dumps({"target": "suite.case_a", "verdict": "FAIL"}) + "\n",
         encoding="utf-8")
-    profile = config.environment_dir / "profiles" / "lab-cman"
+    profile = config.profiles_dir / "lab-cman"
     profile.mkdir(parents=True)
     (profile / "pgcluster.yaml").write_text("hosts: {}\n", encoding="utf-8")
 
@@ -87,14 +89,14 @@ def test_bug_bundle_packs_environment_result_and_reports(tmp_path):
     assert "bundle.json" in names
     assert "environment.yaml" in names
     assert "profile/pgcluster.yaml" in names
-    assert "regression/suite.case_a/artifacts/exec-1/steps.json" in names
-    assert "reports/report.html" in names
+    assert "runs/test-run/cases/suite.case_a/artifacts/exec-1/steps.json" in names
+    assert "runs/test-run/report.html" in names
     assert "reports/case-history.json" in names
 
     whole = client.get("/api/v1/environments/lab-cman/results-bundle")
     assert whole.status_code == 200
     with zipfile.ZipFile(io.BytesIO(whole.content)) as archive:
-        assert any(name.startswith("regression/suite.case_a/")
+        assert any(name.startswith("runs/test-run/cases/suite.case_a/")
                    for name in archive.namelist())
 
     assert client.get(
@@ -116,7 +118,7 @@ def test_deployment_reset_action_registered(tmp_path):
     pgcluster = config.pgcluster_root / "pgcluster"
     pgcluster.parent.mkdir(parents=True)
     pgcluster.write_text("#!/bin/sh\n", encoding="utf-8")
-    deploy = config.environment_dir / "profiles" / "lab-cman" / "pgcluster.yaml"
+    deploy = config.profiles_dir / "lab-cman" / "pgcluster.yaml"
     deploy.parent.mkdir(parents=True)
     deploy.write_text("hosts: {}\n", encoding="utf-8")
     environment = {

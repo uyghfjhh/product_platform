@@ -1,11 +1,11 @@
 """Modern product package discovery and manifest validation."""
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-import os
 from pathlib import Path
-import re
 from typing import Any
 
 import yaml

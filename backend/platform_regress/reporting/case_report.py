@@ -1,13 +1,4 @@
-"""Per-case human-readable report rendered from the platform event stream.
-
-The legacy suites wrote ``report.txt``/``steps.json``/``summary.json`` under
-``output/runs/<suite>/<case>/`` for every case.  Native SDK cases only emitted
-structured facts (result.json + events.jsonl + evidence).  This module closes
-the parity gap: at case end the CLI renders the SAME document shape from
-``events.jsonl`` so a native case's report is never thinner than the legacy
-one, and mirrors the files into the product run tree when the caller provided
-``regress_report_root``.
-"""
+"""Render missing human-readable artifacts next to authoritative case results."""
 
 from __future__ import annotations
 
@@ -16,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from platform_regress.persistence.atomic import atomic_write_text, write_json
+from platform_regress.persistence.atomic import atomic_write_text
 from platform_regress.reporting.model import ReportDocument, ReportStep
 from platform_regress.reporting.renderer import render_report
 
@@ -172,13 +163,10 @@ def _steps_payload(target: str, steps: list[ReportStep]) -> dict:
 
 def write_case_artifacts(context, result, environment: dict,
                          purpose: str = "") -> list[str]:
-    """Render report.txt/steps.json/summary.json into the case output dir.
-
-    Also mirrors the trio into ``<regress_report_root>/output/runs/<suite>/
-    <case>/`` when that root is injected and the directory does not already
-    carry a legacy report (RuntimeExecutor cases write it themselves).
-    """
+    """Write report sidecars in the canonical case directory; preserve product reports."""
     output_dir = Path(context.output_dir)
+    if (output_dir / "report.txt").is_file():
+        return []
     steps = _event_steps(output_dir)
     started, finished = _event_bounds(output_dir)
     status = _STATUS_MAP.get(result.verdict, "FAIL")
@@ -200,48 +188,11 @@ def write_case_artifacts(context, result, environment: dict,
         "duration_seconds": result.duration_seconds,
         "started_at": started, "finished_at": finished,
     }
-    written = [
-        _atomic_write(output_dir / "report.txt", report_text),
-        _atomic_write(output_dir / "summary.json",
-                      json.dumps(summary, ensure_ascii=False, indent=2) + "\n"),
-        _atomic_write(output_dir / "steps.json", json.dumps(
-            _steps_payload(result.target, steps), ensure_ascii=False,
-            indent=2) + "\n"),
-    ]
-    # Mirror into the legacy run tree so web report viewers (which read
-    # output/runs/<suite>/<case>/) work for native cases too.
-    root = environment.get("regress_report_root")
-    suite, _, case = result.target.partition(".")
-    if root and suite and case:
-        run_dir = Path(root) / "output" / "runs" / suite / case
-        legacy_report = run_dir / "report.txt"
-        # Executor-hosted cases write their authoritative report during this
-        # run — never overwrite those.  A report older than this run's first
-        # event is stale output from a previous run and gets refreshed.
-        run_started = _run_start_epoch(output_dir)
-        try:
-            legacy_is_current = (
-                legacy_report.stat().st_mtime >= run_started - 1)
-        except OSError:
-            legacy_is_current = False
-        if not legacy_is_current:
-            run_dir.mkdir(parents=True, exist_ok=True)
-            written.extend([
-                _atomic_write(run_dir / "report.txt", report_text),
-                _atomic_write(run_dir / "summary.json",
-                              json.dumps(summary, ensure_ascii=False,
-                                         indent=2) + "\n"),
-                _atomic_write(run_dir / "steps.json", json.dumps(
-                    _steps_payload(result.target, steps),
-                    ensure_ascii=False, indent=2) + "\n"),
-            ])
-    return [str(path) for path in written if path is not None]
-
-
-def _atomic_write(path: Path, content: str) -> Path | None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, content)
-        return path
-    except OSError:
-        return None
+    files = {
+        "report.txt": report_text,
+        "summary.json": json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        "steps.json": json.dumps(_steps_payload(result.target, steps), ensure_ascii=False, indent=2) + "\n",
+    }
+    for name, content in files.items():
+        atomic_write_text(output_dir / name, content)
+    return list(files)

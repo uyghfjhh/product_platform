@@ -287,11 +287,11 @@ class StableRuntime(object):
         if (current.get("status") in ("running", "degraded", "finalizing", "stopping")
                 and managed_pid(current.get("fbasecman_pid"), current.get("run_dir", ""))):
             raise StableFailure("stable runtime is already running: %s" % current.get("run_id"))
-        self.run_dir = self.cfg.output_dir / "current"
+        self.run_dir = self.cfg.output_dir / "runs" / self.run_id / "stability"
         if self.run_dir.exists():
             shutil.rmtree(str(self.run_dir))
         self.logs = self.run_dir / "logs"
-        self.product_logs = self.cfg.output_dir / "fbasecman-logs"
+        self.product_logs = self.run_dir / "fbasecman-logs"
         self.product_logs.mkdir(parents=True, exist_ok=True)
         self.product_log = self.product_logs / (self.run_id + ".log")
         self.monitor = self.run_dir / "monitor"
@@ -661,7 +661,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
 
     def foreground(self, workloads):
         validate_profile_isolation(self.cfg.runtime_config)
-        with ExclusiveFileLock(self.cfg.output_dir / "stable.lock", "stable runtime"):
+        with ExclusiveFileLock(self.cfg.runtime_dir / "stable.lock", "stable runtime"):
             before_health = self.health()
             self.prepare_fixture()
             try:
@@ -715,7 +715,7 @@ INSERT INTO table_test(data) SELECT 'seed-' || g FROM generate_series(1,10) g;
 
     def background(self, workloads):
         validate_profile_isolation(self.cfg.runtime_config)
-        with ExclusiveFileLock(self.cfg.output_dir / "stable.lock", "stable start"):
+        with ExclusiveFileLock(self.cfg.runtime_dir / "stable.lock", "stable start"):
             current = self.store.load()
             if current.get("status") == "running" and managed_pid(current.get("fbasecman_pid"), current.get("run_dir")):
                 raise StableFailure("stable runtime is already running: %s" % current.get("run_id"))
@@ -940,7 +940,7 @@ def runtime_for_state(cfg, state):
     runtime.run_id = state["run_id"]
     runtime.run_dir = Path(state["run_dir"])
     runtime.logs = runtime.run_dir / "logs"
-    runtime.product_logs = runtime.cfg.output_dir / "fbasecman-logs"
+    runtime.product_logs = runtime.run_dir / "fbasecman-logs"
     runtime.product_log = Path(state.get(
         "product_log", runtime.product_logs / (runtime.run_id + ".log")))
     runtime.monitor = runtime.run_dir / "monitor"

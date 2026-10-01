@@ -11,7 +11,12 @@ import json
 from datetime import date, datetime, time
 from decimal import Decimal
 
-from .database import psycopg, tuple_row
+try:
+    import psycopg
+    from psycopg.rows import tuple_row
+except ImportError:
+    psycopg = None
+    tuple_row = None
 
 _STATEMENT_TIMEOUT_MS = 15000
 _MAX_PARAMS = 256
@@ -131,7 +136,13 @@ def _run_query(cursor, query):
         bound = tuple(parameters[index - 1] for index in order)
     except IndexError:
         raise ValueError("占位符序号超出参数数量")
-    cursor.execute(translated, bound)
+    if order:
+        # Psycopg parses percent placeholders even inside SQL literals. Escape
+        # source percent characters before introducing the actual bind markers.
+        translated, _ = _translate_parameters(sql.replace("%", "%%"))
+        cursor.execute(translated, bound)
+    else:
+        cursor.execute(sql)
     if cursor.description is None:
         return []
     columns = [column.name for column in cursor.description]

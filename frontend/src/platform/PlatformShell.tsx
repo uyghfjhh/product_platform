@@ -35,7 +35,7 @@ function selectedFromStorage(key: string, defaultValue: string) {
 }
 
 function isPage(value: string): value is Page {
-  return value === 'deployment' || value.startsWith('license:')
+  return value === 'deployment' || value === 'database' || value.startsWith('license:')
     || value.startsWith('tests:') || value.startsWith('stability:');
 }
 
@@ -62,6 +62,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     return isPage(saved) ? saved as Page : 'deployment';
   });
   const [environmentId, setEnvironmentId] = useState(selectedFromStorage('platform-environment', ''));
+  const [databaseTarget, setDatabaseTarget] = useState<{ environmentId: string; nodeId: string } | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -210,7 +211,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       reload,
       openTask: setTaskId,
     };
-    if (page === 'database') return <DatabasePage {...common} />;
+    if (page === 'database') return <DatabasePage {...common} initialNodeId={databaseTarget?.environmentId === environment?.id ? databaseTarget?.nodeId : undefined} />;
     if (page === 'license:keys') return <LicenseKeysView />;
     if (page === 'license:generate') return <LicenseGenerateView />;
     if (page.startsWith('stability:')) {
@@ -229,13 +230,15 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         bindings={bindings}
         tasks={tasks} />;
     }
-    return <DeploymentPage {...common} onOpenDatabase={(node) => {
-      if (node) sessionStorage.setItem('sql_target_port', String(node.port));
+    return <DeploymentPage {...common} onOpenDatabase={(node, view) => {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      setDatabaseTarget(node && environment ? { environmentId: environment.id, nodeId: node.id } : null);
+      if (view === 'sql') window.location.hash = 'view=sql';
       setPage('database');
     }} products={products} />;
   }, [page, product, environment, environments, reload, products, environmentId,
       bindings, testProduct, testProfile, selectedTestEnvironment, stabilityProduct,
-      stabilityEnvironment, tasks]);
+      stabilityEnvironment, tasks, databaseTarget]);
 
   const selectedMenuKey = page === 'deployment' ? 'deployment' : page;
 

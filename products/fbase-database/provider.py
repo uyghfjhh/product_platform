@@ -13,7 +13,7 @@ from platform_app.event_contracts import SceneObservationError
 from platform_app.postgresql_observations import parse_replication
 from platform_app.providers import CommandSpec, Observation
 from platform_app.scene import emit_observation, endpoint_id
-from platform_app.topology import configured_topology
+from platform_app import topology as topology_api
 
 
 def _load_cases_module():
@@ -205,7 +205,7 @@ class FbaseProvider:
                     observation.state, observation.kind, observation.details,
                 )
         except Exception as exc:  # noqa: BLE001 - observation is supplemental
-            store.add_event(task_id, "scene.observation.error", SceneObservationError(
+            store.tasks.add_event(task_id, "scene.observation.error", SceneObservationError(
                 source="product.runtime", message=str(exc),
             ).model_dump())
 
@@ -275,7 +275,7 @@ class FbaseProvider:
         nodes, topology_error = {}, None
         if with_topology:
             try:
-                topology = configured_topology(settings, environment)
+                topology = topology_api.configured_topology(settings, environment)
                 if cluster == "mmr":
                     primary = {
                         node.get("group"): node for node in topology["nodes"]
@@ -317,9 +317,9 @@ class FbaseProvider:
                 settings, environment, cluster,
                 with_topology=case_impl is not None,
                 extended=type(case_impl).__name__ == "ExportedCommandCase")
-            context["history_root"] = str(
-                settings.output_dir / "regression" / environment["id"])
-            output = settings.output_dir / "regression" / environment["id"] / target
+            context["state_root"] = str(
+                settings.artifact_dir("fbase-database", environment["id"]))
+            output = settings.artifact_dir("fbase-database", environment["id"])
             target_args = ["--suite", target] if "." not in target else [target]
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
@@ -335,9 +335,9 @@ class FbaseProvider:
             suite = cluster if target == "all" else target
             context = self._test_context(settings, environment, cluster,
                                          with_topology=True, extended=True)
-            context["history_root"] = str(
-                settings.output_dir / "regression" / environment["id"])
-            output = settings.output_dir / "regression" / environment["id"] / target
+            context["state_root"] = str(
+                settings.artifact_dir("fbase-database", environment["id"]))
+            output = settings.artifact_dir("fbase-database", environment["id"])
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
                 "--product-dir", str(Path(__file__).resolve().parent),

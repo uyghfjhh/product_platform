@@ -13,11 +13,11 @@ from .filestore import FileStore
 def recover_unfinished(store: FileStore) -> list[str]:
     """重启后只重投未领取任务；执行中任务须先核对外部进程。"""
     queued = []
-    for task in store.unfinished_tasks():
+    for task in store.tasks.unfinished_tasks():
         if task["status"] == "QUEUED":
             queued.append(task["id"])
         else:
-            store.transition_task(task["id"], ("RUNNING", "CANCELLING"),
+            store.tasks.transition_task(task["id"], ("RUNNING", "CANCELLING"),
                                   "RECOVERY_REQUIRED", reason="平台重启；请核对外部操作状态")
     return queued
 
@@ -29,9 +29,15 @@ def main() -> int:
     start.add_argument("--host", default="0.0.0.0")
     start.add_argument("--port", type=int, default=8080)
     commands.add_parser("check", help="检查本地存储和产品集成")
+    archive = commands.add_parser("archive", help="归档已结束任务，保留证据和幂等记录")
+    archive.add_argument("--older-than-days", type=int, default=30)
     args = parser.parse_args()
     settings = load_settings()
-    store = FileStore(settings.data_dir)
+    store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
+
+    if args.command == "archive":
+        print("归档任务:", len(store.tasks.archive_tasks(args.older_than_days)))
+        return 0
 
     if args.command == "check":
         from .product_catalog import discover_products
@@ -48,26 +54,16 @@ def main() -> int:
         return 0
 
     queued = recover_unfinished(store)
-    consumer = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "huey.bin.huey_consumer",
-            "platform_app.queue.huey",
-            "-w",
-            "2",
-            "-k",
-            "thread",
-            "-m",
-            "0.5",
-        ]
-    )
-    if queued:
-        from .queue import execute
-        for task_id in queued:
-            execute(task_id)
+    from .api import create_app
+    from .queue import create_queue
+
+    _huey, execute = create_queue(settings, store)
+    for task_id in queued:
+        execute(task_id)
+    consumer = subprocess.Popen([sys.executable, "-m", "platform_app.worker"])
+    app = create_app(settings, enqueuer=execute)
     try:
-        uvicorn.run("platform_app.api:app", host=args.host, port=args.port)
+        uvicorn.run(app, host=args.host, port=args.port)
     finally:
         consumer.terminate()
         try:

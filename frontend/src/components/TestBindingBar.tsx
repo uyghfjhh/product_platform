@@ -33,9 +33,11 @@ export default function TestBindingBar({ product, profileId, environments, bindi
     if (!bound) return;
     setConnectivity('checking');
     try {
-      await post(`/environments/${encodeURIComponent(bound.id)}/query`, {
-        sql: 'SELECT 1', max_rows: 1,
-      });
+      const [error] = await post<[{ message?: string } | null, unknown]>(
+        `/environments/${encodeURIComponent(bound.id)}/studio`, {
+          procedure: 'query', query: { sql: 'SELECT 1', parameters: [] },
+        });
+      if (error) throw new Error(error.message || '连接失败');
       setConnectivity('ok');
     } catch {
       setConnectivity('fail');

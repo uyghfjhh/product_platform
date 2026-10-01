@@ -125,11 +125,7 @@ class DeploymentInvalidationTest(unittest.TestCase):
         )
         environment = {"id": "cman-x", "product_id": "fbasecman"}
         context = (
-            settings.output_dir
-            / "fbasecman"
-            / "cman-x"
-            / "output"
-            / "env"
+            settings.profile_dir("cman-x") / "fixture"
             / "test_context.yaml"
         )
         context.parent.mkdir(parents=True, exist_ok=True)

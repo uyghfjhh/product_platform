@@ -16,12 +16,13 @@ set -euo pipefail
 # 确定平台根目录与数据目录
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="${PRODUCT_PLATFORM_DATA_DIR:-$ROOT_DIR/data}"
-PLATFORM_DATA_DIR="$DATA_DIR/platform"
-mkdir -p "$PLATFORM_DATA_DIR"
+RUNTIME_DIR="${PRODUCT_PLATFORM_RUNTIME_DIR:-$(dirname "$DATA_DIR")/runtime}"
+LOGS_DIR="${PRODUCT_PLATFORM_LOGS_DIR:-$(dirname "$DATA_DIR")/logs}"
+mkdir -p "$RUNTIME_DIR" "$LOGS_DIR"
 
-PID_FILE="$PLATFORM_DATA_DIR/web.pid"
-PORT_FILE="$PLATFORM_DATA_DIR/web.port"
-LOG_FILE="$PLATFORM_DATA_DIR/web.log"
+PID_FILE="$RUNTIME_DIR/web.pid"
+PORT_FILE="$RUNTIME_DIR/web.port"
+LOG_FILE="$LOGS_DIR/web.log"
 
 DEFAULT_PORT=8080
 DEFAULT_HOST="0.0.0.0"
@@ -137,12 +138,12 @@ do_start() {
     # 检查当前 Python 解释器是否包含必需的 Web 服务依赖 (uvicorn, fastapi, psycopg)
     if ! "$PYTHON_BIN" -c "import uvicorn, fastapi, psycopg" >/dev/null 2>&1; then
         echo "⚠️  检测到当前运行环境依赖不完整 (如缺少 uvicorn / fastapi / psycopg 等)..."
-        if [ -f "$ROOT_DIR/install_env.sh" ]; then
-            echo "🚀 正在自动执行 ./install_env.sh 补全环境并安装依赖..."
-            bash "$ROOT_DIR/install_env.sh"
+        if [ -f "$ROOT_DIR/scripts/setup_env.sh" ]; then
+            echo "🚀 正在自动执行 ./web.sh setup 补全环境并安装依赖..."
+            bash "$ROOT_DIR/scripts/setup_env.sh"
             PYTHON_BIN="$(find_python_bin || echo "$ROOT_DIR/.venv/bin/python3")"
         else
-            echo "❌ 启动失败: 请先执行 ./install_env.sh 安装环境依赖！"
+            echo "❌ 启动失败: 请先执行 ./web.sh setup 安装环境依赖！"
             return 1
         fi
     fi
@@ -215,7 +216,7 @@ do_stop() {
         kill -TERM -- "-$pid" 2>/dev/null || true
     else
         local worker_pids
-        worker_pids="$(pgrep -P "$pid" -f 'huey.bin.huey_consumer platform_app.queue.huey' || true)"
+        worker_pids="$(pgrep -P "$pid" -f 'platform_app.worker' || true)"
         for worker in $worker_pids; do kill -TERM "$worker" 2>/dev/null || true; done
         kill -TERM "$pid" 2>/dev/null || true
     fi
@@ -276,10 +277,10 @@ do_logs() {
 
 # 一键初始化虚拟环境并安装平台依赖
 do_setup() {
-    if [ -f "$ROOT_DIR/install_env.sh" ]; then
-        bash "$ROOT_DIR/install_env.sh" "$@"
+    if [ -f "$ROOT_DIR/scripts/setup_env.sh" ]; then
+        bash "$ROOT_DIR/scripts/setup_env.sh" "$@"
     else
-        echo "❌ 错误: 未找到 $ROOT_DIR/install_env.sh 脚本" >&2
+        echo "❌ 错误: 未找到 scripts/setup_env.sh" >&2
         return 1
     fi
 }

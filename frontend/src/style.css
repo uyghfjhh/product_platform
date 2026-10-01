@@ -161,11 +161,6 @@ button, input, textarea { font-family: inherit; }
 .page-heading h3 { font-size: 23px; font-weight: 600; }
 .work-section { margin-top: 26px; padding: 0 0 28px; border-bottom: 1px solid #dce3e0; }
 .work-section:first-child { margin-top: 0; }
-.database-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 24px; }
-.database-objects { border-right: 1px solid #dde5e0; padding-right: 16px; min-width: 0; }
-.database-objects .ant-tree { background: transparent; }
-.database-query { min-width: 0; }
-.database-columns { display: flex; flex-direction: column; gap: 5px; margin-top: 13px; overflow-wrap: anywhere; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; }
 .section-heading .ant-typography { margin: 0; }
 .filter-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
@@ -311,8 +306,6 @@ button, input, textarea { font-family: inherit; }
   .context-select { min-width: 128px; flex: 1; }
   .platform-content { padding: 22px 15px 35px; }
   .license-product-row { grid-template-columns: 1fr 1fr; }
-  .database-workspace { grid-template-columns: 1fr; gap: 18px; }
-  .database-objects { border-right: 0; border-bottom: 1px solid #dde5e0; padding: 0 0 14px; }
   .license-product-row > .ant-btn { margin-top: 0; }
 }
 
@@ -1742,7 +1735,6 @@ button, input, textarea { font-family: inherit; }
   display: block;
   word-break: break-all;
 }
-.sql-workbench-input { font-family: monospace; }
 
 /* §10 研发特性：flaky 徽标 + 失败步骤 diff */
 .flaky-badge {
@@ -1813,32 +1805,60 @@ button, input, textarea { font-family: inherit; }
 /* Status lives above the topology, so banners cannot cover node controls. */
 .deployment-topology .topo-canvas-state-banner { display: none; }
 
-/* Prisma Studio 数据管理器：.ps 内部 h-full，需要定高父容器 */
+
+/* One database workspace; Studio inherits the platform palette in every theme. */
+:root { --studio-on-accent: #fff; }
+:root[data-theme="cman"], :root[data-theme="dark"] { --studio-on-accent: #0a1511; }
+.database-manager { min-width: 0; }
 .database-studio {
-  position: relative;
-  height: 72vh;
-  min-height: 480px;
-  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 124px);
+  min-height: 520px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   overflow: hidden;
-  background: #fff;
+  background: var(--bg-primary);
 }
-.database-studio .ps,
-.database-studio .ps > div {
-  height: 100%;
+.database-studio-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
 }
-.database-studio-fullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 1090;
-  height: 100vh;
-  min-height: 0;
-  border: none;
-  border-radius: 0;
+.database-studio-heading { display: flex; align-items: baseline; gap: 12px; }
+.database-studio-heading h3.ant-typography { margin: 0; font-size: 20px; }
+.database-studio-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.database-studio-controls .ant-select { width: 210px; max-width: 100%; }
+.database-studio-controls .ant-select:nth-child(2) { width: 320px; }
+.database-studio-content { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.database-studio-content > .ant-empty { margin: 64px 16px; }
+.database-studio .ps { height: 100%; font-family: inherit; }
+.database-studio .cm-editor, .database-studio .cm-scroller {
+  background: var(--bg-primary); color: var(--text-primary);
 }
-.database-studio-toggle {
-  position: absolute;
-  top: 10px;
-  right: 52px;
-  z-index: 20;
+.database-studio .cm-gutters, .database-studio .cm-activeLineGutter { background: var(--bg-surface); color: var(--text-muted); }
+.database-studio .cm-activeLine { background: var(--bg-surface-elevated); }
+.database-studio-fullscreen { position: fixed; inset: 0; z-index: 1090; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
+@media (max-width: 760px) {
+  .database-studio { height: calc(100dvh - 108px); min-height: 480px; }
+  .database-studio-toolbar { padding: 12px; }
+  .database-studio-controls { width: 100%; }
+  .database-studio-controls .ant-select, .database-studio-controls .ant-select:nth-child(2) { flex: 1 1 180px; width: auto; min-width: 0; }
+  .database-studio-fullscreen { height: 100dvh; }
 }
+
+/* Keep SQL readable when Studio's editor mode differs from the platform palette. */
+:root[data-theme="cman"] .database-studio .cm-theme-light .cm-content span,
+:root[data-theme="dark"] .database-studio .cm-theme-light .cm-content span,
+:root[data-theme="soft"] .database-studio .cm-theme-dark .cm-content span,
+:root[data-theme="warm"] .database-studio .cm-theme-dark .cm-content span { color: var(--text-primary) !important; }
+.database-studio .ps svg [fill="black"], .database-studio .ps svg [fill="#000"],
+.database-studio .ps svg [fill="#000000"] { fill: var(--text-secondary); }
+
+.database-studio .ps svg.fill-black { fill: var(--text-secondary); }

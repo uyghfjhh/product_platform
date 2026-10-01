@@ -22,6 +22,8 @@ frontend/dist/
 
 # Runtime Data, Logs & Daemon State
 data/
+runtime/
+logs/
 output/
 **/output/
 *.log
@@ -31,11 +33,13 @@ output/
 # Environment & Local Configuration Overrides
 *.local.yaml
 *.local.yaml.*
-!regress/fbasecman/regress.local.yaml.example
-!regress/fbasecman/stable.local.yaml.example
 .env
 .env.local
 
 # OS Artifacts
 .DS_Store
 Thumbs.db
+
+# Generated frontend contracts and product registry
+frontend/src/products/generated.ts
+frontend/src/platform/contracts.generated.ts

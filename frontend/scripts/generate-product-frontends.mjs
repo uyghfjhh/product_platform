@@ -7,7 +7,7 @@ const output = join(root, 'frontend/src/products/generated.ts');
 const entries = [];
 
 for (const item of await readdir(products, { withFileTypes: true })) {
-  if (!item.isDirectory() || !/^[a-z][a-z0-9-]*$/.test(item.name)) continue;
+  if (!item.isDirectory() || !/^[a-z][a-z0-9_-]{1,63}$/.test(item.name)) continue;
   try {
     await access(join(products, item.name, 'product.yaml'));
     await access(join(products, item.name, 'frontend.ts'));

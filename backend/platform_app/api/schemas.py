@@ -1,13 +1,10 @@
 """Request schemas and small helpers shared by the API route modules."""
 
 import json
-import re
-from typing import Any
 
 from pydantic import BaseModel, Field
 
 IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
-TARGET = re.compile(r"^[A-Za-z0-9_.,:-]{1,160}$")
 
 
 class EnvironmentInput(BaseModel):
@@ -22,29 +19,8 @@ class EnvironmentInput(BaseModel):
     deployment_target: str | None = None
 
 
-class OperationInput(BaseModel):
-    environment_id: str = Field(pattern=IDENTIFIER)
-    action: str
-    target: str | None = None
-    parameters: dict[str, Any] = Field(default_factory=dict)
-    submission_key: str | None = Field(default=None, min_length=1, max_length=100)
-    acknowledge_change: bool = False
-    deployment_plan_id: str | None = Field(default=None, pattern=IDENTIFIER)
-
-
 class RegressionBindingInput(BaseModel):
     environment_id: str = Field(pattern=IDENTIFIER)
-
-
-class QueryInput(BaseModel):
-    sql: str = Field(min_length=1, max_length=200000)
-    max_rows: int = Field(default=200, ge=1, le=1000)
-    port: int | None = Field(default=None, ge=1, le=65535)
-
-
-class CancelBackendInput(BaseModel):
-    terminate: bool = False
-    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class LicenseKeyCreateInput(BaseModel):

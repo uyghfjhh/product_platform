@@ -15,8 +15,8 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .config import Settings
-from .product_catalog import discover_products
 from .filestore import FileStore
+from .product_catalog import discover_products
 
 
 class AIUnavailable(RuntimeError):
@@ -221,5 +221,5 @@ def diagnose(store: FileStore, settings: Settings, result: dict) -> dict:
     content = {"analysis": diagnosis.model_dump(), "evidence": bundle["evidence"],
                "source_checkout_revision": bundle["source_checkout_revision"],
                "running_binary_revision": None, "commit_attribution": "unverified"}
-    store.put_diagnosis(result, digest, model, content)
+    store.diagnoses.put_diagnosis(result, digest, model, content)
     return content

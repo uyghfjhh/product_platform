@@ -112,7 +112,7 @@
 
 ### C. 环境事项
 
-- **优雅退出机制（2026-09-29 落地）**：取消时 cleanup 命令可执行（引擎 `suppress_cancellation`）；隔离资源台账 `<history_root>/ledgers/` 按 owner pid 死亡自动回收；`ipcs` cpid 死判定清扫孤儿 SysV shm（`reset` 前置 + 隔离 fixture 入口）；`_wait_ports_free` 超时先 SIGTERM 框架内监听者。SIGTERM/SIGKILL 两条路径均实测自愈。本机制消灭此前"套件中断→尸体 postmaster 占口→下轮连环失败"的因果链。
+- **优雅退出机制（2026-09-29 落地）**：取消时 cleanup 命令可执行（引擎 `suppress_cancellation`）；隔离资源台账 `data/resources/<产品>/<环境>/` 按 owner pid 死亡自动回收；`ipcs` cpid 死判定清扫孤儿 SysV shm（`reset` 前置 + 隔离 fixture 入口）；`_wait_ports_free` 超时先 SIGTERM 框架内监听者。SIGTERM/SIGKILL 两条路径均实测自愈。本机制消灭此前"套件中断→尸体 postmaster 占口→下轮连环失败"的因果链。
 - cman-lab MMR 环境已归位（复制家族全绿）；`qa_case.orders` 等套件自建表在套件生命周期内管理，不算环境基线。
 - `regress.local.yaml` 符号链接到 cman-lab override——vendored `run.sh` 已删除，该链接仅为历史兼容残留；平台路径在 `runtime_cases._environment` 把 override 以 `extra_configs` 直传 `cmanconf.load_regression_config`，不依赖该链接。
 - ~~fbasecman 二进制版本固定问题~~（2026-09-28 完成）——`deployment/fixture.py` 生成 `test_context.yaml` 时写入 `binaries` 段：fbasecman 本地二进制与远端 PostgreSQL 二进制各记录 `path`/`sha256`/`size`/`mtime`（远端经 SSH `stat`+`sha256sum` 采集），与 `group_uuid`/`role_passwords`/`system_identifiers`/`ciphertexts` 并存。验证见 `tests/test_fixture_fingerprint.py`（4 项）。

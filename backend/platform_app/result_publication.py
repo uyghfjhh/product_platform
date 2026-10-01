@@ -26,37 +26,11 @@ def publish_regression_results(
     output_root=None,
     profile="default",
 ):
-    root = Path(output_root or settings.output_dir / "regression" / environment["id"])
+    root = Path(output_root or settings.artifact_dir(environment["product_id"], environment["id"]))
     targets = set(case_targets)
     target = task["target"]
-    directory = root / target
-    if target in targets:
-        candidates = [(directory / "result.json", _read(directory / "result.json"))]
-    else:
-        # all/failed can write an aggregate at the environment root. Suite
-        # invocations write under their requested target; both are explicit.
-        aggregate_paths = [directory / "suite-result.json", root / "suite-result.json"]
-        candidates = []
-        for aggregate_path in aggregate_paths:
-            payload = _read(aggregate_path)
-            for row in (
-                payload.get("results", [])
-                if isinstance(payload.get("results"), list)
-                else []
-            ):
-                if isinstance(row, dict) and row.get("target") in targets:
-                    case_dir = aggregate_path.parent / row["target"]
-                    if not (case_dir / "result.json").is_file():
-                        direct = _read(aggregate_path.parent / "result.json")
-                        if (
-                            direct.get("target") == row["target"]
-                            and direct.get("operation_id") == task["id"]
-                        ):
-                            case_dir = aggregate_path.parent
-                    candidates.append((case_dir / "result.json", row))
-        # Merge current per-case facts even when a stale or partial aggregate
-        # exists. Later direct facts take precedence over aggregate rows.
-        candidates.extend((path, _read(path)) for path in root.rglob("result.json"))
+    directory = root
+    candidates = [(path, _read(path)) for path in root.glob("runs/*/cases/*/result.json")]
     rows = {}
     for path, row in candidates:
         case = row.get("target")
@@ -80,7 +54,7 @@ def publish_regression_results(
         if target == "failed" and terminal == "SUCCEEDED":
             return terminal, reason
         reason = "本次没有生成可归因到本次执行的回归结果"
-        store.put_result(
+        store.results.put_result(
             environment["product_id"],
             environment["id"],
             target,
@@ -91,7 +65,7 @@ def publish_regression_results(
         )
         return ("FAILED" if terminal == "SUCCEEDED" else terminal), reason
     for case, (verdict, case_reason, artifact) in rows.items():
-        store.put_result(
+        store.results.put_result(
             environment["product_id"],
             environment["id"],
             case,

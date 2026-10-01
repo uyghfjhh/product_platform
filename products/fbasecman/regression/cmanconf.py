@@ -37,7 +37,7 @@ SECTION_FIELDS = {
     },
     "local": {"postgres_dir", "jdbc_lib_dir", "jdbc_versions"},
     "framework": {
-        "output_dir", "environment_output_dir", "default_timeout",
+        "output_dir", "environment_output_dir", "runtime_dir", "state_dir", "default_timeout",
         "keep_workdir", "fail_fast", "legacy_config",
     },
     "stable": {

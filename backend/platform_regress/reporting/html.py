@@ -2,7 +2,6 @@
 
 import html
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,8 +18,6 @@ def generate_html_report(
     total_tests = len(results)
     total_passed = sum(1 for r in results if r.get("status") == "PASS")
     total_failed = sum(1 for r in results if r.get("status") == "FAIL")
-    total_errors = sum(1 for r in results if r.get("status") == "ERROR")
-    total_skipped = sum(1 for r in results if r.get("status") in ("SKIPPED", "UNTESTED"))
     total_duration = sum(float(r.get("duration") or 0.0) for r in results)
 
     pass_rate = (total_passed / total_tests * 100) if total_tests > 0 else 0.0

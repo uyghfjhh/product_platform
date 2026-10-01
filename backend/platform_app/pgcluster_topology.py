@@ -15,7 +15,6 @@ from pathlib import Path
 
 from .config import Settings
 
-
 TOPOLOGY_SCRIPT = r"""
 import json
 import sys

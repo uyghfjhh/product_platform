@@ -3,10 +3,8 @@
 from datetime import datetime
 from decimal import Decimal
 
-import pytest
-
 import platform_app.studio as studio
-
+import pytest
 
 ENV = {
     "host": "127.0.0.1", "port": 15432,
@@ -255,10 +253,14 @@ def test_query_error_wrapped_as_either(monkeypatch):
 
 
 def test_studio_route_env_validation(tmp_path, monkeypatch):
-    from platform_app.api.routes_environments import register
     from fastapi import FastAPI, HTTPException
+    from platform_app.api.routes_environments import register
 
     class Store:
+        def __init__(self):
+            from types import SimpleNamespace
+            self.environments = SimpleNamespace(get_environment=self.get_environment)
+
         def get_environment(self, env_id):
             return dict(ENV, id="lab") if env_id == "lab" else None
 
@@ -266,15 +268,49 @@ def test_studio_route_env_validation(tmp_path, monkeypatch):
     register(app, None, Store())
     endpoint = {
         getattr(route, "path", ""): route.endpoint for route in app.routes
-    }["/api/v1/environments/{environment_id}/studio"]
+    }["/api/v1/environments/{environment_id}/studio/nodes/{node_id}"]
 
     seen = []
     monkeypatch.setattr(
         "platform_app.api.routes_environments.studio_dispatch",
-        lambda env, body: seen.append((env["port"], body)) or [None, []],
+        lambda env, body: seen.append((env["host"], env["port"], body)) or [None, []],
     )
-    assert endpoint("lab", port=29999, item={"procedure": "query"}) == [None, []]
-    assert seen == [(29999, {"procedure": "query"})]
+    monkeypatch.setattr("platform_app.api.routes_environments.configured_topology", lambda *_: {
+        "nodes": [{"id": "local", "host": "127.0.0.1", "port": 29999},
+                  {"id": "remote", "host": "10.0.0.2", "port": 29999}]})
+    assert endpoint("lab", node_id="remote", item={"procedure": "query"}) == [None, []]
+    assert seen == [("10.0.0.2", 29999, {"procedure": "query"})]
+    with pytest.raises(HTTPException) as invalid:
+        endpoint("lab", node_id="foreign", item={})
+    assert invalid.value.status_code == 404
     with pytest.raises(HTTPException) as exc:
-        endpoint("missing", item={})
+        endpoint("missing", node_id="remote", item={})
     assert exc.value.status_code == 404
+
+
+def test_literal_percent_sql_does_not_activate_driver_bind_parsing(monkeypatch):
+    original = FakeCursor.execute
+
+    def execute_without_bindings(self, sql, *bindings):
+        assert not bindings, 'Percent-bearing SQL with no binds must be sent as raw SQL'
+        return original(self, sql)
+
+    monkeypatch.setattr(FakeCursor, 'execute', execute_without_bindings)
+    _fake(monkeypatch, lambda sql, params: (['value'], [('%example%',)]))
+    result = studio.studio_dispatch(ENV, {
+        'procedure': 'query', 'query': {'sql': "SELECT '%example%' AS value", 'parameters': []},
+    })
+    assert result == [None, [{'value': '%example%'}]]
+
+
+def test_percent_literals_and_modulo_survive_bound_parameters(monkeypatch):
+    def respond(sql, params):
+        assert sql == "SELECT %s::int %% 2, '%%example%%'"
+        assert params == (7,)
+        return ['value'], [(1,)]
+
+    _fake(monkeypatch, respond)
+    result = studio.studio_dispatch(ENV, {
+        'procedure': 'query', 'query': {'sql': "SELECT $1::int % 2, '%example%'", 'parameters': [7]},
+    })
+    assert result == [None, [{'value': 1}]]

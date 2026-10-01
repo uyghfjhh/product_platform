@@ -6,11 +6,13 @@ adapter. This module owns only common types, process isolation, and dispatch.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .config import Settings
 from .product_catalog import discover_products
@@ -123,27 +125,132 @@ class PgclusterDatabaseProvider:
 DATABASE_CLUSTER_PROVIDER = PgclusterDatabaseProvider()
 
 
-def provider_for(settings: Settings, product_id: str) -> ProductProvider:
+def _load_provider(manifest) -> ProductProvider:
     """Load only the adapter belonging to an installed product manifest."""
-    manifest = discover_products(settings.products_root).get(product_id)
-    if manifest is None:
-        raise ValueError("产品未安装: %s" % product_id)
+    product_id = manifest.id
+    # Product-owned modules import their package dependencies lazily as well.
+    # The registry owns that import root, independent of the process cwd.
+    import_root = str(manifest.package_root.parent.parent)
+    if import_root not in sys.path:
+        sys.path.append(import_root)
     if manifest.provider_path is None:
         raise ValueError("产品未注册提供者: %s" % product_id)
     provider_path = manifest.package_root / manifest.provider_path
     if not provider_path.is_file():
         raise ValueError("产品未注册提供者: %s" % product_id)
-    module_name = "_platform_product_" + product_id.replace("-", "_")
+    module_name = "_platform_product_" + hashlib.sha256(str(provider_path.resolve()).encode()).hexdigest()[:24]
     spec = importlib.util.spec_from_file_location(module_name, provider_path)
     if spec is None or spec.loader is None:
         raise ValueError("无法加载产品提供者: %s" % product_id)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[module_name] = module
+    try:
+        exec(compile(provider_path.read_bytes(), str(provider_path), "exec"), module.__dict__)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
     provider = getattr(module, "PROVIDER", None)
     required = ("command", "discover", "observe_database", "observe_runtime", "validate_target")
     if provider is None or any(not callable(getattr(provider, name, None)) for name in required):
         raise ValueError("产品提供者接口不完整: %s" % product_id)
     return provider
+
+
+class RegressionProvider(Protocol):
+    def publish_result(self, store, settings, environment, task, terminal, reason): ...
+
+
+class DeploymentTemplateProvider(Protocol):
+    def deployment_templates(self, settings): ...
+    def compile_deployment(self, settings, spec, environment_id): ...
+
+
+@dataclass(frozen=True)
+class ProviderExtensions:
+    deployment: DeploymentTemplateProvider | None = None
+    regression: RegressionProvider | None = None
+    import_files: Callable | None = None
+    invalidate: Callable | None = None
+    after_command: Callable | None = None
+    progress_observer: Callable | None = None
+
+
+def _extensions(manifest, provider):
+    def hook(name):
+        value = getattr(provider, name, None)
+        if value is not None and not callable(value):
+            raise ValueError(f"产品钩子不可调用: {manifest.id}.{name}")
+        return value
+    templates = hook("deployment_templates")
+    compiler = hook("compile_deployment")
+    if bool(templates) != bool(compiler):
+        raise ValueError(f"部署能力必须同时提供模板和编译器: {manifest.id}")
+    publisher = hook("publish_result")
+    if "tests" in manifest.capabilities and not publisher:
+        raise ValueError(f"回归能力缺少 publish_result: {manifest.id}")
+    return ProviderExtensions(
+        deployment=provider if templates else None,
+        regression=provider if publisher else None,
+        import_files=hook("deployment_import_files"),
+        invalidate=hook("deployment_invalidate"),
+        after_command=hook("after_command"),
+        progress_observer=hook("progress_observer"),
+    )
+
+
+class ProductRegistry:
+    """One provider instance per installed package revision, with explicit refresh."""
+    def __init__(self, root):
+        self.root = Path(root)
+        self._entries = {}
+        self._lock = threading.RLock()
+
+    def validate_installed(self):
+        for manifest in discover_products(self.root).values():
+            if manifest.provider_path is not None:
+                self.entry(manifest.id)
+
+    def refresh(self):
+        with self._lock:
+            self._entries.clear()
+
+    def entry(self, product_id):
+        with self._lock:
+            manifest = discover_products(self.root).get(product_id)
+            if manifest is None:
+                self._entries.pop(product_id, None)
+                raise ValueError("产品未安装: " + product_id)
+            paths = [manifest.package_root / "product.yaml"]
+            if manifest.provider_path:
+                paths.append(manifest.package_root / manifest.provider_path)
+            revision = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size, p.stat().st_ino)
+                             for p in paths if p.is_file())
+            cached = self._entries.get(product_id)
+            if cached is None or cached[0] != revision:
+                provider = _load_provider(manifest)
+                cached = (revision, provider, _extensions(manifest, provider))
+                self._entries[product_id] = cached
+            return cached[1:]
+
+
+_REGISTRIES = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def registry_for(settings):
+    root = settings.products_root.resolve()
+    with _REGISTRY_LOCK:
+        return _REGISTRIES.setdefault(root, ProductRegistry(root))
+
+
+def provider_for(settings: Settings, product_id: str) -> ProductProvider:
+    return registry_for(settings).entry(product_id)[0]
+
+
+def provider_extensions(settings, product_id) -> ProviderExtensions:
+    return registry_for(settings).entry(product_id)[1]
+
+
 
 
 def command_for(settings: Settings, environment: dict, action: str,

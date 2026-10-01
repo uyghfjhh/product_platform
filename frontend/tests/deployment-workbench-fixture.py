@@ -22,7 +22,7 @@ for name in ("fbase_mac", "fb_license", "fdd_mmr", "citus"):
     p.write_text("fixture")
 license_file = root / "license.dat"
 license_file.write_text("fixture")
-settings = replace(load_settings(), data_dir=root / "data", output_dir=root / "output")
+settings = replace(load_settings(), data_dir=root / "data", output_dir=root / "output", runtime_dir=root / "runtime", logs_dir=root / "logs")
 app = create_app(settings, enqueuer=lambda task_id: None)
 (root / "fixture.json").write_text(
     __import__("json").dumps(

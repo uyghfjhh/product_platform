@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from platform_app.api import public_task
+from platform_app.api.schemas import public_task
 from platform_app.filestore import FileStore
 from platform_app.result_publication import publish_regression_results
 from platform_regress.environment.disposable import DisposablePostgresResources
@@ -137,7 +137,7 @@ def test_background_input_delivered_and_captured(tmp_path):
 
 
 def test_stale_aggregate_does_not_hide_fresh_case_facts(tmp_path):
-    root = tmp_path / "output/regression/lab"
+    root = tmp_path / "output/demo/lab/runs/test-run/cases"
     (root / "smoke.case").mkdir(parents=True)
     (root / "suite-result.json").write_text(
         json.dumps(
@@ -156,23 +156,29 @@ def test_stale_aggregate_does_not_hide_fresh_case_facts(tmp_path):
     case.write_text(
         json.dumps({"target": "smoke.case", "operation_id": "new", "verdict": "FAIL"})
     )
+    if (root / "suite-result.json").is_file():
+        for row in json.loads((root / "suite-result.json").read_text()).get("results", []):
+            case_path = root / row["target"] / "result.json"
+            if not case_path.exists():
+                case_path.parent.mkdir(parents=True, exist_ok=True)
+                case_path.write_text(json.dumps(row))
     store = FileStore(tmp_path / "data")
     publish_regression_results(
         store,
-        SimpleNamespace(output_dir=tmp_path / "output"),
+        __import__("test_api").settings_for(tmp_path),
         {"id": "lab", "product_id": "demo"},
         {"id": "new", "target": "all"},
         "FAILED",
         "interrupted",
         case_targets={"smoke.case"},
     )
-    rows = store.list_results("lab")
+    rows = store.results.list_results("lab")
     assert [(row["target"], row["status"]) for row in rows] == [("smoke.case", "FAIL")]
     assert rows[0]["artifact_dir"] == str(case.parent)
 
 
 def test_partial_aggregate_does_not_hide_other_completed_cases(tmp_path):
-    root = tmp_path / "output/regression/lab"
+    root = tmp_path / "output/demo/lab/runs/test-run/cases"
     root.mkdir(parents=True)
     (root / "suite-result.json").write_text(
         json.dumps(
@@ -197,10 +203,12 @@ def test_partial_aggregate_does_not_hide_other_completed_cases(tmp_path):
             }
         )
     )
+    (root / "smoke.one").mkdir()
+    (root / "smoke.one" / "result.json").write_text(json.dumps({"target": "smoke.one", "operation_id": "new", "verdict": "PASS"}))
     store = FileStore(tmp_path / "data")
     terminal, _ = publish_regression_results(
         store,
-        SimpleNamespace(output_dir=tmp_path / "output"),
+        __import__("test_api").settings_for(tmp_path),
         {"id": "lab", "product_id": "demo"},
         {"id": "new", "target": "all"},
         "SUCCEEDED",
@@ -208,7 +216,7 @@ def test_partial_aggregate_does_not_hide_other_completed_cases(tmp_path):
         case_targets={"smoke.one", "smoke.two"},
     )
     assert terminal == "FAILED"
-    assert {row["target"] for row in store.list_results("lab")} == {
+    assert {row["target"] for row in store.results.list_results("lab")} == {
         "smoke.one",
         "smoke.two",
     }
@@ -323,8 +331,8 @@ def test_valid_empty_listener_probe_is_free(tmp_path):
 
 def task_setup(tmp_path):
     store = FileStore(tmp_path)
-    task = store.create_task("lab", "tests.demo", "smoke.case", {}, None)
-    store.transition_task(task["id"], ("QUEUED",), "RUNNING")
+    task = store.tasks.create_task("lab", "tests.demo", "smoke.case", {}, None)
+    store.tasks.transition_task(task["id"], ("QUEUED",), "RUNNING")
     return store, task
 
 
@@ -334,34 +342,34 @@ def test_terminal_and_event_are_visible_when_projection_fails(tmp_path, monkeypa
     def fail(*a, **kw):
         raise OSError("projection failed")
 
-    monkeypatch.setattr(store, "_append_event", fail)
-    assert store.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
-    meta = store.get_task(task["id"])
+    monkeypatch.setattr(store.tasks, "_append_event", fail)
+    assert store.tasks.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
+    meta = store.tasks.get_task(task["id"])
     assert meta["status"] == "SUCCEEDED" and meta["pending_events"]
     assert "pending_events" not in public_task(meta)
-    assert store.list_events(task["id"])[0]["event_type"] == "operation.finished"
+    assert store.tasks.list_events(task["id"])[0]["event_type"] == "operation.finished"
     recovered = FileStore(tmp_path)
-    assert recovered.get_task(task["id"])["status"] == "SUCCEEDED"
-    assert "pending_events" not in recovered.get_task(task["id"])
-    assert len(recovered.list_events(task["id"])) == 1
+    assert recovered.tasks.get_task(task["id"])["status"] == "SUCCEEDED"
+    assert "pending_events" not in recovered.tasks.get_task(task["id"])
+    assert len(recovered.tasks.list_events(task["id"])) == 1
 
 
 def test_retry_after_projection_success_never_duplicates_event(tmp_path, monkeypatch):
     store, task = task_setup(tmp_path)
-    original = store._write_task
+    original = store.tasks._write_task
 
     def fail_clear(row):
         if row["status"] == "SUCCEEDED" and not row.get("pending_events"):
             raise OSError("interrupted before outbox clear")
         return original(row)
 
-    monkeypatch.setattr(store, "_write_task", fail_clear)
-    store.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
-    assert len(store.list_events(task["id"])) == 1
+    monkeypatch.setattr(store.tasks, "_write_task", fail_clear)
+    store.tasks.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
+    assert len(store.tasks.list_events(task["id"])) == 1
     recovered = FileStore(tmp_path)
-    recovered.recover_event_projections()
-    lines = recovered._task_events(task["id"]).read_text().splitlines()
-    assert len(lines) == 1 and len(recovered.list_events(task["id"])) == 1
+    recovered.tasks.recover_event_projections()
+    lines = recovered.tasks._task_events(task["id"]).read_text().splitlines()
+    assert len(lines) == 1 and len(recovered.tasks.list_events(task["id"])) == 1
 
 
 def test_partial_utf8_event_append_is_replayed_from_durable_metadata(
@@ -370,15 +378,15 @@ def test_partial_utf8_event_append_is_replayed_from_durable_metadata(
     store, task = task_setup(tmp_path)
 
     def partial(*a, **kw):
-        store._task_events(task["id"]).write_bytes(b'{"payload":"\xe4')
+        store.tasks._task_events(task["id"]).write_bytes(b'{"payload":"\xe4')
         raise OSError("interrupted write")
 
-    monkeypatch.setattr(store, "_append_event", partial)
-    store.finish_task(task["id"], ("RUNNING",), "FAILED", "失败")
-    assert store.list_events(task["id"])[0]["payload"]["reason"] == "失败"
+    monkeypatch.setattr(store.tasks, "_append_event", partial)
+    store.tasks.finish_task(task["id"], ("RUNNING",), "FAILED", "失败")
+    assert store.tasks.list_events(task["id"])[0]["payload"]["reason"] == "失败"
     recovered = FileStore(tmp_path)
-    assert recovered.list_events(task["id"])[0]["payload"]["reason"] == "失败"
-    assert len(recovered._task_events(task["id"]).read_text().splitlines()) == 1
+    assert recovered.tasks.list_events(task["id"])[0]["payload"]["reason"] == "失败"
+    assert len(recovered.tasks._task_events(task["id"]).read_text().splitlines()) == 1
 
 
 def test_pending_events_keep_order_and_cursor_across_restart(tmp_path, monkeypatch):
@@ -387,12 +395,12 @@ def test_pending_events_keep_order_and_cursor_across_restart(tmp_path, monkeypat
     def fail(*a, **kw):
         raise OSError("projection failed")
 
-    monkeypatch.setattr(store, "_append_event", fail)
-    store.add_event(task["id"], "step.finished", {"title": "one"})
-    store.finish_task(task["id"], ("RUNNING",), "FAILED", "two")
-    assert [e["sequence"] for e in store.list_events(task["id"])] == [1, 2]
+    monkeypatch.setattr(store.tasks, "_append_event", fail)
+    store.tasks.add_event(task["id"], "step.finished", {"title": "one"})
+    store.tasks.finish_task(task["id"], ("RUNNING",), "FAILED", "two")
+    assert [e["sequence"] for e in store.tasks.list_events(task["id"])] == [1, 2]
     recovered = FileStore(tmp_path)
-    assert [e["sequence"] for e in recovered.list_events(task["id"], after=1)] == [2]
+    assert [e["sequence"] for e in recovered.tasks.list_events(task["id"], after=1)] == [2]
 
 
 def test_failed_authoritative_commit_does_not_publish_terminal_or_event(
@@ -403,36 +411,36 @@ def test_failed_authoritative_commit_does_not_publish_terminal_or_event(
     def fail(*a, **kw):
         raise OSError("metadata write failed")
 
-    monkeypatch.setattr(store, "_write_task", fail)
+    monkeypatch.setattr(store.tasks, "_write_task", fail)
     with pytest.raises(OSError):
-        store.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
-    assert store.get_task(task["id"])["status"] == "RUNNING"
-    assert store.list_events(task["id"]) == []
+        store.tasks.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
+    assert store.tasks.get_task(task["id"])["status"] == "RUNNING"
+    assert store.tasks.list_events(task["id"]) == []
 
 
 def test_queued_cancel_commits_its_event_even_when_projection_fails(
     tmp_path, monkeypatch
 ):
     store = FileStore(tmp_path)
-    task = store.create_task("lab", "tests.demo", "smoke.case", {}, None)
+    task = store.tasks.create_task("lab", "tests.demo", "smoke.case", {}, None)
 
     def fail(*a, **kw):
         raise OSError("projection failed")
 
-    monkeypatch.setattr(store, "_append_event", fail)
-    assert store.request_cancel(task["id"])
-    assert store.get_task(task["id"])["status"] == "CANCELLED"
+    monkeypatch.setattr(store.tasks, "_append_event", fail)
+    assert store.tasks.request_cancel(task["id"])
+    assert store.tasks.get_task(task["id"])["status"] == "CANCELLED"
     assert (
-        store.list_events(task["id"])[0]["event_type"] == "operation.cancel_requested"
+        store.tasks.list_events(task["id"])[0]["event_type"] == "operation.cancel_requested"
     )
 
 
 def test_recovery_terminal_transition_also_commits_finished_event(tmp_path):
     store, task = task_setup(tmp_path)
-    assert store.transition_task(
+    assert store.tasks.transition_task(
         task["id"], ("RUNNING",), "RECOVERY_REQUIRED", reason="restart"
     )
-    assert store.list_events(task["id"])[0]["payload"]["status"] == "RECOVERY_REQUIRED"
+    assert store.tasks.list_events(task["id"])[0]["payload"]["status"] == "RECOVERY_REQUIRED"
 
 
 def test_event_stream_drains_finish_racing_with_event_read(tmp_path, monkeypatch):
@@ -443,9 +451,9 @@ def test_event_stream_drains_finish_racing_with_event_read(tmp_path, monkeypatch
 
     app = create_app(settings_for(tmp_path), enqueuer=lambda task_id: None)
     store = app.state.store
-    task = store.create_task("lab", "tests.demo", "smoke.case", {}, None)
-    store.transition_task(task["id"], ("QUEUED",), "RUNNING")
-    original = store.list_events
+    task = store.tasks.create_task("lab", "tests.demo", "smoke.case", {}, None)
+    store.tasks.transition_task(task["id"], ("QUEUED",), "RUNNING")
+    original = store.tasks.list_events
     first = True
 
     def race(task_id, after=0):
@@ -453,13 +461,13 @@ def test_event_stream_drains_finish_racing_with_event_read(tmp_path, monkeypatch
         snapshot = original(task_id, after)
         if first:
             first = False
-            store.finish_task(task_id, ("RUNNING",), "SUCCEEDED", "done")
+            store.tasks.finish_task(task_id, ("RUNNING",), "SUCCEEDED", "done")
         return snapshot
 
     async def no_wait(*a):
         pass
 
-    monkeypatch.setattr(store, "list_events", race)
+    monkeypatch.setattr(store.tasks, "list_events", race)
     monkeypatch.setattr("asyncio.sleep", no_wait)
     endpoint = next(
         route.endpoint

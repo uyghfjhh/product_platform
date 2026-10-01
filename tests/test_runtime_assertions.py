@@ -25,7 +25,7 @@ class FakeCase(object):
 
 def make_runtime(root):
     spec = ReportSpec("demo", "demo_suite.demo", "demo case", "demo_suite")
-    runtime = ReportRuntime(root, spec, output_root=root / "output", context_data={})
+    runtime = ReportRuntime(root, spec, case_dir=root / "case", lock_dir=root / "runtime", context_data={})
     runtime.write_report = lambda *a, **k: None  # avoid rendering on tmp dirs
     return runtime
 

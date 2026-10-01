@@ -5,6 +5,7 @@ import os
 from ..catalog import list_products
 from ..config import Settings
 from ..product_catalog import discover_products
+from .contracts import Product
 
 
 def register(app, settings: Settings) -> None:
@@ -13,11 +14,13 @@ def register(app, settings: Settings) -> None:
     def health():
         return {
             "status": "ok", "storage": "files",
-            "platform_dir": str(settings.platform_dir),
-            "environment_dir": str(settings.environment_dir),
+            "runtime_dir": str(settings.runtime_dir),
+            "logs_dir": str(settings.logs_dir),
+            "environment_records_dir": str(settings.environment_records_dir),
+            "profiles_dir": str(settings.profiles_dir),
         }
 
-    @app.get("/api/v1/products")
+    @app.get("/api/v1/products", response_model=list[Product])
     def products():
         return list_products(settings)
 

@@ -226,7 +226,7 @@ def build_step_topology_snapshots(
                         current_cluster_states[c["name"]] = "VALID_DEGRADED"
                         break
 
-            event_desc = f"🚨 达到阈值确认故障屏蔽：持续停机达到阈值，节点彻底剔除，只读路由切断，Site 降级为 VALID_DEGRADED"
+            event_desc = "🚨 达到阈值确认故障屏蔽：持续停机达到阈值，节点彻底剔除，只读路由切断，Site 降级为 VALID_DEGRADED"
         elif is_recovery:
             event_type = "recovery"
             recovered_node_name = ""
@@ -266,10 +266,10 @@ def build_step_topology_snapshots(
                         current_cluster_states[c["name"]] = "VALID"
                         break
 
-            event_desc = f"🔄 持续成功达到阈值确认恢复：探测成功达标，节点自动重新准入只读候选，读路由与流复制恢复"
+            event_desc = "🔄 持续成功达到阈值确认恢复：探测成功达标，节点自动重新准入只读候选，读路由与流复制恢复"
         else:
             event_type = "normal"
-            event_desc = f"📊 路由基线检查：控制台查询路由分配，主库承接写流量，从库准入只读候选"
+            event_desc = "📊 路由基线检查：控制台查询路由分配，主库承接写流量，从库准入只读候选"
 
         # 用累积状态覆盖基础拓扑，生成本步骤的快照
         snapshot_clusters = []
@@ -539,15 +539,14 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
         suite_name = target
         case_name = target
 
-    report_root = Path(root_dir)
-    case_dir = report_root / "output" / "runs" / suite_name / case_name
+    case_dir = Path(root_dir)
     report_file = case_dir / "report.txt"
 
     if not report_file.exists():
         return {
             "found": False,
             "target": target,
-            "error": f"未找到测试报告文件: output/runs/{suite_name}/{case_name}/report.txt",
+            "error": f"未找到测试报告文件: {case_dir}/report.txt",
         }
 
     raw_text = report_file.read_text(encoding="utf-8", errors="replace")
@@ -721,7 +720,7 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
             logs.append(f"logs/{lf.name}")
 
     topology = extract_topology(raw_text, suite_name, steps=steps,
-                                config_dirs=config_dirs or [report_root])
+                                config_dirs=config_dirs or [case_dir])
 
     return {
         "found": True,

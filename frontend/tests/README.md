@@ -66,7 +66,7 @@ PLATFORM_URL=http://127.0.0.1:8766 node tests/license-management.mjs
   **异步预取**，测试里显式填写避免竞态。
 - **拓扑**：2D 为 GSAP/SVG（`DeploymentCanvas`），节点 `.topo-node[data-node-id]`
   （非 react-flow）；点节点标题/正文开节点详情 Drawer（`数据目录`、`启动节点`），
-  点卡片中部的"💻 SQL 控制台"行开 SQL 工作台。**注意**：`.topo-node` 几何中心
+  点卡片中部的"💻 SQL 控制台"行进入统一 Studio SQL 视图。**注意**：`.topo-node` 几何中心
   正好落在 SQL 快捷行上，测试须点 `.node-label-text` 等标题区进入详情抽屉。
 - **测试页**（regress-console）：用例行 `div.case-row`，名称 `.case-name`
   （文本是 `c.name`，**target 在 title 属性**）；搜索框 placeholder
@@ -90,3 +90,17 @@ PLATFORM_URL=http://127.0.0.1:18767 node tests/report-viewer.mjs
 ```
 
 覆盖两个测试页的“查看报告”、步骤与实际结果、原始报告预览／下载、HTML 导出，并检查浏览器运行错误。
+
+
+## 统一 Studio 工作区验收
+
+启动 `deployment-workbench-fixture.py` 的隔离服务后运行：
+
+```bash
+PLATFORM_URL=http://127.0.0.1:18769 node tests/studio-workspace.mjs
+```
+
+验证旧重复界面不存在、四套平台主题即时同步、同端口不同主机按节点 ID 切换、原生 SQL 编辑器、全屏与移动端布局。Studio 执行请求由浏览器拦截并提供原生适配器模拟元数据，不执行真实 SQL。
+
+
+画布模板的无脚本标记与特殊字符检查：`node tests/deployment-canvas-events.mjs`。生成注册文件与 API 类型不跟踪，直接运行 `npm run build` 会通过 prebuild 重建。

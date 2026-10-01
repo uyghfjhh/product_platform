@@ -37,8 +37,8 @@ def run_clean(source_root: Path, output_root: Path,
         _remove_source_artifacts(source_root, result)
     if include_output or output_only:
         for name in REGRESSION_OUTPUT_ENTRIES:
-            _safe_remove_path(output_root / "output" / name, result)
+            _safe_remove_path(output_root / name, result)
     elif prune_logs:
-        prune_run_artifacts(output_root / "output" / "runs",
+        prune_run_artifacts(output_root / "runs",
                             max_file_size_mb=max_log_size_mb, result=result)
     return result

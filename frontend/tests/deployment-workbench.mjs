@@ -5,6 +5,7 @@ import { chromium } from 'playwright';
 const base = process.env.PLATFORM_URL || 'http://127.0.0.1:18769';
 if (!process.env.DEPLOYMENT_FIXTURE) throw new Error('Set DEPLOYMENT_FIXTURE to the fixture JSON printed by deployment-workbench-fixture.py');
 const fixture = JSON.parse(await readFile(process.env.DEPLOYMENT_FIXTURE, 'utf8'));
+// AntD's leaving loading icon can remain in the accessible name; match the action suffix.
 const name = '工作台浏览器验收-' + Date.now();
 const browser = await chromium.launch({ headless: true });
 try {
@@ -17,13 +18,13 @@ try {
  await page.getByRole('button',{name:'新建部署方案',exact:true}).click();
  const dialog=page.getByRole('dialog');
  await dialog.getByLabel('方案名称',{exact:true}).fill(name);
- await dialog.getByRole('button',{name:'下一步',exact:true}).click();
+ await dialog.getByRole('button',{name:/下一步$/}).click();
  await dialog.getByLabel('数据库安装目录（PGHOME）',{exact:true}).fill(fixture.home);
  await dialog.getByLabel('数据根目录',{exact:true}).fill(fixture.data_root);
  await dialog.getByLabel('License 文件',{exact:true}).fill(fixture.license_file);
- await dialog.getByLabel('主节点起始端口',{exact:true}).fill('45120');
+ await dialog.getByLabel('主节点起始端口',{exact:true}).fill('7000');
  await dialog.getByRole('button',{name:'探测数据库安装',exact:true}).click();
- await dialog.getByRole('button',{name:'下一步',exact:true}).click();
+ await dialog.getByRole('button',{name:/下一步$/}).click();
  await dialog.getByText('mac_primary',{exact:true}).waitFor();
  await dialog.getByRole('button',{name:'保存草稿',exact:true}).click();
  await page.getByText('草稿已保存',{exact:true}).waitFor();
@@ -34,10 +35,10 @@ try {
  await page.getByRole('button',{name:'新建部署方案',exact:true}).click();
  await dialog.getByLabel('继续已有草稿',{exact:true}).click();
  await page.locator('.ant-select-item-option-content',{hasText:name}).click();
- await dialog.getByRole('button',{name:'下一步',exact:true}).click();
+ await dialog.getByRole('button',{name:/下一步$/}).click();
  await dialog.getByLabel('数据库安装目录（PGHOME）',{exact:true}).waitFor({state:'visible'});
  assert.equal(await dialog.getByLabel('数据库安装目录（PGHOME）',{exact:true}).inputValue(),fixture.home);
- await dialog.getByRole('button',{name:'下一步',exact:true}).click();
+ await dialog.getByRole('button',{name:/下一步$/}).click();
  await dialog.getByRole('button',{name:'检查并生成部署计划',exact:true}).click();
  await dialog.getByText('检查通过，可关联方案或提交执行',{exact:true}).waitFor();
  assert.equal(await dialog.getByRole('button',{name:'按计划部署并验收',exact:true}).isDisabled(),true);

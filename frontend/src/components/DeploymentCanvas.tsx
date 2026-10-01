@@ -180,11 +180,12 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     const target = event.target as Element;
-    if (target.closest('.topo-canvas-state-banner .action-btn')) { onDeploy(); return; }
+    const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
+    if (action === 'deploy') { onDeploy(); return; }
     const card = target.closest<HTMLElement>('[data-node-id]');
     const node = topology.nodes.find((item) => item.id === card?.dataset.nodeId);
     if (!node) return;
-    if (target.closest('.node-quick-sql-btn')) {
+    if (action === 'sql') {
       onOpenSql(node);
     } else {
       onSelectNode(node);

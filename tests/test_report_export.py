@@ -48,52 +48,24 @@ class RowMappingTest(unittest.TestCase):
 
 
 class CollectFromRunTest(unittest.TestCase):
-    def test_suite_result_json_is_authoritative(self):
+    def test_cases_are_collected_from_canonical_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "suite-result.json").write_text(json.dumps({
-                "targets": ["s.a", "s.b"],
-                "results": [case_result("s.a", "PASS"),
-                            case_result("s.b", "BLOCKED", "缺依赖")],
-            }), encoding="utf-8")
+            for target, verdict in (("s.a", "PASS"), ("s.b", "FAIL")):
+                case = root / "cases" / target
+                case.mkdir(parents=True)
+                (case / "result.json").write_text(json.dumps(case_result(target, verdict)))
+            (root / "suite-result.json").write_text(json.dumps({"results": [case_result("s.a", "FAIL")]}))
             rows = collect_results_from_run(root)
-            self.assertEqual(["s.a", "s.b"], [r["target"] for r in rows])
-            self.assertEqual("SKIPPED", rows[1]["status"])
-            self.assertEqual("缺依赖", rows[1]["message"])
+            self.assertEqual(["PASS", "FAIL"], [row["status"] for row in rows])
 
-    def test_single_result_json(self):
+    def test_missing_facts_do_not_guess_verdict_from_text(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "result.json").write_text(
-                json.dumps(case_result("s.only", "FAIL", "nope")),
-                encoding="utf-8")
-            rows = collect_results_from_run(root)
-            self.assertEqual([("s.only", "FAIL")],
-                             [(r["target"], r["status"]) for r in rows])
-
-    def test_per_target_child_dirs(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name, verdict in (("mmr.a", "PASS"), ("mmr.b", "FAIL")):
-                child = root / name
-                child.mkdir()
-                (child / "result.json").write_text(
-                    json.dumps(case_result(name, verdict)), encoding="utf-8")
-            (root / "_sessions").mkdir()  # session scratch dirs are skipped
-            rows = collect_results_from_run(root)
-            self.assertEqual(["PASS", "FAIL"], [r["status"] for r in rows])
-
-    def test_legacy_runs_layout_fallback(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            case_dir = root / "runs" / "suite1" / "case_a"
-            case_dir.mkdir(parents=True)
-            (case_dir / "summary.json").write_text(
-                json.dumps({"status": "PASS", "duration": 2.0}),
-                encoding="utf-8")
-            rows = collect_results_from_run(root)
-            self.assertEqual([("suite1", "case_a", "PASS")],
-                             [(r["suite"], r["case"], r["status"]) for r in rows])
+            case = root / "cases" / "s.a"
+            case.mkdir(parents=True)
+            (case / "report.txt").write_text("Status: PASS")
+            self.assertEqual([], collect_results_from_run(root))
 
 
 class ExportTest(unittest.TestCase):

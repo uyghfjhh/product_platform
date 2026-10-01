@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 
 
 class CaseSpec(object):

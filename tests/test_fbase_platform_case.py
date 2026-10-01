@@ -1,3 +1,4 @@
+from artifact_layout import latest_case
 import copy
 import json
 
@@ -45,11 +46,11 @@ def test_migrated_case_blocks_without_real_cluster_topology(tmp_path):
     })
     assert submitted.status_code == 202, submitted.text
     run_task(app.state.store, settings, queued[0])
-    task = app.state.store.get_task(queued[0])
-    result = app.state.store.list_results("fbase-lab")[0]
+    task = app.state.store.tasks.get_task(queued[0])
+    result = app.state.store.results.list_results("fbase-lab")[0]
     assert task["status"] == "FAILED"
     assert result["status"] == "BLOCKED"
-    payload = json.loads((settings.output_dir / "regression" / "fbase-lab" / TARGET / "result.json").read_text())
+    payload = json.loads((latest_case(settings, "fbase-database", "fbase-lab", TARGET) / "result.json").read_text())
     assert payload["operation_id"] == queued[0]
     assert "拓扑" in payload["reason"]
 
@@ -76,7 +77,7 @@ def test_migrated_case_replaces_stale_result_with_error(tmp_path):
     )
     assert terminal == "FAILED"
     assert "本次没有生成" in reason
-    assert store.list_results("lab")[0]["status"] == "ERROR"
+    assert store.results.list_results("lab")[0]["status"] == "ERROR"
 
 
 def test_migrated_case_records_failed_extension_assertion(tmp_path, catalog_module):

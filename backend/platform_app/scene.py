@@ -65,7 +65,7 @@ def emit_configured_scene(store: FileStore, settings: Settings, task_id: str,
                 details={"host": node.get("host"), "port": node.get("port")},
             ) for node in topology["nodes"])
             relations.extend(SceneRelation(**edge) for edge in topology["edges"])
-    store.add_event(task_id, "scene.topology.configured", SceneTopology(
+    store.tasks.add_event(task_id, "scene.topology.configured", SceneTopology(
         product_id=environment["product_id"], environment_id=environment["id"],
         entities=[entity.model_dump() for entity in entities],
         relations=[relation.model_dump() for relation in relations],
@@ -77,13 +77,13 @@ def emit_observation(store: FileStore, task_id: str, entity_id: str, state: str,
     event = EntityObserved(
         entity_id=entity_id, state=state, source=source, details=details or {},
     )
-    store.add_event(task_id, "scene.entity.observed", event.model_dump())
+    store.tasks.add_event(task_id, "scene.entity.observed", event.model_dump())
 
 
 def emit_action(store: FileStore, task_id: str, environment: dict, action: str,
                 target: str, phase: str, success: bool | None = None) -> None:
     entity_id = target if action.startswith("deployment.") and "." not in target else endpoint_id(environment)
-    store.add_event(task_id, f"scene.action.{phase}", SceneAction(
+    store.tasks.add_event(task_id, f"scene.action.{phase}", SceneAction(
         entity_id=entity_id, action=action, target=target, success=success,
     ).model_dump())
 
@@ -96,7 +96,7 @@ def emit_pgcluster_status(store: FileStore, settings: Settings, task_id: str,
     try:
         statuses = observed_status(settings, environment)
     except (OSError, ValueError, RuntimeError, TimeoutExpired) as exc:
-        store.add_event(task_id, "scene.observation.error", SceneObservationError(
+        store.tasks.add_event(task_id, "scene.observation.error", SceneObservationError(
             source="pgcluster.status", message=str(exc),
         ).model_dump())
         return

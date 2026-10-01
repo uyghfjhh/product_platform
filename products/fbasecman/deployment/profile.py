@@ -4,17 +4,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-
 from platform_app.config import Settings
 
 
 def profile_paths(settings: Settings, environment_id: str) -> tuple[Path, Path]:
-    root = settings.environment_dir / "profiles" / environment_id
+    root = settings.profiles_dir / environment_id
     return root / "pgcluster.yaml", root / "regress.override.yaml"
 
 
 def evidence_root(settings: Settings, environment_id: str) -> Path:
-    return settings.output_dir / "fbasecman" / environment_id
+    return settings.artifact_dir("fbasecman", environment_id)
 
 
 def build_profile(
@@ -141,7 +140,7 @@ def build_profile(
             }
         },
     }
-    output_root = evidence_root(settings, environment["id"]) / "output"
+    environment_id = environment["id"]
     regression = {
         "database": {
             "enable_citus": use_citus,
@@ -152,8 +151,10 @@ def build_profile(
             "ports": all_ports,
         },
         "framework": {
-            "output_dir": str(output_root),
-            "environment_output_dir": str(output_root / "env"),
+            "output_dir": str(settings.artifact_dir("fbasecman", environment_id)),
+            "runtime_dir": str(settings.runtime_dir / "products" / "fbasecman" / environment_id),
+            "state_dir": str(settings.regression_state_dir("fbasecman", environment_id)),
+            "environment_output_dir": str(settings.profile_dir(environment_id) / "fixture"),
         },
     }
     return deployment, regression

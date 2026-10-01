@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Modal,
+  Alert, Modal,
 } from 'antd';
 
 import {
-  api, operationRequest, type Case, type Environment, type Product,
-  type RegressionBinding, type Result, type Task,
+  api, type Case, type Environment, type Product,
+  type RegressionBinding, type Task,
 } from '../platform/api';
 import { testAdapter, testFrontend, type TestMode } from '../products/testRegistry';
 import DiagnosisDrawer from '../components/DiagnosisDrawer';
 import EvidenceDrawer from '../platform/EvidenceDrawer';
 import PlatformReportViewer from '../platform/ReportViewer';
 import TestBindingBar from '../components/TestBindingBar';
-import { FileSearchOutlined } from '@ant-design/icons';
+import CaseSuiteList from './tests/CaseSuiteList';
+import { useTestData } from './tests/useTestData';
+import { useTestExecution } from './tests/useTestExecution';
 
 export type SubProduct = TestMode;
 
@@ -30,7 +32,6 @@ type Props = {
 
 type FilterStatus = 'all' | 'PASS' | 'FAIL' | 'UNTESTED';
 
-const ACTIVE_STATUSES = ['QUEUED', 'RUNNING', 'CANCELLING'];
 
 
 export default function TestsPage({
@@ -44,17 +45,6 @@ export default function TestsPage({
   tasks = [],
   profileId,
 }: Props) {
-  const { message, modal } = App.useApp();
-
-  // 1. 数据状态
-  const [cases, setCases] = useState<Case[]>([]);
-  const [results, setResults] = useState<Result[]>([]);
-  const [sourceStatuses, setSourceStatuses] = useState<
-    Record<string, { status: string; duration?: string; has_report?: boolean; modified_at: number }>
-  >({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
   // 2. 筛选与展开交互状态
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
@@ -62,87 +52,25 @@ export default function TestsPage({
   const [reportTarget, setReportTarget] = useState<string | null>(null);
   const [evidenceTarget, setEvidenceTarget] = useState<string | null>(null);
   const [diagnosisTarget, setDiagnosisTarget] = useState<string | null>(null);
-  const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
   const [failedModalOpen, setFailedModalOpen] = useState(false);
   const [failedReasons, setFailedReasons] = useState<Record<string, string>>({});
   const [failedSteps, setFailedSteps] = useState<Record<string, Array<{
     status: string; title?: string; actual?: string; expected?: string;
   }>>>({});
-  const [flakyMap, setFlakyMap] = useState<Record<string, { flaky: boolean; recent: string[] }>>({});
 
   useEffect(() => { setFailedReasons({}); setFailedSteps({}); }, [environment?.id]);
 
-  // Flaky 追踪：拉取该环境最近判定历史，标记不稳定用例
-  useEffect(() => {
-    if (!environment?.id) { setFlakyMap({}); return; }
-    let cancelled = false;
-    void api<Record<string, { flaky: boolean; recent: string[] }>>(
-      `/environments/${encodeURIComponent(environment.id)}/flaky`)
-      .then((data) => { if (!cancelled) setFlakyMap(data || {}); })
-      .catch(() => { if (!cancelled) setFlakyMap({}); });
-    return () => { cancelled = true; };
-  }, [environment?.id, results]);
-
   const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
+  const { cases, results, sourceStatuses, flakyMap, loading, error, refreshResults } =
+    useTestData(adapter.productId, environment?.id, adapter, tasks);
+  const { runTarget, runSuite, terminalTaskId } = useTestExecution(environment, adapter, openTask);
+  useEffect(() => {
+    setExpandedSuites(new Set(cases.map((item) => item.suite)));
+  }, [cases]);
   const ReportDrawer = testFrontend(product)?.ReportViewer || PlatformReportViewer;
   const reportPath = adapter.reportPath || ((environmentId: string, format: 'junit' | 'html') =>
     `/environments/${encodeURIComponent(environmentId)}/reports/${format}`);
   const RegressionTerminal = testFrontend(product)?.RegressionTerminal;
-  const effectiveProductId = adapter.productId;
-
-  // 3. 获取测试用例清单
-  useEffect(() => {
-    setError('');
-    setLoading(true);
-    void api<Case[]>(`/cases?product_id=${encodeURIComponent(effectiveProductId)}`)
-      .then((data) => {
-        let filtered = data;
-        if (adapter.suiteFilter) filtered = data.filter((c) => c.suite === adapter.suiteFilter);
-        setCases(filtered);
-        const allSuites = Array.from(new Set(filtered.map((c) => c.suite)));
-        setExpandedSuites(new Set(allSuites));
-      })
-      .catch((cause) => {
-        setCases([]);
-        setError(cause.message);
-      })
-      .finally(() => setLoading(false));
-  }, [effectiveProductId, adapter.suiteFilter]);
-
-  // 4. 刷新执行结果与状态
-  async function refreshResults() {
-    if (environment) {
-      await api<Result[]>(`/environments/${encodeURIComponent(environment.id)}/results`)
-        .then(setResults)
-        .catch(() => setResults([]));
-    } else {
-      setResults([]);
-    }
-    if (adapter.sourceStatusPath) {
-      await api<Record<string, { status: string; duration?: string; has_report?: boolean; modified_at: number }>>(
-        adapter.sourceStatusPath(environment?.id)
-      )
-        .then(setSourceStatuses)
-        .catch(() => setSourceStatuses({}));
-    } else {
-      setSourceStatuses({});
-    }
-  }
-
-  useEffect(() => {
-    void refreshResults();
-  }, [environment?.id, adapter.sourceStatusPath]);
-
-  // 按需轮询（§8.1）：仅本环境存在执行中任务时刷新结果，静态查阅不轮询。
-  const hasActiveEnvTask = tasks.some((item) =>
-    item.environment_id === environment?.id && ACTIVE_STATUSES.includes(item.status));
-  useEffect(() => {
-    if (!hasActiveEnvTask) return;
-    const timer = window.setInterval(() => {
-      void refreshResults();
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [environment?.id, effectiveProductId, hasActiveEnvTask]);
 
   const resultByTarget = useMemo(() => new Map(results.map((item) => [item.target, item])), [results]);
 
@@ -310,53 +238,6 @@ export default function TestsPage({
     setExpandedSuites(new Set());
   };
 
-  // 10. 执行单个用例
-  async function runTarget(target: string, cluster?: string) {
-    if (!adapter.action) {
-      message.error('此产品没有注册可执行的前端测试动作');
-      return;
-    }
-    if (!environment) {
-      message.warning('请先在顶部选择绑定测试环境');
-      return;
-    }
-    const effectiveCluster = cluster || adapter.clusterForSuite('');
-    try {
-      const task = await operationRequest(
-        environment.id,
-        adapter.action,
-        target,
-        adapter.mode === 'cman' ? {} : { cluster: effectiveCluster },
-        true,
-      );
-      if (adapter.supportsTerminal) setTerminalTaskId(task.id);
-      else openTask(task.id);
-    } catch (cause) {
-      message.error((cause as Error).message);
-    }
-  }
-
-  // 11. 执行整套用例
-  async function runSuite(suiteId: string) {
-    if (!environment) {
-      message.warning('请先在顶部选择绑定测试环境');
-      return;
-    }
-    const confirmed = await new Promise<boolean>((resolve) =>
-      modal.confirm({
-        title: '执行整套用例',
-        content: `确认在环境【${environment.title}】执行套件【${suiteId}】的全部用例？`,
-        okText: '确认执行',
-        cancelText: '取消',
-        onOk: () => resolve(true),
-        onCancel: () => resolve(false),
-      }),
-    );
-    if (confirmed) {
-      const cluster = adapter.clusterForSuite(suiteId);
-      await runTarget(suiteId, cluster);
-    }
-  }
 
   return (
     <>
@@ -575,138 +456,12 @@ export default function TestsPage({
         </section>
 
         {/* 4. 套件树与用例列表 (Tree & Accordion Cards) */}
-        <section className="tree-container">
-          {loading && cases.length === 0 ? (
-            <div className="loading-state">
-              <span>正在加载测试清单与执行状态...</span>
-            </div>
-          ) : groupedSuites.length === 0 ? (
-            <div className="loading-state">
-              <span>🔍 没有符合当前筛选条件的测试用例</span>
-            </div>
-          ) : (
-            groupedSuites.map((s) => {
-              const isExpanded = expandedSuites.has(s.suiteId);
-
-              return (
-                <div key={s.suiteId} className={`suite-card ${isExpanded ? 'expanded' : ''}`}>
-                  <div className="suite-header" onClick={() => toggleSuite(s.suiteId)}>
-                    <div className="suite-header-left">
-                      <span className="suite-chevron">▶</span>
-                      <div className="suite-title-group">
-                        <div className="suite-title-row">
-                          <span className="suite-title">{s.title}</span>
-                          <span className="suite-id-tag">{s.suiteId}</span>
-                        </div>
-                        {s.description && <span className="suite-description">{s.description}</span>}
-                      </div>
-                    </div>
-
-                    <div className="suite-header-right">
-                      <div className="suite-stats-pill">
-                        <span className="suite-stat-item pass">✓ {s.passCount}</span>
-                        {s.failCount > 0 && <span className="suite-stat-item fail">✗ {s.failCount}</span>}
-                        <span className="suite-stat-item untested">○ {s.untestedCount}</span>
-                        <span className="suite-stat-item total">共 {s.total} 项</span>
-                      </div>
-
-                      <button
-                        className="suite-action-btn"
-                        disabled={!environment}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void runSuite(s.suiteId);
-                        }}
-                        title="依次执行该分类下的全部用例"
-                      >
-                        <span>▶</span> 执行整组
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="suite-cases-list">
-                    {s.cases.map((c) => {
-                      const st = getCaseStatus(c.target);
-                      const statusClass = st.toLowerCase();
-                      const dur = getCaseDuration(c.target);
-                      const canView = canViewReport(c.target);
-                      const result = resultByTarget.get(c.target);
-                      const hasArchive = Boolean(environment && result?.artifact_dir);
-
-                      return (
-                        <div key={c.target} className="case-row">
-                          <div className="case-left">
-                            {c.core_id ? (
-                              <span className="core-badge" title="方案用例编号">
-                                {c.core_id}
-                              </span>
-                            ) : (
-                              <span className="core-badge core-badge-placeholder" aria-hidden="true">
-                                -
-                              </span>
-                            )}
-                            <div className="case-name-group">
-                              <span className="case-name" title={c.target}>
-                                {c.name || c.target}
-                              </span>
-                              <span className="case-summary" title={c.summary || c.title}>
-                                {c.summary || c.title}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="case-right">
-                            <span className={`result-badge ${statusClass}`}>
-                              {st === 'PASS' ? '✓ PASS' : st === 'FAIL' ? '✗ FAIL' : '○ UNTESTED'}
-                            </span>
-                            {flakyMap[c.target]?.flaky && (
-                              <span className="flaky-badge"
-                                title={`最近判定不一致: ${(flakyMap[c.target].recent || []).join(' → ')}`}>
-                                ⚡ flaky
-                              </span>
-                            )}
-                            <span className="duration-label" title="测试耗时">
-                              {dur}
-                            </span>
-
-                            <button
-                              className="btn-run-case"
-                              disabled={!environment || !c.enabled}
-                              onClick={() => void runTarget(c.target, c.suite)}
-                              title="单独执行此测试项"
-                            >
-                              ▶ 执行
-                            </button>
-
-                            {(adapter.supportsLegacyReports || environment) && (
-                              <button
-                                className="btn-view-report"
-                                disabled={!canView}
-                                onClick={() => setReportTarget(c.target)}
-                                title={canView ? '点击查看沉浸式步骤报告' : '用例尚未执行，暂无报告'}
-                              >
-                                📄 查看报告
-                              </button>
-                            )}
-                            {hasArchive && <button className="btn-view-report"
-                              onClick={() => setEvidenceTarget(c.target)} title="查看本次平台归档证据">
-                              <FileSearchOutlined /> 证据
-                            </button>}
-                            {st === 'FAIL' && resultByTarget.has(c.target) && (
-                              <button className="btn-diagnose" onClick={() => setDiagnosisTarget(c.target)} title="结合证据与源码分析失败">
-                                AI 分析
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </section>
+        <CaseSuiteList adapter={adapter} cases={cases} loading={loading} groupedSuites={groupedSuites}
+          expandedSuites={expandedSuites} environment={environment} toggleSuite={toggleSuite}
+          runSuite={runSuite} runTarget={runTarget} getCaseStatus={getCaseStatus}
+          getCaseDuration={getCaseDuration} canViewReport={canViewReport}
+          resultByTarget={resultByTarget} flakyMap={flakyMap} setReportTarget={setReportTarget}
+          setEvidenceTarget={setEvidenceTarget} setDiagnosisTarget={setDiagnosisTarget} />
       </div>
 
       {/* 5. 已失败测试用例清单弹窗 (Failed Cases Modal) */}

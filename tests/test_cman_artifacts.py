@@ -17,8 +17,9 @@ from test_fbasecman_profile import settings_for
 
 def _write_case(settings, environment_id, target, status):
     suite, case = target.split(".", 1)
-    directory = evidence_root(settings, environment_id) / "output" / "runs" / suite / case
+    directory = evidence_root(settings, environment_id) / "runs" / "test-run" / "cases" / target
     directory.mkdir(parents=True)
+    (directory / "result.json").write_text(json.dumps({"schema_version": "1.0", "target": target, "verdict": status, "evidence": []}))
     (directory / "summary.json").write_text(json.dumps({"target": target, "status": status, "reason": "断言结果"}))
     (directory / "report.txt").write_text(
         f"用例: {target}\n结论: {status}\n测试开始时间: 2026-09-23 12:00:00\n"
@@ -68,14 +69,17 @@ def test_current_result_sync_keeps_other_environment_and_rejects_old_fallback(tm
     _write_case(settings, "lab-a", "guc.case_one", "PASS")
     environment = {"id": "lab-a", "product_id": "fbasecman"}
     from platform_app.result_publication import publish_regression_results
-    fact_dir = settings.output_dir / "regression" / "lab-a" / "guc.case_one"
+    fact_dir = settings.artifact_dir("fbasecman", "lab-a") / "runs" / "new-run" / "cases" / "guc.case_one"
     fact_dir.mkdir(parents=True)
+    (fact_dir / "logs").mkdir()
+    (fact_dir / "logs" / "case.log").write_text("ERROR failure\n")
     (fact_dir / "result.json").write_text(json.dumps({"target": "guc.case_one", "verdict": "PASS", "operation_id": "run-1"}))
     assert publish_regression_results(store, settings, environment,
         {"id": "run-1", "target": "guc.case_one"}, "SUCCEEDED", "done",
         case_targets={"guc.case_one"})[0] == "SUCCEEDED"
-    assert store.list_results("lab-a")[0]["status"] == "PASS"
-    assert case_artifacts(settings, "guc.case_one", "lab-b")["available"] is False
+    assert store.results.list_results("lab-a")[0]["status"] == "PASS"
+    with __import__("pytest").raises(FileNotFoundError):
+        case_artifacts(settings, "guc.case_one", "lab-b")
     assert case_log(settings, "guc.case_one", "logs/case.log", environment_id="lab-a")["lines"][-1] == "ERROR failure"
     try:
         command_for_task(settings, environment, "tests.fbasecman", "guc.case_one", {})
@@ -88,15 +92,15 @@ def test_current_result_sync_keeps_other_environment_and_rejects_old_fallback(tm
 def test_running_step_updates_emit_ordered_events_once(tmp_path):
     settings = settings_for(tmp_path)
     store = create_app(settings, enqueuer=lambda task_id: None).state.store
-    store.put_environment({
+    store.environments.put_environment({
         "id": "lab-a", "product_id": "fbasecman", "title": "隔离环境",
         "host": "127.0.0.1", "port": 15432, "database_name": "postgres",
         "database_user": "postgres", "deployment_config": None,
         "deployment_target": None,
     })
-    task = store.create_task("lab-a", "tests.fbasecman", "guc.sample", {}, None)
+    task = store.tasks.create_task("lab-a", "tests.fbasecman", "guc.sample", {}, None)
     started_at = time.time()
-    directory = evidence_root(settings, "lab-a") / "output" / "runs" / "guc" / "sample"
+    directory = evidence_root(settings, "lab-a") / "runs" / "test-run" / "cases" / "guc.sample"
     directory.mkdir(parents=True)
     steps = directory / "steps.json"
     steps.write_text(json.dumps({"steps": [{
@@ -106,14 +110,14 @@ def test_running_step_updates_emit_ordered_events_once(tmp_path):
     observer = CaseProgressObserver(settings, "lab-a", "guc.sample", started_at)
     observer.poll(store, task["id"])
     observer.poll(store, task["id"])
-    assert [event["event_type"] for event in store.list_events(task["id"])] == ["step.started"]
+    assert [event["event_type"] for event in store.tasks.list_events(task["id"])] == ["step.started"]
 
     steps.write_text(json.dumps({"steps": [{
         "title": "检查路由", "status": "PASS", "expected": "可读", "actual": "可读",
     }]}), encoding="utf-8")
     observer.poll(store, task["id"])
     observer.poll(store, task["id"])
-    events = store.list_events(task["id"])
+    events = store.tasks.list_events(task["id"])
     assert [event["sequence"] for event in events] == [1, 2]
     assert events[1]["event_type"] == "assertion.checked"
     assert events[1]["payload"]["actual"] == "可读"

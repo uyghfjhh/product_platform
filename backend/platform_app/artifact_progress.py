@@ -23,8 +23,8 @@ class ArtifactProgressObserver:
     def poll(self, store: FileStore, task_id: str) -> None:
         if not self.root.is_dir():
             return
-        for path in self.root.glob("*/*/steps.json"):
-            case = path.parent.parent.name + "." + path.parent.name
+        for path in self.root.glob("*/cases/*/steps.json"):
+            case = path.parent.name
             if self.target not in {"all", "failed", case, case.split(".", 1)[0]}:
                 continue
             try:
@@ -38,7 +38,7 @@ class ArtifactProgressObserver:
                 result = str(step.get("result") or step.get("status") or "RUNNING")
                 previous = self.seen.get(key)
                 if previous is None:
-                    store.add_event(
+                    store.tasks.add_event(
                         task_id,
                         "step.started",
                         {
@@ -50,7 +50,7 @@ class ArtifactProgressObserver:
                         },
                     )
                 if result in {"PASS", "FAIL"} and previous != result:
-                    store.add_event(
+                    store.tasks.add_event(
                         task_id,
                         "assertion.checked",
                         {
@@ -70,7 +70,7 @@ class ArtifactProgressObserver:
                         for fact in facts:
                             entity_id = fact.details["entity_id"]
                             if entity_id not in self.discovered_entities:
-                                store.add_event(
+                                store.tasks.add_event(
                                     task_id,
                                     "scene.entity.discovered",
                                     EntityDiscovered(

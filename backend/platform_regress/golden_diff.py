@@ -11,10 +11,10 @@ monitor 探测计数器等）豁免。
     python -m platform_regress.golden_diff golden.txt actual.txt
 
     # 目录对目录（按文件名配对 *.report.txt / report.txt）
-    python -m platform_regress.golden_diff /tmp/golden output/regression/cman-mmr/.../
+    python -m platform_regress.golden_diff /tmp/golden output/fbasecman/cman-mmr/runs/.../
 
     # 采集基线：把产物目录的报告复制成 <target>.report.txt 命名的 golden 目录
-    python -m platform_regress.golden_diff --capture output/regression/cman-mmr /tmp/golden/cman-mmr
+    python -m platform_regress.golden_diff --capture output/fbasecman/cman-mmr/runs /tmp/golden/cman-mmr
 
 退出码：0 全部一致；1 存在差异或缺失；2 用法错误。
 """

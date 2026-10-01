@@ -8,7 +8,7 @@ from test_api import settings_for
 
 
 def _environment(store):
-    store.put_environment({
+    store.environments.put_environment({
         "id": "lab", "product_id": "fbase-database", "title": "数据库测试",
         "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
         "database_user": "postgres", "deployment_config": None,
@@ -42,10 +42,10 @@ def test_diagnosis_is_separate_from_result_and_becomes_stale(tmp_path, monkeypat
     app = create_app(settings, enqueuer=lambda _: None)
     store = app.state.store
     _environment(store)
-    store.put_result("fbase-database", "lab", "mmr.case", "default", "FAIL", "断言失败", None)
+    store.results.put_result("fbase-database", "lab", "mmr.case", "default", "FAIL", "断言失败", None)
     client = TestClient(app)
     monkeypatch.setattr(actions, "diagnose", lambda store, _settings, result: (
-        store.put_diagnosis(result, "hash", "test-model", {
+        store.diagnoses.put_diagnosis(result, "hash", "test-model", {
             "analysis": {"summary": "检查复制状态", "facts": []}, "evidence": [],
         }) or {"analysis": {"facts": []}}
     ))
@@ -57,7 +57,7 @@ def test_diagnosis_is_separate_from_result_and_becomes_stale(tmp_path, monkeypat
     diagnosis = client.get("/api/v1/environments/lab/diagnostics/mmr.case").json()
     assert diagnosis["content"]["analysis"]["summary"] == "检查复制状态"
     assert diagnosis["stale"] is False
-    assert store.get_result("fbase-database", "lab", "mmr.case")["status"] == "FAIL"
+    assert store.results.get_result("fbase-database", "lab", "mmr.case")["status"] == "FAIL"
 
-    store.put_result("fbase-database", "lab", "mmr.case", "default", "PASS", None, None)
+    store.results.put_result("fbase-database", "lab", "mmr.case", "default", "PASS", None, None)
     assert client.get("/api/v1/environments/lab/diagnostics/mmr.case").json()["stale"] is True

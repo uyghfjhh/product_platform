@@ -1,3 +1,4 @@
+from artifact_layout import latest_run, latest_case
 import json
 import os
 import subprocess
@@ -113,7 +114,7 @@ def test_product_case_runs_via_platform_cli(tmp_path):
     env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(root / "backend"), str(root)))}
     process = subprocess.run(
         [sys.executable, "-m", "platform_regress.cli", "--product-dir", str(package),
-         "--output-dir", str(output), "demo.query"],
+         "--output-dir", str(output), "--state-dir", str(tmp_path / "state"), "demo.query"],
         cwd=root, env=env, capture_output=True, text=True, timeout=20, check=False,
     )
     assert process.returncode == 0, process.stdout + process.stderr
@@ -121,7 +122,7 @@ def test_product_case_runs_via_platform_cli(tmp_path):
                  if line.startswith("{")][-1]
     assert json.loads(json_line)["verdict"] == "PASS"
     assert "[1/1]" in process.stdout and "PASS" in process.stdout.splitlines()[0]
-    payload = json.loads((output / "result.json").read_text())
+    payload = json.loads((latest_run(output) / "cases" / "demo.query" / "result.json").read_text())
     assert payload["evidence"] == [f"artifacts/{payload['execution_id']}/sql.log"]
 
 
@@ -140,7 +141,7 @@ def test_platform_cli_accepts_explicit_nodes(tmp_path):
         "CASES = {'demo.case': Case()}\n",
         encoding="utf-8",
     )
-    assert main(["--product-dir", str(package), "--output-dir", str(tmp_path / "out"),
+    assert main(["--product-dir", str(package), "--output-dir", str(tmp_path / "out"), "--state-dir", str(tmp_path / "state"),
                  "--node", "primary=127.0.0.1:15432", "demo.case"]) == 0
 
 
@@ -157,11 +158,11 @@ def test_platform_cli_runs_a_suite_batch_and_writes_aggregate(tmp_path):
         encoding="utf-8",
     )
     output = tmp_path / "batch"
-    assert main(["--product-dir", str(package), "--output-dir", str(output), "--suite", "demo"]) == 0
-    aggregate = json.loads((output / "suite-result.json").read_text())
+    assert main(["--product-dir", str(package), "--output-dir", str(output), "--state-dir", str(tmp_path / "state"), "--suite", "demo"]) == 0
+    aggregate = json.loads((latest_run(output) / "suite-result.json").read_text())
     assert aggregate["counts"]["PASS"] == 2
-    assert (output / "demo.one" / "result.json").is_file()
-    assert (output / "demo.two" / "result.json").is_file()
+    assert (latest_run(output) / "cases" / "demo.one" / "result.json").is_file()
+    assert (latest_run(output) / "cases" / "demo.two" / "result.json").is_file()
 
 
 def test_platform_cli_failed_target_reruns_only_recorded_failures(tmp_path):
@@ -187,17 +188,17 @@ def test_platform_cli_failed_target_reruns_only_recorded_failures(tmp_path):
         encoding="utf-8",
     )
     output = tmp_path / "batch"
-    assert main(["--product-dir", str(package), "--output-dir", str(output),
+    assert main(["--product-dir", str(package), "--output-dir", str(output), "--state-dir", str(tmp_path / "state"),
                  "--suite", "demo"]) == 1
-    recorded = json.loads((output / "last_failed.json").read_text())
+    recorded = json.loads((tmp_path / "state" / "last_failed.json").read_text())
     assert recorded["targets"] == ["demo.bad"]
 
     ran.unlink()
     flag.touch()
-    assert main(["--product-dir", str(package), "--output-dir", str(output),
+    assert main(["--product-dir", str(package), "--output-dir", str(output), "--state-dir", str(tmp_path / "state"),
                  "failed"]) == 0
     assert json.loads(ran.read_text()) == ["bad"]
-    assert json.loads((output / "last_failed.json").read_text())["targets"] == []
+    assert json.loads((tmp_path / "state" / "last_failed.json").read_text())["targets"] == []
 
 
 def test_platform_cli_failed_with_no_record_is_a_noop(tmp_path):
@@ -213,9 +214,9 @@ def test_platform_cli_failed_with_no_record_is_a_noop(tmp_path):
         encoding="utf-8",
     )
     output = tmp_path / "batch"
-    assert main(["--product-dir", str(package), "--output-dir", str(output),
+    assert main(["--product-dir", str(package), "--output-dir", str(output), "--state-dir", str(tmp_path / "state"),
                  "failed"]) == 0
-    assert json.loads((output / "last_failed.json").read_text())["targets"] == []
+    assert json.loads((tmp_path / "state" / "last_failed.json").read_text())["targets"] == []
 
 
 def test_evidence_name_cannot_escape_case_directory(tmp_path):
@@ -352,9 +353,9 @@ def test_product_case_uses_shared_engine_through_web_task(tmp_path, monkeypatch)
         "    def observe_runtime(self, settings, environment): return []\n"
         "    def validate_target(self, settings, target): return True\n"
         "    def publish_result(self, store, settings, environment, task, terminal, reason):\n"
-        "        output = settings.data_dir / 'runs' / task['target']\n"
+        "        output = max(settings.artifact_dir(environment['product_id'], environment['id']).glob('runs/*/cases/'+task['target']), key=lambda p:p.stat().st_mtime)\n"
         "        result = json.loads((output / 'result.json').read_text())\n"
-        "        store.put_result(environment['product_id'], environment['id'],\n"
+        "        store.results.put_result(environment['product_id'], environment['id'],\n"
         "            task['target'], 'default', result['verdict'], result['reason'], str(output))\n"
         "        return terminal, reason\n"
         "PROVIDER = Provider()\n",
@@ -375,9 +376,9 @@ def test_product_case_uses_shared_engine_through_web_task(tmp_path, monkeypatch)
     })
     assert submitted.status_code == 202, submitted.text
     run_task(app.state.store, settings, queued[0])
-    assert app.state.store.get_task(queued[0])["status"] == "SUCCEEDED"
-    assert app.state.store.list_results("lab")[0]["status"] == "PASS"
-    assert (settings.data_dir / "runs" / "demo.case" / "events.jsonl").is_file()
+    assert app.state.store.tasks.get_task(queued[0])["status"] == "SUCCEEDED"
+    assert app.state.store.results.list_results("lab")[0]["status"] == "PASS"
+    assert (latest_case(settings, "demo", "lab", "demo.case") / "events.jsonl").is_file()
 
 
 def test_fixture_cleanup_runs_when_case_fails(tmp_path, monkeypatch):

@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .engine import CaseContext, RegressionEngine
 
-
 EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED": 3, "ERROR": 2, "CANCELLED": 130}
 
 
@@ -20,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one product regression case")
     parser.add_argument("--product-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--context-json", default="{}")
     parser.add_argument("--node", action="append", default=[], metavar="NAME=HOST:PORT")
     parser.add_argument("--user", default=None)
@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("产品包缺少 product.yaml 或 cases.py")
 
     import yaml
+
     from .sdk import SDK_VERSION
     manifest = yaml.safe_load((product_dir / "product.yaml").read_text(encoding="utf-8"))
     if not isinstance(manifest, dict) or manifest.get("regression_sdk") != SDK_VERSION:
@@ -59,17 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     catalog_index = {target: index for index, target in enumerate(catalog_order)}
     if args.target in ("failed", "faild"):
         from .suites import failed as failed_bookkeeping
-        recorded = failed_bookkeeping.read_last_failed(args.output_dir)
+        recorded = failed_bookkeeping.read_last_failed(args.state_dir)
         # Suites each record their own last_failed.json; a run-level `failed`
         # merges the freshest per-suite records so `run failed` reruns every
         # target the most recent suite runs left behind.
-        for sibling in sorted(args.output_dir.glob("*/last_failed.json")):
-            for target in failed_bookkeeping.read_last_failed(sibling.parent):
-                if target not in recorded:
-                    recorded.append(target)
         targets = [target for target in recorded if target in cases]
         if not targets:
-            failed_bookkeeping.write_last_failed(args.output_dir, [])
+            failed_bookkeeping.write_last_failed(args.state_dir, [])
             print("No failed cases recorded from the previous run.")
             return 0
     elif args.target:
@@ -134,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.user:
         environment["user"] = args.user
 
+    environment["state_root"] = str(args.state_dir.resolve())
+    environment.setdefault("ledger_root", str(args.state_dir.resolve() / "resources"))
     # Run-level prepare: products may start stopped managed nodes before any
     # case evaluates requirements (legacy _ensure_environment_started).
     prepare = getattr(module, "prepare_run", None)
@@ -145,8 +144,18 @@ def main(argv: list[str] | None = None) -> int:
     import uuid
     from datetime import datetime
     run_id = "run_%s_%s" % (datetime.now().strftime("%Y%m%d_%H%M%S"),
-                            uuid.uuid4().hex[:6])
+                            uuid.uuid4().hex[:12])
     operation_id = os.environ.get("PRODUCT_PLATFORM_TASK_ID")
+    args.output_dir = args.output_dir.resolve() / "runs" / run_id
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    environment["state_root"] = str(args.state_dir.resolve())
+    environment.setdefault("ledger_root", str(args.state_dir.resolve() / "resources"))
+    environment["run_id"] = run_id
+    (args.output_dir / "run.json").write_text(json.dumps({
+        "run_id": run_id, "product_id": manifest.get("id", product_dir.name),
+        "environment_id": environment.get("id") or environment.get("environment_id"),
+        "operation_id": operation_id,
+    }, ensure_ascii=False))
     engine = RegressionEngine()
     sessions: dict = {}
     suite_errors: list = []
@@ -193,8 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             session_values = session["values"]
         context = CaseContext(
             target,
-            (args.output_dir / target if len(targets) > 1
-             else args.output_dir).resolve(),
+            (args.output_dir / "cases" / target).resolve(),
             cancelled.is_set, environment, operation_id, run_id)
         context.values.update(session_values)
         if session_error:
@@ -222,10 +230,10 @@ def main(argv: list[str] | None = None) -> int:
             pass
         # Flaky tracking: append one verdict line per executed case to the
         # environment-level history so UI/API can flag unstable targets.
-        history_root = environment.get("history_root")
-        if history_root:
+        state_root = environment["state_root"]
+        if state_root:
             try:
-                history_dir = Path(history_root)
+                history_dir = Path(state_root)
                 history_dir.mkdir(parents=True, exist_ok=True)
                 with (history_dir / "history.jsonl").open(
                         "a", encoding="utf-8") as handle:
@@ -246,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     from .suites import failed as failed_bookkeeping
     args.output_dir.mkdir(parents=True, exist_ok=True)
     failed_bookkeeping.write_last_failed(
-        args.output_dir,
+        args.state_dir,
         [item.target for item in results if item.verdict != "PASS"])
     if args.junit or args.html:
         # Reports render from the in-memory CaseResult fact model — the same
@@ -262,8 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         payloads = []
         for item in results:
             payload = item.to_dict()
-            case_dir = (args.output_dir / item.target
-                        if len(results) > 1 else args.output_dir)
+            case_dir = args.output_dir / "cases" / item.target
             steps = _load_steps(case_dir)
             if steps:
                 payload["steps"] = steps

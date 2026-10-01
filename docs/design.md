@@ -1,6 +1,6 @@
 # 公司产品公共管理平台设计
 
-版本：v3 · 2026-09-26
+版本：v3 · 架构边界更新于 2026-09-30
 状态：目标架构。旧仓库、旧 Web、旧回归框架和旧后台服务只作为业务研究材料，不作为新平台的模块边界。
 
 ## 1. 总体定位
@@ -49,18 +49,24 @@ Web / CLI / CI ──► Platform API ──► Task Worker
         │                   │              │              │
         └──────────────► Event / Evidence / Result ◄──────┘
                             │
-                 SQLite metadata + local files
+                 FileStore metadata + local evidence
 ```
 
-首期形态是单机控制面：FastAPI、任务 Worker、SQLite WAL、控制面文件和编译后的 React 前端。数据库集群由 `pgcluster` 部署到目标主机，数据库 `data_dir` 永远属于目标主机，不得指向平台项目目录。控制机只保存配置、资源引用、任务日志、结果和证据。
+首期形态是单机控制面：FastAPI、任务 Worker、FileStore 原子文件存储、控制面文件和编译后的 React 前端。数据库集群由 `pgcluster` 部署到目标主机，数据库 `data_dir` 永远属于目标主机，不得指向平台项目目录。控制机只保存配置、资源引用、任务日志、结果和证据。
 
 控制面运行目录：
 
 ```text
 data/
-├── platform/                 # SQLite、队列、锁、操作日志、Web 日志
-├── environments/             # profile、fixture 上下文、回归证据和结果附件
-└── (legacy database paths)   # 迁移期已有本机 PGDATA，只由 pgcluster 资源引用管理
+├── platform/                 # 队列、资源锁、操作日志、Web 日志
+├── environments/             # 环境登记与期望／已验收状态
+├── profiles/                 # 产品回归配置和夹具上下文
+├── deployment-drafts/        # 草稿与 revision
+├── deployment-plans/         # 不可变计划与摘要
+├── deployment-requests/      # 已审阅申请与恢复状态
+├── tasks/ + archived-tasks/  # 当前／归档任务及事件投影
+└── results/ + diagnoses/     # 判定与诊断事实
+output/                      # 可重跑的报告与回归证据
 ```
 
 新部署不得把 PostgreSQL 数据目录写入 `data/` 或项目 checkout；远程路径由产品/部署配置声明，平台只校验资源归属和目标主机。
@@ -108,7 +114,7 @@ products/<product_id>/
 
 `products/<id>/` 是产品代码的唯一来源。不能把一个产品拆成平台中的多个硬编码目录，再通过兼容导入维持旧结构。CLI 入口必须是产品包内的相对路径，平台校验后以参数数组和明确工作目录调用；平台不接受产品包外的任意脚本路径。
 
-产品包是版本化的受控发布物。平台部署时从产品目录构建后端包和可选前端资源，记录包版本与内容摘要；启动时校验插件 API 版本。文件系统中的已安装产品包是可用能力的权威来源，SQLite 中的 `products` 仅保存注册投影和未安装产品的只读元数据。前端专属组件随平台重新构建或发布，不承诺删除目录后无需构建即可卸载已打包的 JavaScript。
+产品包是版本化的受控发布物。平台部署时从产品目录构建后端包和可选前端资源，记录包版本与内容摘要；启动时校验插件 API 版本。文件系统中的已安装产品包是可用能力的权威来源，产品注册表按安装目录发现并校验能力；Provider 按 manifest／源码修订缓存，目录移除即失去执行能力。前端专属组件随平台重新构建或发布，不承诺删除目录后无需构建即可卸载已打包的 JavaScript。
 
 ### 3.2 产品声明
 
@@ -204,7 +210,7 @@ class DatabaseClusterProvider(Protocol):
     def lifecycle(self, context: DeploymentContext, action: LifecycleAction) -> None: ...
 ```
 
-Provider 通过 `ExecutionContext` 发布事件和附件，不直接更新平台任务状态或 SQLite。平台负责锁、取消、超时、恢复和最终结果。
+Provider 通过 `ExecutionContext` 发布事件和附件，不直接更新平台任务状态或存储内部实现。平台负责锁、取消、超时、恢复和最终结果。
 
 ### 4.3 pgcluster 迁移策略
 
@@ -300,7 +306,7 @@ class CaseContext(Protocol):
     def cancelled(self) -> bool: ...
 ```
 
-用例不能直接改平台数据库，不能通过中文日志标题驱动 UI，不能自行绕过资源锁。旧框架只允许作为隔离适配器，不能成为新 SDK 的依赖。
+用例不能直接改平台控制面存储，不能通过中文日志标题驱动 UI，不能自行绕过资源锁。旧框架只允许作为隔离适配器，不能成为新 SDK 的依赖。
 
 ### 5.3 迁移顺序
 
@@ -437,27 +443,34 @@ data/latest/<product>/<environment>/<target>/<profile>/
 
 ## 8. 数据模型
 
-首期 SQLite 按领域拆分，统一迁移：
+当前控制面采用文件存储，不建设 SQL 元数据库；业务记录与可重建投影分开：
 
-| 表 | 作用 |
+| 路径／领域 | 事实与用途 |
 | --- | --- |
-| `products` | 已安装产品 manifest 的注册投影及未安装产品的只读元数据；不独立决定可执行能力 |
-| `product_versions` | 产品版本、源码 revision、构建产物和校验和 |
-| `environments` | 产品绑定、连接、部署配置和用途 |
-| `resources` | 主机、端口、数据目录、实例和集群归属 |
-| `tasks` | Operation 状态、动作、参数、取消和 Worker 信息 |
-| `executions` | 测试/压测执行身份和资源快照 |
-| `events` | 结构化事实事件和序列号 |
-| `resource_locks` | 真实资源占用和心跳 |
-| `latest_results` | 产品+环境+目标+profile 的当前判定 |
-| `evidence_refs` | 日志、报告、配置和附件摘要 |
-| `diagnoses` | 绑定证据摘要的规则/AI 诊断 |
-| `knowledge_sources` | 产品文档、源码和 revision 来源 |
-| `report_templates` | 模板版本和输入 schema |
-| `pipelines` | 后续流水线定义 |
-| `notifications` | 后续旁路通知规则 |
+| `products/<id>/product.yaml` | 已安装产品及能力的权威声明 |
+| `data/environments/` | 环境连接、期望计划、已验收计划及部署状态 |
+| `data/deployment-drafts/`、`deployment-plans/` | 带 revision 的草稿与摘要校验的不可变计划 |
+| `data/deployment-requests/` | 已审阅申请，PENDING→ASSOCIATED→SUBMITTED；拒绝时保存原因 |
+| `data/tasks/<id>/meta.json` | 任务状态、待投递标记和未完成事件投影；原子提交 |
+| `data/task-index.jsonl`、`submissions/` | 可重建的任务分页及幂等提交索引 |
+| `data/tasks/<id>/events*.jsonl` | 按序列分段的事件投影；游标读取按块从尾部扫描 |
+| `data/archived-tasks/<id>/` | 显式归档的终态任务，UUID、证据和提交键保持可查 |
+| `runtime/locks/resources/` | 端口／目录资源互斥；目录祖先共享锁防止父子路径并发 |
+| `data/results/`、`diagnoses/` | 当前判定、归档证据引用和绑定证据的诊断 |
+| `output/<产品>/<环境>/runs/<执行ID>/` | 可重跑的回归证据和报告，不作为控制面提交日志 |
 
-License 私钥和口令不进 SQLite，保存在受控密钥目录。模型 API 密钥不进 SQLite、不写日志。
+任务投递以 meta.json 中的待投递记录为事实，Huey 只是交付机制；API 后台重试；已投递但 30 秒未领取的任务重新投递，worker 以原子状态领取去重，启动也恢复排队任务。部署在关联配置前保存申请，重启只恢复已审阅且仍有效的计划；失效申请标记 REJECTED，不执行数据库操作。期望计划只有在 worker 完成健康验收后才成为已应用计划。部署失败保留原已验收指针，不自动删除实例或声称回滚。
+
+License 私钥和口令不进元数据记录，保存在受控密钥目录。模型 API 密钥不进元数据记录、不写日志。
+
+### 8.1 应用服务与启动边界
+
+- HTTP、通用 CLI 与部署工作台调用 `OperationService`；路由只处理请求／响应，部署申请由 `DeploymentService` 恢复。
+- `create_app(settings, enqueuer)`、`create_queue(settings, store)` 由启动入口显式调用；导入 API／队列模块不创建运行目录，不自动绑定环境。
+- 独立 worker 通过 `python -m platform_app.worker` 启动，API 与 worker 使用同一套配置。产品的直接 SDK CLI 用于定制上下文，并持有同一套实例资源锁。
+- Provider 基础、回归结果发布与部署模板能力有公开契约；可选钩子统一在注册表校验，运行核心不探测任意属性。Provider／manifest 改动自动刷新；依赖模块改动后显式刷新或重启进程。
+- `api/contracts.py` 是核心响应契约；前端构建生成 TypeScript，HTTP `response_model` 校验实际输出。
+- 测试页面分为数据 hook、提交／确认 hook、套件列表和页面组合；跨环境异步结果按请求范围隔离。
 
 ## 9. API 和前端
 
@@ -497,7 +510,7 @@ AI 是后置能力：
 
 ## 11. 安全和运行形态
 
-首期为内部单机软件：Python 3.12、FastAPI、Huey、本地 SQLite WAL、本地证据目录和静态前端。远程数据库执行由 Provider 实现，平台不能假定远程路径、本地 PID 或本地进程组有效。
+首期为内部单机软件：Python 3.12、FastAPI、Huey、FileStore、本地证据目录和静态前端。远程数据库执行由 Provider 实现，平台不能假定远程路径、本地 PID 或本地进程组有效。
 
 最低要求：
 
@@ -584,3 +597,17 @@ git diff --check
 6. 任务取消、清理失败、环境待恢复和业务 FAIL 分别表达。
 7. 前端只由结构化事件和真实观测更新拓扑，不从中文日志或动画推断状态。
 8. AI、知识库、通知或专属页面不可用时，不影响确定性的部署、测试、License 和报告链路。
+
+
+## 运行目录契约
+
+data 是持久控制面；runtime 是进程协调；logs 是运行日志；output 是执行产物。所有路径由 Settings 的明确属性／方法提供，不以目录是否存在切换含义。
+
+SDK CLI --output-dir 指定产品／环境产物根，每次生成 runs/<执行ID>；--state-dir 明确指定持久状态根。CLI 注入 ledger_root；程序化 CaseContext 外部资源操作必须显式提供 ledger_root。ReportRuntime 使用 case_dir 与 lock_dir，不推断套件旧目录，不重建已有证据目录。旧历史报告与过期日志按用户要求删除，不提供运行时旧路径兜底。
+
+
+## 仓储组合与生成边界
+
+FileStore 是组合根，持有 environments／tasks／bindings／deployments／results／diagnoses。领域仓储使用同一个 StorageBackend；跨域约束在同一事务锁内读取，状态和事件提交不拆开。调用方直接选择对应域，避免平铺转发与动态 __getattr__。
+
+前端产品注册和 API 契约属于构建产物，predev／prebuild 自动生成，不提交生成文件。画布通过声明式 data-action 和已转义 data-node-id 交给 React 委托处理，无内联脚本或全局桥。

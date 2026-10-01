@@ -22,7 +22,7 @@ for suite, target in [
     ("mmr", "mmr.background.maintenance_lifecycle"),
 ]:
     eid = "report-" + suite
-    app.state.store.put_environment(
+    app.state.store.environments.put_environment(
         {
             "id": eid,
             "product_id": "fbase-database",
@@ -34,7 +34,7 @@ for suite, target in [
             "deployment_target": "streaming.mac" if suite == "mac" else "mmr.regress",
         }
     )
-    base = settings.output_dir / "regression" / eid / suite / target
+    base = settings.artifact_dir("fbase-database", eid) / "runs" / "fixture-run" / "cases" / target
     base.mkdir(parents=True)
     (base / "result.json").write_text(
         json.dumps(

@@ -1,7 +1,8 @@
+from platform_regress.sdk import CaseCatalog
+
 from .config import Settings
 from .providers import provider_for
 from .providers import validate_target as provider_validate_target
-from platform_regress.sdk import CaseCatalog
 
 
 def discover_cases(settings: Settings, product_id: str) -> list[dict]:

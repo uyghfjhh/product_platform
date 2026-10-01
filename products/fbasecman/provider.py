@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from platform_app.product_catalog import discover_products
 from platform_app.providers import CommandSpec
-from platform_app.topology import configured_topology
+from platform_app import topology as topology_api
 from platform_regress.clients import jdbc as jdbc_client
 
 from products.fbasecman.deployment.profile import evidence_root, profile_paths
@@ -34,7 +34,7 @@ CASE_TARGETS = frozenset(
 
 def native_case_context(settings, environment):
     """Shared context for native fbasecman cases (binary/license/topology/assets)."""
-    topology = configured_topology(settings, environment)
+    topology = topology_api.configured_topology(settings, environment)
     primaries = {node.get("group"): node for node in topology["nodes"]
                  if node.get("role") == "primary"}
     if "mmr1" not in primaries or "mmr2" not in primaries:
@@ -142,8 +142,8 @@ class FbasecmanProvider:
     def deployment_invalidate(self, settings, environment):
         """部署配置重发布或重建后，绑定旧集群身份的夹具上下文作废。"""
         stale = (
-            evidence_root(settings, environment["id"])
-            / "output" / "env" / "test_context.yaml"
+            settings.profile_dir(environment["id"])
+            / "fixture" / "test_context.yaml"
         )
         stale.unlink(missing_ok=True)
 
@@ -215,16 +215,16 @@ class FbasecmanProvider:
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
             from products.fbasecman.cases import NATIVE_CASES
             native_target = target in NATIVE_CASES
-            regress_context = evidence_root(settings, environment["id"]) / "output" / "env" / "test_context.yaml"
+            regress_context = settings.profile_dir(environment["id"]) / "fixture" / "test_context.yaml"
             if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
             if target in CASE_TARGETS:
-                output = settings.output_dir / "regression" / environment["id"] / target
+                output = settings.artifact_dir("fbasecman", environment["id"])
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
+                    "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 if native_target:
                     case_context.update(
@@ -236,12 +236,12 @@ class FbasecmanProvider:
                     "--context-json", json.dumps(case_context), target,
                 ], settings.data_dir)
             if target not in {"all", "failed"} and "." not in target:
-                output = settings.output_dir / "regression" / environment["id"] / target
+                output = settings.artifact_dir("fbasecman", environment["id"])
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
+                    "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -251,12 +251,12 @@ class FbasecmanProvider:
                     "--suite", target,
                 ], settings.data_dir)
             if target == "failed":
-                output = settings.output_dir / "regression" / environment["id"]
+                output = settings.artifact_dir("fbasecman", environment["id"])
                 case_context = {
                     "regress_source": str(settings.product_regress_root("fbasecman")),
                     "regress_override": str(override),
                     "regress_report_root": str(evidence_root(settings, environment["id"])),
-                    "history_root": str(settings.output_dir / "regression" / environment["id"]),
+                    "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 case_context.update(suite_case_context(settings, environment))
                 return CommandSpec([
@@ -268,12 +268,12 @@ class FbasecmanProvider:
             # `all` runs through the platform engine too: the legacy run.py
             # entrypoint does not know the native cases, so dropping it here is
             # what lets suite-level coverage reach all 212 catalog targets.
-            output = settings.output_dir / "regression" / environment["id"]
+            output = settings.artifact_dir("fbasecman", environment["id"])
             case_context = {
                 "regress_source": str(settings.product_regress_root("fbasecman")),
                 "regress_override": str(override),
                 "regress_report_root": str(evidence_root(settings, environment["id"])),
-                "history_root": str(settings.output_dir / "regression" / environment["id"]),
+                "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
             }
             case_context.update(suite_case_context(settings, environment))
             return CommandSpec([

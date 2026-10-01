@@ -5,7 +5,7 @@ methods, executors, configuration transforms) while the platform engine owns
 verdict mapping and the ``CaseContext`` evidence surface.  The product run
 tree still lands under ``env.output_dir`` — the deployment profile points it
 at the product evidence root consumed by the product web UI, so
-``output/runs/<suite>/<case>/{steps,summary,report}`` stays byte-identical.
+Report contents remain unchanged in the platform-owned case directory.
 """
 
 from __future__ import annotations
@@ -53,6 +53,8 @@ def _environment(context):
     env = cmanconf.load_regression_config(
         source, extra_configs=[override] + extras)
     cmanconf.validate_profile_isolation(env)
+    env.config["framework"]["output_dir"] = str(context.output_dir)
+    env.config["framework"]["runtime_dir"] = str(environment["runtime_root"])
     return source, env
 
 
@@ -81,7 +83,7 @@ def _spec(source, suite_id, name):
 def _write_init_failure_report(env, suite_id, spec, exc):
     """Record initialization failure when runtime construction fails."""
     try:
-        run_root = Path(env.output_dir) / "runs" / suite_id / spec.name
+        run_root = Path(env.output_dir)
         run_root.mkdir(parents=True, exist_ok=True)
         report = (
             "Test: %s\nStatus: FAIL\nSummary: %s\nFailure: %s\n"
@@ -149,7 +151,7 @@ class _LockedHandoverRuntimeMixin:
 
     def __enter__(self):
         self._suite_lock = ExclusiveFileLock(
-            Path(self.env.output_dir) / "handover.lock", "handover suite")
+            Path(self.env.runtime_dir) / "handover.lock", "handover suite")
         self._suite_lock.__enter__()
         return self
 

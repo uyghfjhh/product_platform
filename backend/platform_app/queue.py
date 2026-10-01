@@ -8,7 +8,7 @@ from huey import FileHuey
 from huey.storage import FileStorage
 
 from .actions import run_task
-from .config import load_settings
+from .config import Settings
 from .filestore import FileStore
 
 
@@ -62,14 +62,17 @@ class _FileStorage(FileStorage):
         self.lock = _FileLock(os.path.join(self.path, ".lock"))
 
 
-settings = load_settings()
-settings.platform_dir.mkdir(parents=True, exist_ok=True)
-huey = FileHuey(
-    "product-platform", path=str(settings.platform_dir / "queue"),
-    results=False, storage_class=_FileStorage,
-)
 
+def create_queue(settings: Settings, store=None):
+    """Construct a queue for the exact runtime settings supplied by the caller."""
+    store = store or FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
+    huey = FileHuey(
+        "product-platform", path=str(settings.runtime_dir / "queue"),
+        results=False, storage_class=_FileStorage,
+    )
 
-@huey.task()
-def execute(task_id: str) -> None:
-    run_task(FileStore(settings.data_dir), settings, task_id)
+    @huey.task(name="execute")
+    def execute(task_id: str) -> None:
+        run_task(store, settings, task_id)
+
+    return huey, execute

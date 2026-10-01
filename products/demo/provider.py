@@ -25,7 +25,7 @@ class DemoProvider:
     def command(self, settings, environment, action, target, parameters):
         if action != "tests.demo" or not self.validate_target(settings, target):
             raise ValueError("unsupported demo action or target")
-        output = settings.output_dir / "regression" / environment["id"] / target
+        output = settings.artifact_dir("demo", environment["id"])
         command = [
             sys.executable, "-m", "platform_regress.cli",
             "--product-dir", str(PRODUCT_DIR), "--output-dir", str(output),

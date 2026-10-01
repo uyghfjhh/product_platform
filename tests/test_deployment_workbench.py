@@ -43,6 +43,7 @@ def workbench(tmp_path):
     license_file.write_text("fixture")
     queued = []
     app = create_app(settings, enqueuer=queued.append)
+    # Keep probe fixture ports below the host ephemeral TCP port range.
     spec = {
         "title": "部署验收",
         "product_id": "fbase-database",
@@ -52,7 +53,7 @@ def workbench(tmp_path):
         "home": str(home),
         "data_root": str(tmp_path / "instances"),
         "license_file": str(license_file),
-        "base_port": 45120,
+        "base_port": 7000,
     }
     return TestClient(app), Workbench(settings, app.state.store), spec, queued
 
@@ -70,9 +71,9 @@ def create_plan(workbench, spec=None):
 @pytest.mark.parametrize(
     "product,template,port,count",
     [
-        ("fbase-database", "mac", 45120, 3),
-        ("fbase-database", "mmr", 45220, 6),
-        ("fbasecman", "cman", 45320, 14),
+        ("fbase-database", "mac", 7000, 3),
+        ("fbase-database", "mmr", 7100, 6),
+        ("fbasecman", "cman", 7200, 14),
     ],
 )
 def test_three_templates_generate_and_validate(
@@ -103,7 +104,7 @@ def test_generated_id_draft_resume_and_automatic_environment_link(workbench):
     assert client.get("/api/v1/deployment/drafts").json()[0]["spec"] == draft["spec"]
     linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
     assert linked.status_code == 200, linked.text
-    environment = service.store.get_environment(draft["id"])
+    environment = service.store.environments.get_environment(draft["id"])
     assert environment["deployment_config"] == plan["config_path"]
     assert Path(environment["deployment_config"]).is_file()
     assert (
@@ -175,10 +176,10 @@ def test_apply_requires_review_and_freezes_task_config(workbench):
     assert queued == [applied.json()["id"]]
     import json
 
-    task = service.store.get_task(applied.json()["id"])
+    task = service.store.tasks.get_task(applied.json()["id"])
     snapshot = json.loads(task["parameters"])["_deployment_snapshot"]
     assert snapshot["sha256"] == plan["config_sha256"]
-    environment = service.store.get_environment(draft["id"])
+    environment = service.store.environments.get_environment(draft["id"])
     selected = worker_environment(
         service.settings, service.store, environment, snapshot
     )
@@ -278,7 +279,7 @@ def test_worker_checks_deployment_health_before_succeeding(workbench, monkeypatc
 
     run_task(service.store, service.settings, applied.json()["id"])
     assert "create" in commands[0] and "health" in commands[1]
-    task = service.store.get_task(applied.json()["id"])
+    task = service.store.tasks.get_task(applied.json()["id"])
     assert task["status"] == "FAILED" and "健康验收失败" in task["reason"]
 
 
@@ -456,7 +457,7 @@ def _register_imported_environment(service, client, config, environment_id):
     path = Path(service.settings.data_dir) / "imported.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
-    service.store.put_environment(
+    service.store.environments.put_environment(
         {
             "id": environment_id,
             "product_id": "fbasecman",
@@ -477,11 +478,7 @@ def test_drifted_import_is_blocked_and_context_preserved(workbench, tmp_path):
     config, _ = _cman_compiled(service, spec, tmp_path, 45680)
     _register_imported_environment(service, client, config, "cman-imported")
     stale = (
-        service.settings.output_dir
-        / "fbasecman"
-        / "cman-imported"
-        / "output"
-        / "env"
+        service.settings.profile_dir("cman-imported") / "fixture"
         / "test_context.yaml"
     )
     stale.parent.mkdir(parents=True, exist_ok=True)
@@ -535,7 +532,7 @@ def test_associate_invalidates_context_on_republished_canonical_config(
     # 语义相同但文本不同的旧配置文件（注释、键序差异）：关联会重发规范形式，
     # 摘要随之变化，旧上下文必须作废。
     path.write_text("# 既有部署配置\n" + yaml.safe_dump(config, allow_unicode=True))
-    service.store.put_environment(
+    service.store.environments.put_environment(
         {
             "id": environment_id,
             "product_id": "fbasecman",
@@ -549,11 +546,7 @@ def test_associate_invalidates_context_on_republished_canonical_config(
         }
     )
     stale = (
-        service.settings.output_dir
-        / "fbasecman"
-        / environment_id
-        / "output"
-        / "env"
+        service.settings.profile_dir(environment_id) / "fixture"
         / "test_context.yaml"
     )
     stale.parent.mkdir(parents=True, exist_ok=True)
@@ -571,11 +564,7 @@ def test_associate_keeps_test_context_when_config_unchanged(workbench, tmp_path)
     config, _ = _cman_compiled(service, spec, tmp_path, 45700)
     _register_imported_environment(service, client, config, "cman-same")
     context = (
-        service.settings.output_dir
-        / "fbasecman"
-        / "cman-same"
-        / "output"
-        / "env"
+        service.settings.profile_dir("cman-same") / "fixture"
         / "test_context.yaml"
     )
     context.parent.mkdir(parents=True, exist_ok=True)
@@ -646,7 +635,7 @@ def _register_fbase_environment(service, config, environment_id):
     path = Path(service.settings.data_dir) / (environment_id + ".yaml")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
-    service.store.put_environment(
+    service.store.environments.put_environment(
         {
             "id": environment_id,
             "product_id": "fbase-database",
@@ -910,8 +899,8 @@ def test_partially_applied_plan_resumes_via_managed_markers(workbench, tmp_path)
     )
     assert applied.status_code == 202, applied.text
     first_task = applied.json()["id"]
-    service.store.transition_task(first_task, ("QUEUED",), "RUNNING")
-    service.store.finish_task(first_task, ("RUNNING",), "FAILED", "simulated")
+    service.store.tasks.transition_task(first_task, ("QUEUED",), "RUNNING")
+    service.store.tasks.finish_task(first_task, ("RUNNING",), "FAILED", "simulated")
     # 部分节点已被 pgcluster 创建（受管标记 + PG_VERSION）
     facts = client.get(f"/api/v1/deployment/plans/{plan['id']}").json()["facts"]
     partial = facts["nodes"][0]
@@ -1017,7 +1006,7 @@ def test_worker_rechecks_data_created_after_queueing(workbench):
     )
     import json
 
-    snapshot = json.loads(service.store.get_task(applied.json()["id"])["parameters"])[
+    snapshot = json.loads(service.store.tasks.get_task(applied.json()["id"])["parameters"])[
         "_deployment_snapshot"
     ]
     directory = Path(plan["operations"][0]["data_dir"])
@@ -1027,7 +1016,7 @@ def test_worker_rechecks_data_created_after_queueing(workbench):
         worker_environment(
             service.settings,
             service.store,
-            service.store.get_environment(draft["id"]),
+            service.store.environments.get_environment(draft["id"]),
             snapshot,
         )
 
@@ -1182,7 +1171,7 @@ def test_run_command_appends_stage_logs(workbench, tmp_path):
 
     _, service, _, _ = workbench
     store = service.store
-    task = store.create_task("env-log", "deployment.create", "t", {}, None)
+    task = store.tasks.create_task("env-log", "deployment.create", "t", {}, None)
     ok, _ = _run_command(
         store, task["id"], ["sh", "-c", "echo deploy-stage"], tmp_path, True
     )
@@ -1191,7 +1180,7 @@ def test_run_command_appends_stage_logs(workbench, tmp_path):
         store, task["id"], ["sh", "-c", "echo health-stage"], tmp_path, False
     )
     assert ok
-    log = (store.platform_dir / "operations" / (task["id"] + ".log")).read_text()
+    log = (store.logs_dir / "operations" / (task["id"] + ".log")).read_text()
     assert "deploy-stage" in log and "health-stage" in log
     assert log.count("=====") >= 4  # 两个阶段分隔行
     assert "echo deploy-stage" in log and "echo health-stage" in log

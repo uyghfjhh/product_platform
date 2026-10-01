@@ -117,17 +117,12 @@
       const compactClass = n.compact ? 'compact' : '';
       const isDb = n.type === 'db_master' || n.type === 'db_standby' || n.type === 'proxy';
 
-      // Clicking any database node directly opens the Web-PSQL Workbench!
-      const clickAction = isDb
-        ? `window.dashboard.openSqlWorkbench('${n.id}')`
-        : `window.dashboard.inspectNode('${n.id}')`;
-
       const cardTitle = isDb
-        ? `点击直接进入 Web-PSQL 交互控制台 (${escapeHtml(n.label || n.id)})，右上角 ⚙️ 可查看节点指标`
+        ? `点击查看节点详情 (${escapeHtml(n.label || n.id)})，右上角 ⚙️ 可查看节点指标`
         : '点击查看详情';
 
       nodesHtml += `
-        <div class="topo-node ${compactClass} ${nodeCardClass}" id="node_${n.id}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;${n.width ? `width: ${n.width}px;` : ''}${n.height ? `height: ${n.height}px;` : ''}" onclick="${clickAction}" title="${cardTitle}">
+        <div class="topo-node ${compactClass} ${nodeCardClass}" id="node_${escapeHtml(n.id)}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;${n.width ? `width: ${n.width}px;` : ''}${n.height ? `height: ${n.height}px;` : ''}" data-action="inspect" title="${cardTitle}">
           <div class="topo-node-header">
             <div class="topo-node-title">
               <span class="topo-node-pulse ${statusClass}"></span>
@@ -135,8 +130,8 @@
             </div>
             <div class="topo-node-badges">
               <span class="topo-node-badge ${statusClass}">${escapeHtml(roleBadge)}</span>
-              ${isDb && !isDown ? `<button class="node-action-icon-btn zap" onclick="event.stopPropagation(); window.dashboard.showNodeQuickActions(event, '${n.id}')" title="快捷运维诊断指令">⚡</button>` : ''}
-              ${isDb ? `<button class="node-action-icon-btn" onclick="event.stopPropagation(); window.dashboard.inspectNode('${n.id}')" title="查看节点运维与指标详情">⚙️</button>` : ''}
+              ${isDb && !isDown ? `<button class="node-action-icon-btn zap" data-action="inspect" title="快捷运维诊断指令">⚡</button>` : ''}
+              ${isDb ? `<button class="node-action-icon-btn" data-action="inspect" title="查看节点运维与指标详情">⚙️</button>` : ''}
             </div>
           </div>
           <div class="topo-node-body">
@@ -146,10 +141,10 @@
             ${n.desc ? `<div class="topo-node-field"><span class="field-key">说明:</span><span class="field-val">${escapeHtml(n.desc)}</span></div>` : ''}
             ${isDb && !isDown ? `
               <div class="node-quick-btn-row">
-                <button class="node-quick-zap-btn" onclick="event.stopPropagation(); window.dashboard.showNodeQuickActions(event, '${n.id}')" title="快速执行运维/排障指令">
+                <button class="node-quick-zap-btn" data-action="inspect" title="快速执行运维/排障指令">
                   <span>⚡ 快捷指令</span>
                 </button>
-                <div class="node-quick-sql-btn" onclick="event.stopPropagation(); window.dashboard.openSqlWorkbench('${n.id}')" title="进入 Web-PSQL 交互控制台">
+                <div class="node-quick-sql-btn" data-action="sql" title="进入数据库 SQL 工作区">
                   <span>💻 SQL 控制台</span>
                 </div>
               </div>
@@ -182,7 +177,7 @@
             <div class="banner-title">集群当前处于【已清理 / 全部离线】状态 (0 / ${totalNodes} 节点在线)</div>
             <div class="banner-desc">所有数据库实例与流复制网络已停止。点击右上角【⚡ 一键部署 (Setup)】或【▶ 启动集群 (Start)】一键恢复集群环境。</div>
           </div>
-          <button class="action-btn primary small" onclick="document.getElementById('btnDeploySetup').click()">⚡ 立即一键部署</button>
+          <button class="action-btn primary small" data-action="deploy">⚡ 立即一键部署</button>
         </div>
       `;
     } else if (totalActive === totalNodes && health.proxy_running) {

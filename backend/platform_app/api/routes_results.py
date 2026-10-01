@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import HTTPException, Query
@@ -10,13 +10,17 @@ from fastapi.responses import FileResponse, Response
 
 from .. import bundle
 from ..config import Settings
+from .contracts import Result
 
 _TARGET_PATTERN = r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+"
 
 
 def _platform_result_index(settings: Settings, environment_id: str) -> dict[str, tuple[Path, float]]:
     """Latest platform result.json per target (single-run and suite-run dirs)."""
-    root = settings.output_dir / "regression" / environment_id
+    import yaml
+    record = settings.environment_records_dir / (environment_id + ".yaml")
+    environment = yaml.safe_load(record.read_text()) if record.is_file() else None
+    root = settings.artifact_dir(environment["product_id"], environment_id) if environment else settings.output_dir / "_missing"
     index: dict[str, tuple[Path, float]] = {}
     if not root.is_dir():
         return index
@@ -50,12 +54,12 @@ def _row_timestamp(row: dict) -> float:
 
 def _archived_result(settings: Settings, store, environment_id: str,
                      target: str, profile: str, *, archive_index=None) -> tuple[Path, dict]:
-    environment = store.get_environment(environment_id)
+    environment = store.environments.get_environment(environment_id)
     if environment is None:
         raise HTTPException(status_code=404, detail="环境不存在")
     if not re.fullmatch(_TARGET_PATTERN, target):
         raise HTTPException(status_code=404, detail="结果不存在")
-    result = store.get_result(environment["product_id"], environment_id, target, profile)
+    result = store.results.get_result(environment["product_id"], environment_id, target, profile)
     output_root = settings.output_dir.resolve()
     base: Path | None = None
     if result is not None:
@@ -80,12 +84,12 @@ def _archived_result(settings: Settings, store, environment_id: str,
 
 def register(app, settings: Settings, store) -> None:
 
-    @app.get("/api/v1/environments/{environment_id}/results")
+    @app.get("/api/v1/environments/{environment_id}/results", response_model=list[Result])
     def results(environment_id: str):
-        if store.get_environment(environment_id) is None:
+        if store.environments.get_environment(environment_id) is None:
             raise HTTPException(status_code=404, detail="环境不存在")
-        rows = store.list_results(environment_id)
-        environment = store.get_environment(environment_id)
+        rows = store.results.list_results(environment_id)
+        environment = store.environments.get_environment(environment_id)
         for target, (base, mtime) in _platform_result_index(settings, environment_id).items():
             try:
                 payload = json.loads((base / "result.json").read_text(encoding="utf-8"))
@@ -98,7 +102,7 @@ def register(app, settings: Settings, store) -> None:
                 "status": payload.get("verdict", "ERROR"),
                 "reason": payload.get("reason"),
                 "artifact_dir": str(base),
-                "updated_at": mtime,
+                "updated_at": datetime.fromtimestamp(mtime, UTC).isoformat(),
             }
             stale = next((row for row in rows if row["target"] == target), None)
             if stale is None:
@@ -195,16 +199,16 @@ def register(app, settings: Settings, store) -> None:
 
     @app.get("/api/v1/environments/{environment_id}/flaky")
     def flaky(environment_id: str, window: int = Query(default=5, ge=2, le=20)):
-        if store.get_environment(environment_id) is None:
+        if store.environments.get_environment(environment_id) is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         return bundle.flaky_summary(settings, environment_id, window)
 
     @app.get("/api/v1/environments/{environment_id}/diagnostics/{target}")
     def diagnosis(environment_id: str, target: str, profile: str = "default"):
-        environment = store.get_environment(environment_id)
+        environment = store.environments.get_environment(environment_id)
         if environment is None:
             raise HTTPException(status_code=404, detail="环境不存在")
-        value = store.get_diagnosis(environment["product_id"], environment_id, target, profile)
+        value = store.diagnoses.get_diagnosis(environment["product_id"], environment_id, target, profile)
         if value is None:
             raise HTTPException(status_code=404, detail="尚无 AI 诊断")
         return value

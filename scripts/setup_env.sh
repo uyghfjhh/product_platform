@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# product_platform 运行环境全自动一键配置脚本 (install_env.sh)
+# product_platform 运行环境全自动一键配置脚本 (scripts/setup_env.sh)
 #
 # 特性：
 # 1. 纯用户态安装 (免 root / sudo)，100% 隔离，绝不影响正在运行的数据库与测试环境
@@ -11,7 +11,7 @@
 # ==============================================================================
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 echo "=================================================================="
@@ -104,8 +104,9 @@ if [ ! -f "$VENV_DIR/bin/python3" ]; then
 fi
 
 # 4. 安装/同步平台依赖库
-echo "📦 正在安装平台依赖库 (requirements.txt: fastapi, uvicorn, psycopg, pydantic...)..."
-"$UV_BIN" pip install --python "$VENV_DIR/bin/python3" -r "$ROOT_DIR/requirements.txt"
+echo "📦 按 pyproject.toml 与 uv.lock 同步平台依赖..."
+cd "$ROOT_DIR"
+"$UV_BIN" sync --frozen --extra dev --python "$BASE_PYTHON"
 
 # 5. 严格依赖自检与模块导入测试
 echo "🧪 正在执行依赖自检与核心应用装载验证..."
