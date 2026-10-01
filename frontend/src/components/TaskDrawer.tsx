@@ -71,9 +71,10 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
 
   const current = events[position];
   const stepEvents = useMemo(() => events.filter((item) => item.event_type === 'step.started'), [events]);
-  // Suite progress: the regression CLI prints `[n/m] suite.case VERDICT t`s per
-  // case on stdout; each line arrives as a command.output event.
+  // Suite progress: persisted on task.progress by the runner bridge; fall back
+  // to parsing [n/m] command.output lines for tasks started before it existed.
   const caseProgress = useMemo(() => {
+    if (task?.progress) return task.progress as { done: number; total: number; label: string };
     let done = 0, total = 0, label = '';
     for (const event of events) {
       if (event.event_type !== 'command.output') continue;
@@ -81,7 +82,7 @@ export default function TaskDrawer({ taskId, onClose }: Props) {
       if (match) { done = Math.max(done, Number(match[1])); total = Number(match[2]); label = match[3]; }
     }
     return total ? { done, total, label } : null;
-  }, [events]);
+  }, [events, task]);
   const selectedStep = current ? stepEvents.filter((item) => item.sequence <= current.sequence).length - 1 : -1;
 
   function seek(index: number) {

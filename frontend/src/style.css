@@ -802,6 +802,26 @@ button, input, textarea { font-family: inherit; }
   gap: 1rem;
 }
 
+.regress-console-wrapper .suite-progress {
+  padding: 0.5rem 1rem 0.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.regress-console-wrapper .suite-progress .ant-progress {
+  margin-bottom: 0;
+}
+
+.regress-console-wrapper .suite-progress-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .regress-console-wrapper .suite-stats-pill {
   display: inline-flex;
   align-items: center;

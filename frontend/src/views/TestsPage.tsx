@@ -457,7 +457,7 @@ export default function TestsPage({
 
         {/* 4. 套件树与用例列表 (Tree & Accordion Cards) */}
         <CaseSuiteList adapter={adapter} cases={cases} loading={loading} groupedSuites={groupedSuites}
-          expandedSuites={expandedSuites} environment={environment} toggleSuite={toggleSuite}
+          expandedSuites={expandedSuites} environment={environment} tasks={tasks} toggleSuite={toggleSuite}
           runSuite={runSuite} runTarget={runTarget} getCaseStatus={getCaseStatus}
           getCaseDuration={getCaseDuration} canViewReport={canViewReport}
           resultByTarget={resultByTarget} flakyMap={flakyMap} setReportTarget={setReportTarget}

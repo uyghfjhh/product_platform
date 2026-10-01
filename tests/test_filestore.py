@@ -147,3 +147,20 @@ def test_concurrent_writers(tmp_path):
     assert len(store.environments.list_environments()) == 4
     for task in store.tasks.list_tasks():
         assert len(store.tasks.list_events(task["id"])) == 5
+
+
+def test_set_progress_tracks_suite_position(tmp_path):
+    store = FileStore(tmp_path)
+    store.environments.put_environment(_env("lab"))
+    task, _ = store.tasks.create_task_once(
+        "lab", "tests.fbasecman", "ha_commands", {}, "key-p")
+    store.tasks.transition_task(task["id"], ("QUEUED",), "RUNNING", process_id=1)
+
+    store.tasks.set_progress(task["id"], 3, 76, "ha_commands.x")
+    progress = store.tasks.get_task(task["id"])["progress"]
+    assert progress == {"done": 3, "total": 76, "label": "ha_commands.x"}
+
+    # 终态任务不再接受进度更新（残留输出不得改写已完成记录）。
+    store.tasks.finish_task(task["id"], ("RUNNING",), "SUCCEEDED", "done")
+    store.tasks.set_progress(task["id"], 4, 76, "ha_commands.y")
+    assert store.tasks.get_task(task["id"])["progress"]["done"] == 3

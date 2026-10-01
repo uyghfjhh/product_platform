@@ -1,5 +1,6 @@
 import { FileSearchOutlined } from '@ant-design/icons';
-import type { Case, Environment, Result } from '../../platform/api';
+import { Progress } from 'antd';
+import type { Case, Environment, Result, Task } from '../../platform/api';
 import type { TestProductAdapter } from '../../products/testRegistry';
 import type { FlakyStatus } from './useTestData';
 
@@ -11,6 +12,7 @@ type Props = {
   adapter: TestProductAdapter;
   cases: Case[]; loading: boolean; groupedSuites: CaseGroup[]; expandedSuites: Set<string>;
   environment: Environment | undefined;
+  tasks: Task[];
   toggleSuite: (suiteId: string) => void;
   runSuite: (suiteId: string) => Promise<void>;
   runTarget: (target: string, cluster?: string) => Promise<void>;
@@ -23,8 +25,10 @@ type Props = {
   setDiagnosisTarget: (target: string) => void;
 };
 
+const ACTIVE_TASK = new Set(['QUEUED', 'RUNNING', 'CANCELLING']);
+
 export default function CaseSuiteList({ adapter, cases, loading, groupedSuites, expandedSuites,
-  environment, toggleSuite, runSuite, runTarget, getCaseStatus, getCaseDuration,
+  environment, tasks, toggleSuite, runSuite, runTarget, getCaseStatus, getCaseDuration,
   canViewReport, resultByTarget, flakyMap, setReportTarget, setEvidenceTarget, setDiagnosisTarget }: Props) {
   return (
     <section className="tree-container">
@@ -39,6 +43,9 @@ export default function CaseSuiteList({ adapter, cases, loading, groupedSuites, 
       ) : (
         groupedSuites.map((s) => {
           const isExpanded = expandedSuites.has(s.suiteId);
+          const running = tasks.find((t) =>
+            t.target === s.suiteId && ACTIVE_TASK.has(t.status) &&
+            t.environment_id === environment?.id && t.progress);
 
           return (
             <div key={s.suiteId} className={`suite-card ${isExpanded ? 'expanded' : ''}`}>
@@ -75,6 +82,17 @@ export default function CaseSuiteList({ adapter, cases, loading, groupedSuites, 
                   </button>
                 </div>
               </div>
+
+              {running?.progress && (
+                <div className="suite-progress" onClick={(e) => e.stopPropagation()}>
+                  <Progress
+                    percent={Math.round((running.progress.done / running.progress.total) * 100)}
+                    status={running.status === 'CANCELLING' ? 'exception' : 'active'}
+                    format={() => `${running.progress!.done}/${running.progress!.total}`}
+                  />
+                  <span className="suite-progress-label">最近完成: {running.progress.label}</span>
+                </div>
+              )}
 
               <div className="suite-cases-list">
                 {s.cases.map((c) => {

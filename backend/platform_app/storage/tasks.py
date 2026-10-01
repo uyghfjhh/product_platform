@@ -218,6 +218,15 @@ class TasksStore:
                 self._write_task(task)
         return True
 
+    def set_progress(self, task_id: str, done: int, total: int, label: str) -> None:
+        """Persist suite progress parsed from the runner's [n/m] output lines."""
+        with self.backend._locked():
+            task = self.get_task(task_id)
+            if not task or task["status"] not in {"QUEUED", "RUNNING", "CANCELLING"}:
+                return
+            task["progress"] = {"done": done, "total": total, "label": label}
+            self._write_task(task)
+
     def request_cancel(self, task_id: str) -> bool:
         with self.backend._locked():
             task = self.get_task(task_id)

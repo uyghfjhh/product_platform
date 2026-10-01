@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import select
 import signal
 import socket
@@ -162,6 +163,9 @@ def _check_database(store: FileStore, settings: Settings, task_id: str, environm
                          observation.kind, observation.details)
 
 
+_PROGRESS_RE = re.compile(r"\[(\d+)/(\d+)\]\s+(\S+)")
+
+
 def _poll_observer(observer, store: FileStore, task_id: str) -> None:
     """Progress observation is advisory — a product observer bug must never
     kill the command it watches."""
@@ -243,11 +247,17 @@ def _run_command(
                         while b"\n" in buffered:
                             raw_line, _, tail = buffered.partition(b"\n")
                             buffered = bytearray(tail)
+                            line = raw_line.decode("utf-8", errors="replace")
+                            match = _PROGRESS_RE.match(line)
+                            if match:
+                                store.tasks.set_progress(
+                                    task_id, int(match.group(1)),
+                                    int(match.group(2)), match.group(3))
                             store.tasks.add_event(
                                 task_id,
                                 "command.output",
                                 {
-                                    "line": raw_line.decode("utf-8", errors="replace"),
+                                    "line": line,
                                     "log": str(log_path),
                                 },
                             )

@@ -36,6 +36,12 @@ class Environment(EnvironmentInput):
     deployment_status: str | None = None
 
 
+class TaskProgress(ResponseModel):
+    done: int
+    total: int
+    label: str
+
+
 class Task(ResponseModel):
     id: str
     environment_id: str
@@ -50,6 +56,7 @@ class Task(ResponseModel):
     finished_at: str | None = None
     process_id: int | None = None
     cancel_requested: bool
+    progress: TaskProgress | None = None
     last_sequence: int
     dispatch_pending: bool = False
     dispatch_error: str | None = None
