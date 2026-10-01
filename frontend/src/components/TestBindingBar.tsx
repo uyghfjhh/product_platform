@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Popover, Select, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { AimOutlined, CheckCircleFilled, CloseCircleFilled, LinkOutlined } from '@ant-design/icons';
 
 import { api, post, type Environment, type Product, type RegressionBinding } from '../platform/api';
@@ -10,12 +10,13 @@ type ProbeResult =
   | { kind: 'endpoint'; ok: boolean };
 
 /** 测试页就地绑定栏：展示/切换当前测试 profile 绑定的执行环境（§6.2）。 */
-export default function TestBindingBar({ product, profileId, environments, bindings, onChanged }: {
+export default function TestBindingBar({ product, profileId, environments, bindings, onChanged, onOpenDeployment }: {
   product: Product | undefined;
   profileId: string | undefined;
   environments: Environment[];
   bindings: RegressionBinding[];
   onChanged: () => Promise<void> | void;
+  onOpenDeployment?: (environmentId: string) => void;
 }) {
   const { message } = App.useApp();
   const [probe, setProbe] = useState<'checking' | ProbeResult | null>(null);
@@ -120,10 +121,8 @@ export default function TestBindingBar({ product, profileId, environments, bindi
           </Tag>
         )}
         {probe !== null && probe !== 'checking' && probe.kind === 'cluster' && (
-          <Popover
-            placement="bottomLeft"
-            title="节点状态"
-            content={(
+          <Tooltip
+            title={(
               <div className="cluster-probe-nodes">
                 {Object.entries(probe.nodes).map(([name, item]) => (
                   <div key={name} className="cluster-probe-node">
@@ -136,6 +135,7 @@ export default function TestBindingBar({ product, profileId, environments, bindi
                     </Typography.Text>
                   </div>
                 ))}
+                <div className="cluster-probe-hint">点击进入部署页查看集群详情</div>
               </div>
             )}
           >
@@ -143,10 +143,11 @@ export default function TestBindingBar({ product, profileId, environments, bindi
               icon={probe.online === probe.total ? <CheckCircleFilled /> : <CloseCircleFilled />}
               color={probe.online === probe.total ? 'success' : 'warning'}
               style={{ cursor: 'pointer' }}
+              onClick={() => bound && onOpenDeployment?.(bound.id)}
             >
               集群 {probe.online}/{probe.total} 在线
             </Tag>
-          </Popover>
+          </Tooltip>
         )}
         <Button size="small" type="text" icon={<LinkOutlined />} onClick={() => void runProbe()}>
           探测集群状态

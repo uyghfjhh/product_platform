@@ -1754,6 +1754,13 @@ button, input, textarea { font-family: inherit; }
 }
 .cluster-probe-node .probe-ok { color: var(--success, #52c41a); }
 .cluster-probe-node .probe-fail { color: var(--danger, #ff4d4f); }
+.cluster-probe-hint {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.25);
+  font-size: 12px;
+  opacity: 0.75;
+}
 
 /* ===== 部署页 PSQL 片段（语义变量，不随主题撕裂） ===== */
 .psql-snippet-card {

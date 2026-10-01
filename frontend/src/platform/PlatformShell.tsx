@@ -228,7 +228,8 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         subProduct={subProduct}
         profileId={testProfile?.id}
         bindings={bindings}
-        tasks={tasks} />;
+        tasks={tasks}
+        onOpenEnvironment={(id) => { setEnvironmentId(id); setPage('deployment'); }} />;
     }
     return <DeploymentPage {...common} onOpenDatabase={(node, view) => {
       window.history.replaceState(null, '', window.location.pathname + window.location.search);

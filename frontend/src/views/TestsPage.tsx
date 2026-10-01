@@ -28,6 +28,7 @@ type Props = {
   bindings?: RegressionBinding[];
   tasks?: Task[];
   profileId?: string;
+  onOpenEnvironment?: (environmentId: string) => void;
 };
 
 type FilterStatus = 'all' | 'PASS' | 'FAIL' | 'UNTESTED';
@@ -44,6 +45,7 @@ export default function TestsPage({
   bindings = [],
   tasks = [],
   profileId,
+  onOpenEnvironment,
 }: Props) {
   // 2. 筛选与展开交互状态
   const [search, setSearch] = useState('');
@@ -247,6 +249,7 @@ export default function TestsPage({
         environments={environments}
         bindings={bindings}
         onChanged={reload}
+        onOpenDeployment={onOpenEnvironment}
       />
       {!environment && (
         <Alert
