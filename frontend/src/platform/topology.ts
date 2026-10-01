@@ -8,7 +8,7 @@ export type TopologyNode = {
   group?: string;
   data_dir: string;
   extensions?: string[];
-  available_extensions?: string[];
+  installed_extensions?: string[];
 };
 
 export type TopologyData = {

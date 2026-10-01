@@ -27,30 +27,28 @@ config.validate(target)
 runtime = Runtime(config)
 names = runtime.target_instances(target)
 
-# 节点元数据的“全部插件”取自安装介质本身：share/extension/*.control
-# 与 pg_available_extensions 等价，但不依赖实例存活。按（安装,主机）
-# 缓存——同套安装服务的多个实例只扫描一次；扫描失败退回配置声明。
-available_cache = {}
-def installation_extensions(home, address):
-    key = (home, address)
-    if key not in available_cache:
-        found = set()
-        host = "local" if runtime.executor.is_local(address) else address
+# 节点元数据的“已安装插件”取自实例 catalog（pg_extension）。同一条
+# 流复制链上的成员 catalog 一致，每个复制组只查一个可连通的成员
+# 即可；整组不可达时返回空集，前端回退到配置声明的扩展集。
+def installed_extensions(member_names, database):
+    for member in member_names:
+        instance = config.instance(member)
+        host = "local" if runtime.executor.is_local(instance["host_config"]["address"]) \
+            else instance["host_config"]["address"]
         try:
             proc = runtime.executor.run(
-                ["sh", "-c",
-                 "ls -- \"$1\"/share/extension/*.control "
-                 "\"$1\"/share/postgresql/extension/*.control 2>/dev/null || true",
-                 "sh", home],
+                ["env", "PGCONNECT_TIMEOUT=3",
+                 runtime._bin(member, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
+                 "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
+                 "-U", "postgres", "-d", database, "-At",
+                 "-c", "SELECT extname FROM pg_extension ORDER BY 1"],
                 host=host, check=False)
-            for line in proc.stdout.splitlines():
-                base = line.rsplit("/", 1)[-1].strip()
-                if base.endswith(".control"):
-                    found.add(base[: -len(".control")])
+            names = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+            if proc.returncode == 0 and names:
+                return names
         except Exception:
-            found = set()
-        available_cache[key] = sorted(found)
-    return available_cache[key]
+            continue
+    return []
 
 nodes = []
 for name in names:
@@ -64,7 +62,6 @@ for name in names:
     plugins = raw_cfg.get("postgresql_installations", {}).get(instance.get("installation"), {}).get("plugins") or {}
     if isinstance(plugins, dict):
         inst_exts.update(plugins.keys())
-    install_home = (instance.get("installation_config") or {}).get("home")
     nodes.append({
         "id": name,
         "label": name,
@@ -73,9 +70,6 @@ for name in names:
         "data_dir": instance["data_dir"],
         "role": "instance",
         "extensions": sorted(inst_exts),
-        "available_extensions": (
-            installation_extensions(install_home, instance["host_config"]["address"])
-            if install_home else []),
     })
 
 edges = []
@@ -134,6 +128,24 @@ if kind == "citus":
         worker = config.streaming_clusters[name]["primary"]
         edges.append({"id": "citus:" + coordinator + ":" + worker, "source": coordinator,
                       "target": worker, "kind": "citus"})
+
+stream_db = ((config.mmr_clusters.get(cluster_name) or {}).get("database")
+             or (config.citus_clusters.get(cluster_name) or {}).get("database")
+             or "postgres")
+stream_installed = {}
+for stream_name in streaming_names:
+    stream = config.streaming_clusters[stream_name]
+    members = [stream["primary"]] + [item["instance"] for item in stream.get("standbys") or []]
+    try:
+        live_primary = runtime._primary(stream_name)
+        if live_primary in members:
+            members.remove(live_primary)
+            members.insert(0, live_primary)
+    except Exception:
+        pass
+    stream_installed[stream_name] = installed_extensions(members[:2], stream_db)
+for node in nodes:
+    node["installed_extensions"] = stream_installed.get(node.get("group"), [])
 
 print(json.dumps({"target": target, "kind": kind, "nodes": nodes, "edges": edges}, ensure_ascii=False))
 """

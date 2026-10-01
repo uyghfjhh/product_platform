@@ -328,24 +328,21 @@ export default function DeploymentPage({
                 <dt>节点角色</dt><dd>{selectedNode.role === 'primary' ? '主写入库 (Primary)' : '流复制从库 (Standby)'}</dd>
                 <dt>数据目录</dt><dd><code style={{ fontSize: 11 }}>{selectedNode.data_dir}</code></dd>
                 {(() => {
-                  const loaded = selectedNode.extensions || [];
-                  const all = selectedNode.available_extensions?.length
-                    ? selectedNode.available_extensions : loaded;
-                  return all.length > 0 && (
+                  const configured = selectedNode.extensions || [];
+                  const installed = selectedNode.installed_extensions?.length
+                    ? selectedNode.installed_extensions : configured;
+                  return installed.length > 0 && (
                     <>
-                      <dt>扩展 / 插件</dt>
+                      <dt>已安装扩展</dt>
                       <dd>
                         <Space size={4} wrap>
-                          {all.map((ext) => (
-                            <Tag key={ext} color={loaded.includes(ext) ? 'purple' : 'default'}
-                              title={loaded.includes(ext) ? '已加载' : '安装可用'}>
-                              {ext}
-                            </Tag>
+                          {installed.map((ext) => (
+                            <Tag key={ext} color="purple">{ext}</Tag>
                           ))}
                         </Space>
-                        {selectedNode.available_extensions?.length ? (
+                        {!selectedNode.installed_extensions?.length ? (
                           <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
-                            紫色为配置加载，其余为安装介质提供（共 {all.length} 项）
+                            实例未连通，显示部署配置声明的扩展
                           </Typography.Text>
                         ) : null}
                       </dd>
