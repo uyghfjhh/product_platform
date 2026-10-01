@@ -10,7 +10,6 @@ export type TestProductAdapter = {
   action: string;
   suiteFilter?: string;
   supportsLegacyReports: boolean;
-  supportsTerminal: boolean;
   sourceStatusPath?: (environmentId?: string) => string;
   artifactPath?: (target: string, environmentId?: string) => string;
   reportPath?: (environmentId: string, format: 'junit' | 'html') => string;
@@ -21,7 +20,7 @@ export function testAdapter(product: Product | undefined, mode?: TestMode): Test
   const extension = product && productFrontends[product.id]?.test?.(mode);
   return extension || {
     productId: product?.id || '', mode: mode || '', action: '',
-    supportsLegacyReports: false, supportsTerminal: false,
+    supportsLegacyReports: false,
     clusterForSuite: () => undefined,
   };
 }

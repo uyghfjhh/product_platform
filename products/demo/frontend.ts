@@ -3,7 +3,7 @@ import type { ProductFrontend } from '../../frontend/src/products/types';
 const frontend: ProductFrontend = {
   test: () => ({
     productId: 'demo', mode: 'smoke', action: 'tests.demo', suiteFilter: 'smoke',
-    supportsLegacyReports: false, supportsTerminal: false,
+    supportsLegacyReports: false,
     clusterForSuite: () => undefined,
   }),
 };

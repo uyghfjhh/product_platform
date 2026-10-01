@@ -6,7 +6,7 @@ const frontend: ProductFrontend = {
     const mode = requestedMode === 'mac' ? 'mac' : 'mmr';
     return {
       productId: 'fbase-database', mode, action: 'tests.fbase', suiteFilter: mode,
-      supportsLegacyReports: false, supportsTerminal: false,
+      supportsLegacyReports: false,
       clusterForSuite: (suite) => suite === 'mac' || suite === 'mmr' ? suite : mode,
     };
   },

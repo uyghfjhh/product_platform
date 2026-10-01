@@ -4,8 +4,7 @@ import { operationRequest, type Environment } from '../../platform/api';
 import type { TestProductAdapter } from '../../products/testRegistry';
 
 export function useTestExecution(environment: Environment | undefined,
-                                 adapter: TestProductAdapter,
-                                 openTask: (taskId: string) => void) {
+                                 adapter: TestProductAdapter) {
   const { message, modal } = App.useApp();
   const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
   // 10. 执行单个用例
@@ -27,8 +26,7 @@ export function useTestExecution(environment: Environment | undefined,
         adapter.mode === 'cman' ? {} : { cluster: effectiveCluster },
         true,
       );
-      if (adapter.supportsTerminal) setTerminalTaskId(task.id);
-      else openTask(task.id);
+      setTerminalTaskId(task.id);
     } catch (cause) {
       message.error((cause as Error).message);
     }

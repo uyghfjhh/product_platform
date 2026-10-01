@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Progress, Tag } from 'antd';
-import { api, post, type Event, type Task } from '../../../frontend/src/platform/api';
+import { api, post, type Event, type Task } from '../platform/api';
 
 const finished = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED']);
 
-export default function RegressionTerminal({ taskId, onInspect, onFinished }: {
+/** 平台通用执行终端：任务日志流 + 进度条 + 取消，产品无关。 */
+export default function ExecutionTerminal({ taskId, onInspect, onFinished }: {
   taskId: string | null;
   onInspect: (taskId: string) => void;
   onFinished: () => void;

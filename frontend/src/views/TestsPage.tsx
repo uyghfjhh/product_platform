@@ -12,6 +12,7 @@ import DiagnosisDrawer from '../components/DiagnosisDrawer';
 import EvidenceDrawer from '../platform/EvidenceDrawer';
 import PlatformReportViewer from '../platform/ReportViewer';
 import TestBindingBar from '../components/TestBindingBar';
+import ExecutionTerminal from '../components/ExecutionTerminal';
 import CaseSuiteList from './tests/CaseSuiteList';
 import { useTestData } from './tests/useTestData';
 import { useTestExecution } from './tests/useTestExecution';
@@ -65,14 +66,14 @@ export default function TestsPage({
   const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
   const { cases, results, sourceStatuses, flakyMap, loading, error, refreshResults } =
     useTestData(adapter.productId, environment?.id, adapter, tasks);
-  const { runTarget, runSuite, terminalTaskId } = useTestExecution(environment, adapter, openTask);
+  const { runTarget, runSuite, terminalTaskId } = useTestExecution(environment, adapter);
   useEffect(() => {
     setExpandedSuites(new Set(cases.map((item) => item.suite)));
   }, [cases]);
   const ReportDrawer = testFrontend(product)?.ReportViewer || PlatformReportViewer;
   const reportPath = adapter.reportPath || ((environmentId: string, format: 'junit' | 'html') =>
     `/environments/${encodeURIComponent(environmentId)}/reports/${format}`);
-  const RegressionTerminal = testFrontend(product)?.RegressionTerminal;
+  const RegressionTerminal = testFrontend(product)?.RegressionTerminal || ExecutionTerminal;
 
   const resultByTarget = useMemo(() => new Map(results.map((item) => [item.target, item])), [results]);
 
@@ -602,8 +603,8 @@ export default function TestsPage({
         onClose={() => setEvidenceTarget(null)} />
       <DiagnosisDrawer target={diagnosisTarget} environmentId={environment?.id}
         onClose={() => setDiagnosisTarget(null)} openTask={openTask} />
-      {adapter.supportsTerminal && RegressionTerminal && <RegressionTerminal taskId={terminalTaskId}
-        onInspect={openTask} onFinished={() => void refreshResults()} />}
+      <RegressionTerminal taskId={terminalTaskId}
+        onInspect={openTask} onFinished={() => void refreshResults()} />
     </>
   );
 }

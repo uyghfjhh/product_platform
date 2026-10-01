@@ -1,11 +1,9 @@
 import type { ProductFrontend } from '../../frontend/src/products/types';
 import ReportViewer from './frontend/ReportViewer';
-import RegressionTerminal from './frontend/RegressionTerminal';
 import SceneDetails from './frontend/SceneDetails';
 
 const frontend: ProductFrontend = {
   ReportViewer,
-  RegressionTerminal,
   sceneDetails: { kindPrefix: 'fbasecman.', component: SceneDetails },
   testMode: () => 'cman',
   deployment: () => ({
@@ -17,7 +15,7 @@ const frontend: ProductFrontend = {
   }),
   test: () => ({
     productId: 'fbasecman', mode: 'cman', action: 'tests.fbasecman',
-    supportsLegacyReports: true, supportsTerminal: true,
+    supportsLegacyReports: true,
     sourceStatusPath: (environmentId) => `/fbasecman/case-statuses${environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''}`,
     artifactPath: (target, environmentId) => `/fbasecman/cases/${encodeURIComponent(target)}/artifacts${environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''}`,
     reportPath: (environmentId, format) => `/fbasecman/environments/${encodeURIComponent(environmentId)}/reports/${format}`,
