@@ -156,6 +156,50 @@ def register(app, settings: Settings, store) -> None:
         return Response(content, media_type="text/html" if format_name == "html" else "application/xml",
                         headers={"Content-Disposition": f'attachment; filename="report.{extension}"'})
 
+    @app.get("/api/v1/environments/{environment_id}/results/{target}/scene")
+    def result_scene(environment_id: str, target: str, profile: str = "default"):
+        """Per-case scene events for report replay: configured topology plus
+        every observation persisted by the progress observer (scene.jsonl)."""
+        from ..scene import configured_scene
+        base, _ = _archived_result(settings, store, environment_id, target, profile)
+        environment = store.environments.get_environment(environment_id)
+        events: list[dict] = []
+        try:
+            events.append({
+                "event_type": "scene.topology.configured",
+                "payload": configured_scene(settings, environment).model_dump(),
+            })
+        except (KeyError, TypeError):
+            pass
+        seen: set[str] = set()
+        journal = base / "scene.jsonl"
+        if journal.is_file():
+            for line in journal.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or line in seen:
+                    continue
+                seen.add(line)
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                kind = entry.get("event")
+                if kind == "entity.discovered":
+                    events.append({"event_type": "scene.entity.discovered", "payload": {
+                        "id": entry.get("entity_id"), "label": entry.get("label"),
+                        "kind": entry.get("kind"), "group": entry.get("group"),
+                    }})
+                elif kind == "entity.observed":
+                    events.append({"event_type": "scene.entity.observed", "payload": {
+                        "entity_id": entry.get("entity_id"), "state": entry.get("state"),
+                        "source": entry.get("source"), "details": entry.get("details") or {},
+                    }})
+                elif kind == "step":
+                    events.append({"event_type": "step.finished", "payload": {
+                        "step_index": entry.get("step_index"), "title": entry.get("title"),
+                        "result": entry.get("result"), "target": target,
+                    }})
+        return {"events": events}
+
     @app.get("/api/v1/environments/{environment_id}/results/{target}/evidence")
     def result_evidence(environment_id: str, target: str, profile: str = "default"):
         _, payload = _archived_result(settings, store, environment_id, target, profile)

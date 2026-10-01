@@ -19,6 +19,35 @@ class ArtifactProgressObserver:
         self.seen: dict[tuple[str, int], str] = {}
         self.observed_steps: set[tuple[str, int]] = set()
         self.discovered_entities: set[str] = set()
+        self._file_entities: dict[str, set[str]] = {}
+
+    @staticmethod
+    def _append_scene(case_dir: Path, entry: dict) -> None:
+        """Persist one scene fact line into the case archive for report replay."""
+        try:
+            with (case_dir / "scene.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def _log_entity(self, case_dir: Path, index: int, fact) -> None:
+        entity_id = fact.details["entity_id"]
+        key = str(case_dir)
+        known = self._file_entities.setdefault(key, set())
+        if entity_id not in known:
+            self._append_scene(case_dir, {
+                "event": "entity.discovered", "entity_id": entity_id,
+                "label": fact.details.get("label", entity_id),
+                "kind": fact.kind,
+                "group": fact.details.get("group_name"),
+            })
+            known.add(entity_id)
+        self._append_scene(case_dir, {
+            "event": "entity.observed", "entity_id": entity_id,
+            "state": fact.state, "source": fact.kind,
+            "step_index": index,
+            "details": {k: v for k, v in fact.details.items() if k != "entity_id"},
+        })
 
     def poll(self, store: FileStore, task_id: str) -> None:
         if not self.root.is_dir():
@@ -65,6 +94,11 @@ class ArtifactProgressObserver:
                             "artifact": str(path),
                         },
                     )
+                    self._append_scene(path.parent, {
+                        "event": "step", "step_index": index,
+                        "title": step.get("title") or f"步骤 {index + 1}",
+                        "result": result,
+                    })
                 if result == "PASS" and key not in self.observed_steps:
                     for entry in step.get("execution") or []:
                         output = entry.get("text", "") if isinstance(entry, dict) else str(entry)
@@ -92,5 +126,6 @@ class ArtifactProgressObserver:
                                 fact.kind,
                                 {**fact.details, "artifact": str(path)},
                             )
+                            self._log_entity(path.parent, index, fact)
                     self.observed_steps.add(key)
                 self.seen[key] = result

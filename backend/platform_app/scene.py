@@ -41,9 +41,8 @@ def endpoint_id(environment: dict) -> str:
     return "endpoint:" + environment["id"]
 
 
-def emit_configured_scene(store: FileStore, settings: Settings, task_id: str,
-                          environment: dict) -> None:
-    """Publish a scene baseline without claiming that any node is healthy."""
+def configured_scene(settings: Settings, environment: dict) -> SceneTopology:
+    """Build the configured-topology payload without persisting it."""
     entities = [SceneEntity(
         id=endpoint_id(environment), label=environment["title"],
         kind="endpoint", details={
@@ -65,11 +64,18 @@ def emit_configured_scene(store: FileStore, settings: Settings, task_id: str,
                 details={"host": node.get("host"), "port": node.get("port")},
             ) for node in topology["nodes"])
             relations.extend(SceneRelation(**edge) for edge in topology["edges"])
-    store.tasks.add_event(task_id, "scene.topology.configured", SceneTopology(
+    return SceneTopology(
         product_id=environment["product_id"], environment_id=environment["id"],
         entities=[entity.model_dump() for entity in entities],
         relations=[relation.model_dump() for relation in relations],
-    ).model_dump())
+    )
+
+
+def emit_configured_scene(store: FileStore, settings: Settings, task_id: str,
+                          environment: dict) -> None:
+    """Publish a scene baseline without claiming that any node is healthy."""
+    store.tasks.add_event(task_id, "scene.topology.configured",
+                          configured_scene(settings, environment).model_dump())
 
 
 def emit_observation(store: FileStore, task_id: str, entity_id: str, state: str,
