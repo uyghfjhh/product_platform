@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Tag } from 'antd';
+import { Button, Progress, Tag } from 'antd';
 import { api, post, type Event, type Task } from '../../../frontend/src/platform/api';
 
 const finished = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED']);
@@ -79,6 +79,15 @@ export default function RegressionTerminal({ taskId, onInspect, onFinished }: {
         <Button size="small" onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '展开'}</Button>
       </div>
     </div>
+    {task?.progress && <div className="regression-terminal-progress">
+      <Progress
+        percent={Math.round((task.progress.done / task.progress.total) * 100)}
+        size="small"
+        status={running ? 'active' : (task.status === 'SUCCEEDED' ? 'success' : 'exception')}
+        format={() => `${task.progress!.done}/${task.progress!.total}`}
+      />
+      <span className="regression-terminal-progress-label">{task.progress.label}</span>
+    </div>}
     {expanded && <div className="regression-terminal-body" ref={body}>
       {error && <div className="terminal-error">{error}</div>}
       <pre>{lines.length ? lines.join('\n') : '等待测试任务输出...'}</pre>

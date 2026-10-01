@@ -95,9 +95,20 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     register_product_routes(app, settings, store)
 
     if settings.frontend_dist.is_dir():
+        # Hashed assets (/assets/index-<hash>.js) are immutable; index.html must
+        # never be heuristically cached or browsers pin a stale bundle.
+        class FrontendFiles(StaticFiles):
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                if path.startswith("assets/"):
+                    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                else:
+                    response.headers["Cache-Control"] = "no-cache"
+                return response
+
         app.mount(
             "/",
-            StaticFiles(directory=settings.frontend_dist, html=True),
+            FrontendFiles(directory=settings.frontend_dist, html=True),
             name="frontend",
         )
 

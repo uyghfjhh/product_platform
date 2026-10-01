@@ -269,6 +269,10 @@ button, input, textarea { font-family: inherit; }
 .regression-terminal-header { min-height: 46px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; cursor: pointer; }
 .regression-terminal-header strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .regression-terminal-actions { margin-left: auto; display: flex; gap: 6px; }
+.regression-terminal-progress { display: flex; align-items: center; gap: 12px; padding: 4px 14px 8px; }
+.regression-terminal-progress .ant-progress { flex: 1; margin: 0; }
+.regression-terminal-progress .ant-progress-text { color: #9fb6d4; font-size: 12px; }
+.regression-terminal-progress-label { color: #7d93ad; font-size: 11px; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .regression-terminal-body { height: min(38vh, 360px); overflow: auto; padding: 10px 17px; background: #090f1c; }
 .regression-terminal-body pre { margin: 0; color: #cce2d5; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .terminal-live-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: #34d399; box-shadow: 0 0 10px #34d399; animation: terminal-pulse 1.5s infinite; }
