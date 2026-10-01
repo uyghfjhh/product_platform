@@ -7,6 +7,8 @@ export type TopologyNode = {
   role: string;
   group?: string;
   data_dir: string;
+  extensions?: string[];
+  available_extensions?: string[];
 };
 
 export type TopologyData = {

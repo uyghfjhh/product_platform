@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import Settings
+from .config import ROOT, Settings
 
 TOPOLOGY_SCRIPT = r"""
 import json
@@ -26,9 +26,45 @@ target = sys.argv[2]
 config.validate(target)
 runtime = Runtime(config)
 names = runtime.target_instances(target)
+
+# 节点元数据的“全部插件”取自安装介质本身：share/extension/*.control
+# 与 pg_available_extensions 等价，但不依赖实例存活。按（安装,主机）
+# 缓存——同套安装服务的多个实例只扫描一次；扫描失败退回配置声明。
+available_cache = {}
+def installation_extensions(home, address):
+    key = (home, address)
+    if key not in available_cache:
+        found = set()
+        host = "local" if runtime.executor.is_local(address) else address
+        try:
+            proc = runtime.executor.run(
+                ["sh", "-c",
+                 "ls -- \"$1\"/share/extension/*.control "
+                 "\"$1\"/share/postgresql/extension/*.control 2>/dev/null || true",
+                 "sh", home],
+                host=host, check=False)
+            for line in proc.stdout.splitlines():
+                base = line.rsplit("/", 1)[-1].strip()
+                if base.endswith(".control"):
+                    found.add(base[: -len(".control")])
+        except Exception:
+            found = set()
+        available_cache[key] = sorted(found)
+    return available_cache[key]
+
 nodes = []
 for name in names:
     instance = config.instance(name)
+    raw_cfg = getattr(config, "raw", {})
+    inst_exts = set()
+    preloads = raw_cfg.get("postgresql_config", {}).get("parameters", {}).get("shared_preload_libraries") or []
+    if isinstance(preloads, str):
+        preloads = [x.strip() for x in preloads.split(",")]
+    inst_exts.update(preloads)
+    plugins = raw_cfg.get("postgresql_installations", {}).get(instance.get("installation"), {}).get("plugins") or {}
+    if isinstance(plugins, dict):
+        inst_exts.update(plugins.keys())
+    install_home = (instance.get("installation_config") or {}).get("home")
     nodes.append({
         "id": name,
         "label": name,
@@ -36,6 +72,10 @@ for name in names:
         "port": instance["port"],
         "data_dir": instance["data_dir"],
         "role": "instance",
+        "extensions": sorted(inst_exts),
+        "available_extensions": (
+            installation_extensions(install_home, instance["host_config"]["address"])
+            if install_home else []),
     })
 
 edges = []
@@ -51,6 +91,15 @@ if kind == "citus":
 if kind == "mmr":
     cluster = config.mmr_clusters[cluster_name]
     streaming_names = [item["streaming_cluster"] for item in cluster["members"].values()]
+
+cluster_exts = set()
+if kind == "mmr":
+    cluster_exts.update((config.mmr_clusters.get(cluster_name) or {}).get("extensions") or [])
+elif kind == "citus":
+    cluster_exts.update((config.citus_clusters.get(cluster_name) or {}).get("extensions") or [])
+if cluster_exts:
+    for node in nodes:
+        node["extensions"] = sorted(set(node["extensions"]) | cluster_exts)
 
 for stream_name in streaming_names:
     stream = config.streaming_clusters[stream_name]
@@ -113,8 +162,9 @@ def _deployment(environment: dict) -> tuple[Path, str]:
 
 def topology(settings: Settings, environment: dict) -> dict:
     path, target = _deployment(environment)
+    script = "import sys\nsys.path.insert(0,"+repr(str(ROOT/"backend"))+")\nfrom platform_app.resources import local_addresses\nfrom pgclusterlib.executor import LOCAL_HOSTS\nLOCAL_HOSTS.update(local_addresses())\n"+TOPOLOGY_SCRIPT
     result = subprocess.run(
-        [sys.executable, "-c", TOPOLOGY_SCRIPT, str(path), target],
+        [sys.executable, "-c", script, str(path), target],
         cwd=settings.pgcluster_root,
         capture_output=True,
         text=True,
@@ -127,9 +177,10 @@ def topology(settings: Settings, environment: dict) -> dict:
 
 def status(settings: Settings, environment: dict) -> dict:
     path, target = _deployment(environment)
+    script = "import sys\nsys.path.insert(0,"+repr(str(ROOT/"backend"))+")\nfrom platform_app.resources import local_addresses\nfrom pgclusterlib.executor import LOCAL_HOSTS\nLOCAL_HOSTS.update(local_addresses())\n"+STATUS_SCRIPT
     try:
         result = subprocess.run(
-            [sys.executable, "-c", STATUS_SCRIPT, str(path), target],
+            [sys.executable, "-c", script, str(path), target],
             cwd=settings.pgcluster_root, capture_output=True, text=True, timeout=30,
         )
     except subprocess.TimeoutExpired as exc:
