@@ -1,0 +1,353 @@
+import React, { useState } from 'react';
+import { Button, Tag, message } from 'antd';
+import {
+  CopyOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  DownOutlined,
+  UpOutlined,
+  CodeOutlined,
+  TableOutlined,
+  FileTextOutlined,
+} from '@ant-design/icons';
+import type { NormalizedStep } from './stepNormalizer';
+
+interface StepCardProps {
+  step: NormalizedStep;
+  defaultExpanded?: boolean;
+}
+
+export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [showRawTable, setShowRawTable] = useState(false);
+  const [logExpanded, setLogExpanded] = useState(true);
+
+  const copyToClipboard = (text: string, label = '内容') => {
+    void navigator.clipboard.writeText(text);
+    message.success(`${label}已复制到剪贴板`);
+  };
+
+  const isPass = step.status === 'PASS';
+
+  return (
+    <div className={`step-card-root ${isPass ? 'pass' : 'fail'}`}>
+      {/* 1. 顶部标题栏 */}
+      <div className="step-header">
+        <div className="step-header-left">
+          <span className="step-order-badge">#{step.order}</span>
+          <span className={`step-kind-badge ${step.kind}`}>
+            {step.kind === 'action' ? '操作步骤' : step.kind === 'verify' ? '状态验证' : '配置比对'}
+          </span>
+          <span className="step-title-text">{step.cleanTitle || step.title}</span>
+        </div>
+
+        <div className="step-header-right">
+          {step.telemetry?.elapsed && (
+            <span className="step-telemetry-pill">
+              ⏱ {step.telemetry.elapsed}
+              {step.telemetry.attempts ? ` (${step.telemetry.attempts}次)` : ''}
+            </span>
+          )}
+          <Tag
+            color={isPass ? 'success' : 'error'}
+            icon={isPass ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+            style={{ margin: 0, fontWeight: 700 }}
+          >
+            {step.status}
+          </Tag>
+          <Button
+            type="text"
+            size="small"
+            icon={expanded ? <UpOutlined /> : <DownOutlined />}
+            onClick={() => setExpanded(!expanded)}
+            style={{ color: '#94a3b8' }}
+          />
+        </div>
+      </div>
+
+      {/* 2. 折叠主体内容 */}
+      {expanded && (
+        <div className="step-body">
+          {/* 上下文环境标签 (端口 / 配置文件 / 执行节点) */}
+          {step.context && Object.keys(step.context).length > 0 && (
+            <div className="step-context-bar">
+              {Object.entries(step.context).map(([k, v]) => (
+                <span className="step-context-pill" key={k}>
+                  <b>{k}:</b> {v}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* 执行动作说明 */}
+          {step.action && (
+            <div style={{ color: '#cbd5e1', fontSize: '13px', lineHeight: 1.5 }}>
+              <span style={{ color: '#94a3b8', marginRight: 6 }}>动作:</span>
+              {step.action}
+            </div>
+          )}
+
+          {/* 执行命令 (Command Box) */}
+          {step.command && (
+            <div className="step-command-box">
+              <div className="step-command-header">
+                <span>⚡ 执行命令</span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  style={{ color: '#94a3b8', fontSize: 11 }}
+                  onClick={() => copyToClipboard(step.command!, '命令')}
+                >
+                  复制
+                </Button>
+              </div>
+              <pre>{step.command}</pre>
+            </div>
+          )}
+
+          {/* 验证步骤专用：预期准则 vs 实际输出工作台 (Verification Workbench) */}
+          {step.kind === 'verify' && (
+            <div className="step-verification-workbench">
+              {/* 关键期望 (Expected) */}
+              {step.expected && (
+                <div className="step-expected-card">
+                  <div className="step-section-label expected">
+                    <span>🎯 关键期望 (Expected Criteria)</span>
+                  </div>
+                  <div className="step-expected-content">{step.expected}</div>
+                </div>
+              )}
+
+              {/* 实际输出载荷 (Actual Output / State Table) */}
+              {step.actualPayload && (
+                <div className="step-actual-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="step-section-label actual">
+                      <span>📊 实际输出 (Actual Payload)</span>
+                    </div>
+                    {step.actualPayload.parsedTable && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={showRawTable ? <TableOutlined /> : <CodeOutlined />}
+                        style={{ color: '#38bdf8', fontSize: 11 }}
+                        onClick={() => setShowRawTable(!showRawTable)}
+                      >
+                        {showRawTable ? '表格视图' : '原始控制台'}
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* 结构化表格渲染 */}
+                  {step.actualPayload.parsedTable && !showRawTable ? (
+                    <div className="step-table-container">
+                      <table className="step-ascii-table">
+                        <thead>
+                          <tr>
+                            {step.actualPayload.parsedTable.headers.map((h, i) => (
+                              <th key={i}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {step.actualPayload.parsedTable.rows.map((row, ri) => (
+                            <tr key={ri}>
+                              {row.map((col, ci) => (
+                                <td key={ci}>{col}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {step.actualPayload.parsedTable.footer && (
+                        <div className="step-table-footer">{step.actualPayload.parsedTable.footer}</div>
+                      )}
+                    </div>
+                  ) : (
+                    /* 原始控制台文本 */
+                    <div className="step-command-box" style={{ marginTop: 4 }}>
+                      <pre style={{ color: '#e2e8f0', fontSize: 11 }}>
+                        {step.actualPayload.raw}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 断言判定明细：逐字段 ✅/❌ 核对结果，表格载荷存在时同样渲染；
+                  仅 text 型载荷与 actualSummary 同源（不重复渲染） */}
+              {step.actualSummary &&
+                !step.actualSummary.startsWith('returncode=') &&
+                step.actualPayload?.type !== 'text' &&
+                step.actualSummary !== step.actualPayload?.raw && (
+                <div className="step-verdict-card">
+                  <div className="step-section-label verdict">
+                    <span>� 断言判定 (Assertion Verdict)</span>
+                  </div>
+                  <div className="step-verdict-lines">
+                    {step.actualSummary.split('\n').map((line, i) => {
+                      const trimmed = line.trim();
+                      const cls = trimmed.startsWith('✅') ? 'ok'
+                        : trimmed.startsWith('❌') ? 'bad'
+                        : trimmed ? 'plain' : 'blank';
+                      return <div key={i} className={`verdict-line ${cls}`}>{line || ' '}</div>;
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 配置比对步骤专用：Diff 视图 (Diff Workbench) */}
+          {step.kind === 'diff' && step.actualPayload && (
+            <div className="step-diff-workbench">
+              {/* 关键期望 */}
+              {step.expected && (
+                <div className="step-expected-card">
+                  <div className="step-section-label expected">
+                    <span>🎯 比对期望 (Expected Criteria)</span>
+                  </div>
+                  <div className="step-expected-content">{step.expected}</div>
+                </div>
+              )}
+
+              {/* 语义变化标签 (Semantic Changes) */}
+              {step.actualPayload.semanticChanges && step.actualPayload.semanticChanges.length > 0 && (
+                <div>
+                  <div className="step-section-label" style={{ color: '#fbbf24' }}>
+                    <span>⚡ 识别到的语义变更 (Semantic Changes)</span>
+                  </div>
+                  <div className="step-semantic-tags">
+                    {step.actualPayload.semanticChanges.map((sc, i) => (
+                      <span className="semantic-tag" key={i}>
+                        <span className="field">{sc.field}:</span>
+                        <span className="from">{sc.from}</span>
+                        <span className="arrow">➔</span>
+                        <span className="to">{sc.to}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 语法高亮 Diff 视窗 */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <div className="step-section-label" style={{ color: '#94a3b8' }}>
+                    <span>📄 Unified Diff</span>
+                  </div>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    style={{ color: '#94a3b8', fontSize: 11 }}
+                    onClick={() => copyToClipboard(step.actualPayload!.raw, 'Diff')}
+                  >
+                    复制 Diff
+                  </Button>
+                </div>
+                <div className="step-diff-box">
+                  {step.actualPayload.raw.split('\n').map((line, idx) => {
+                    const isAdd = line.startsWith('+') && !line.startsWith('+++');
+                    const isDel = line.startsWith('-') && !line.startsWith('---');
+                    const isInfo = line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++');
+                    const cls = isAdd ? 'add' : isDel ? 'del' : isInfo ? 'info' : '';
+                    return (
+                      <div key={idx} className={`diff-line ${cls}`}>
+                        {line || ' '}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 纯操作步骤如果只有即时反馈 */}
+          {step.kind === 'action' && step.actualSummary && !step.actualSummary.startsWith('returncode=') && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#94a3b8' }}>
+              <span>即时状态:</span>
+              <Tag color="cyan" style={{ margin: 0 }}>{step.actualSummary}</Tag>
+            </div>
+          )}
+
+          {/* 3. 证据区域：工件引用 + 独立日志证据视窗 (Log Evidence / Artifacts) */}
+          {step.evidenceItems && step.evidenceItems.length > 0 && (
+            <div className="step-evidence-container">
+              {/* 工件引用药丸 */}
+              {step.evidenceItems.filter((e) => e.type === 'artifact').length > 0 && (
+                <div className="step-evidence-pills">
+                  {step.evidenceItems
+                    .filter((e) => e.type === 'artifact')
+                    .map((item, idx) => (
+                      <span className="evidence-artifact-pill" key={idx} title="测试工件路径">
+                        <FileTextOutlined />
+                        <span>{item.value}</span>
+                      </span>
+                    ))}
+                </div>
+              )}
+
+              {/* 日志证据视窗 */}
+              {step.evidenceItems.filter((e) => e.type === 'log' || e.type === 'text').length > 0 && (
+                <div className="step-log-evidence-box">
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '4px 10px',
+                      background: '#0d1527',
+                      borderBottom: '1px solid #1a263d',
+                      fontSize: 11,
+                      color: '#fbbf24',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setLogExpanded(!logExpanded)}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>📜 日志证据 (Log Evidence)</span>
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        style={{ color: '#fbbf24', fontSize: 11 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const allLog = step.evidenceItems
+                            .filter((ev) => ev.type === 'log' || ev.type === 'text')
+                            .map((ev) => ev.value)
+                            .join('\n\n');
+                          copyToClipboard(allLog, '日志证据');
+                        }}
+                      >
+                        复制日志
+                      </Button>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={logExpanded ? <UpOutlined /> : <DownOutlined />}
+                        style={{ color: '#fbbf24' }}
+                      />
+                    </div>
+                  </div>
+                  {logExpanded && (
+                    <pre>
+                      {step.evidenceItems
+                        .filter((e) => e.type === 'log' || e.type === 'text')
+                        .map((e) => e.value)
+                        .join('\n\n')}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};

@@ -1,0 +1,436 @@
+/* =============================================================================
+   平台通用回归测试步骤样式 (Platform Universal Step Viewer Styles)
+   支持 ActionStep、VerifyStep、DiffStep 三类卡片的高清暗黑呈现
+   ============================================================================= */
+
+.universal-steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.step-card-root {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transition: all 0.2s ease;
+}
+
+.step-card-root:hover {
+  border-color: #334155;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.step-card-root.pass {
+  border-left: 4px solid #10b981;
+}
+
+.step-card-root.fail {
+  border-left: 4px solid #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+/* 顶部标题栏 */
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #131d33;
+  border-bottom: 1px solid #1e293b;
+}
+
+.step-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-order-badge {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
+
+.step-kind-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.step-kind-badge.action {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.step-kind-badge.verify {
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+
+.step-kind-badge.diff {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.step-title-text {
+  font-weight: 600;
+  font-size: 13px;
+  color: #f1f5f9;
+}
+
+.step-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-telemetry-pill {
+  font-family: monospace;
+  font-size: 11px;
+  color: #64748b;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #1e293b;
+}
+
+/* 主体内容区 */
+.step-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 上下文标签栏 (端口、配置等) */
+.step-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.step-context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  background: #1a2234;
+  border: 1px solid #2a354c;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #94a3b8;
+}
+
+.step-context-pill b {
+  color: #cbd5e1;
+}
+
+/* 命令代码块 */
+.step-command-box {
+  background: #080d1a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.step-command-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 10px;
+  background: #0d1527;
+  border-bottom: 1px solid #1a263d;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.step-command-box pre {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 12px;
+  color: #38bdf8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+  background: transparent;
+}
+
+/* 验证步骤的核心双栏比对工作台 (Verification Workbench) */
+.step-verification-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #0a0f1d;
+  border: 1px solid #1c273e;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.step-expected-card {
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.step-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.step-section-label.expected {
+  color: #38bdf8;
+}
+
+.step-section-label.actual {
+  color: #a5b4fc;
+}
+
+.step-section-label.evidence {
+  color: #f59e0b;
+}
+
+.step-section-label.verdict {
+  color: #4ade80;
+}
+
+/* 断言判定明细：逐字段核对结果 */
+.step-verdict-card {
+  background: rgba(74, 222, 128, 0.06);
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.step-verdict-lines {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.verdict-line.ok {
+  color: #4ade80;
+}
+
+.verdict-line.bad {
+  color: #f87171;
+}
+
+.verdict-line.plain {
+  color: #cbd5e1;
+}
+
+.verdict-line.blank {
+  height: 8px;
+}
+
+.step-expected-content {
+  font-size: 13px;
+  color: #e2e8f0;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* 实际输出渲染：PSQL 表格 */
+.step-table-container {
+  overflow-x: auto;
+  margin-top: 6px;
+  border-radius: 4px;
+  border: 1px solid #1e293b;
+}
+
+.step-ascii-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  background: #050914;
+}
+
+.step-ascii-table th {
+  background: #111a2e;
+  color: #93c5fd;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 2px solid #1e293b;
+  border-right: 1px solid #1a2438;
+  white-space: nowrap;
+}
+
+.step-ascii-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid #151f33;
+  border-right: 1px solid #151f33;
+  color: #cbd5e1;
+  white-space: nowrap;
+}
+
+.step-ascii-table tr:hover td {
+  background: rgba(56, 189, 248, 0.05);
+}
+
+.step-table-footer {
+  font-family: monospace;
+  font-size: 10px;
+  color: #64748b;
+  padding: 4px 8px;
+  background: #090e1c;
+  text-align: right;
+  border-top: 1px solid #1e293b;
+}
+
+/* Diff 视图 */
+.step-diff-workbench {
+  background: #0a0f1d;
+  border: 1px solid #1c273e;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.step-semantic-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.semantic-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #162035;
+  border: 1px solid #273754;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.semantic-tag .field {
+  color: #94a3b8;
+}
+
+.semantic-tag .arrow {
+  color: #38bdf8;
+  font-weight: bold;
+}
+
+.semantic-tag .from {
+  color: #f87171;
+  text-decoration: line-through;
+}
+
+.semantic-tag .to {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.step-diff-box {
+  background: #050811;
+  border: 1px solid #1b263b;
+  border-radius: 4px;
+  padding: 8px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 300px;
+}
+
+.diff-line.add {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.diff-line.del {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.diff-line.info {
+  color: #38bdf8;
+}
+
+/* 证据视窗 (Evidence Viewer) */
+.step-evidence-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.step-evidence-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.evidence-artifact-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 4px;
+  color: #fbbf24;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.step-log-evidence-box {
+  background: #060a14;
+  border: 1px solid #23314d;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.step-log-evidence-box pre {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #fcd34d;
+  background: transparent;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 工具栏与过滤 */
+.steps-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+}
