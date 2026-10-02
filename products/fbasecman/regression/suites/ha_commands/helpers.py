@@ -661,6 +661,8 @@ user "ha_single_statement" {
             "# production-style routing combinations; comments and alignment are intentional\n",
             "# production-style routing combinations; comments and alignment are intentional\r\n"
             "# 中文 CRLF 行：验证混合换行符\r\n", 1)
+        content = content.replace('log_syslog_ident "fbasecman"',
+                                  'log_syslog_ident "fbase#inside-string"', 1)
         return content.rstrip("\n")
     return transform
 

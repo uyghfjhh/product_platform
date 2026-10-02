@@ -279,23 +279,36 @@ def _run_comprehensive_all_groups_and_commands(context):
             rows[name] = row
         return rows
 
+    def _line_with(needle):
+        for ln in rendered.splitlines():
+            if needle in ln:
+                return ln
+        return "<未找到>"
+
+    en_comment = next(
+        (ln.strip() for ln in rendered.splitlines()
+         if ln.lstrip().startswith("#") and ln.strip().isascii()),
+        "<未找到>")
+    blank_ctx = rendered[
+        rendered.index('\n\n    check "auto"'):][:40] \
+        if '\n\n    check "auto"' in rendered else "<未找到>"
     ops.check(
         "阶段 1：检查线上配置格式特征",
         "中文/英文注释、Tab、非对齐缩进、连续空行、CRLF、末尾无换行和字符串内 # 均保留",
-        "comment_cn=%s comment_en=%s tab=%s uneven_indent=%s blank_line=%s crlf=%s no_final_newline=%s hash_in_string=%s" % (
-            "中文" in rendered,
-            "# 线上共享物理节点" in rendered,
-            "\t" in rendered,
-            "  write_cluster \"pg_cluster_1\"" in rendered,
-            "\n\n    check \"auto\"" in rendered,
-            b"\r\n" in rendered_bytes,
-            not rendered_bytes.endswith(b"\n"),
-            "#" in rendered,
-        ),
+        "\n      ".join((
+            "中文注释: %s" % _line_with("中文"),
+            "英文注释: %s" % en_comment,
+            "Tab 行: %r" % _line_with("\t"),
+            "非对齐缩进: %r" % _line_with('  write_cluster "pg_cluster_1"'),
+            "连续空行: %r" % blank_ctx,
+            "CRLF 行数: %d" % rendered_bytes.count(b"\r\n"),
+            "末尾字节: %r" % rendered_bytes[-30:],
+            "字符串内 #: %s" % _line_with('"fbase#inside-string"'),
+        )),
         all(marker in rendered for marker in (
             "中文", "# 线上共享物理节点", "\t",
             "  write_cluster \"pg_cluster_1\"",
-            "\n\n    check \"auto\"", "#",
+            "\n\n    check \"auto\"", '"fbase#inside-string"',
         )) and b"\r\n" in rendered_bytes and not rendered_bytes.endswith(b"\n"),
     )
 
@@ -670,18 +683,28 @@ def _run_comprehensive_all_groups_and_commands(context):
     )
     final_bytes = conf.read_bytes()
     final_text = final_bytes.decode("utf-8")
+    preserved = [
+        "中文注释行=%r" % next(
+            (ln for ln in final_text.splitlines() if "中文" in ln), "<缺失>"),
+        "Tab 行=%r" % next(
+            (ln for ln in final_text.splitlines() if "\t" in ln), "<缺失>"),
+        "非对齐缩进=%r" % next(
+            (ln for ln in final_text.splitlines()
+             if '  write_cluster "pg_cluster_1"' in ln), "<缺失>"),
+        "字符串内 #=%r" % next(
+            (ln for ln in final_text.splitlines()
+             if '"fbase#inside-string"' in ln), "<缺失>"),
+        "CRLF 行数=%d" % final_bytes.count(b"\r\n"),
+        "末尾字节=%r" % final_bytes[-30:],
+    ]
     ops.check(
         "阶段 10：检查高可用命令后格式内容仍保留",
-        "中文注释、Tab、非对齐缩进、空行和行尾注释未被配置写回破坏",
-        "format_markers_preserved=%s" % all(marker in final_text for marker in (
-            "中文", "# 线上共享物理节点", "\t",
-            "  write_cluster \"pg_cluster_1\"",
-            "\n\n    check \"auto\"", "#",
-        )),
+        "中文注释、Tab、非对齐缩进、空行、CRLF 与字符串内 # 未被配置写回破坏",
+        "\n      ".join(preserved),
         all(marker in final_text for marker in (
             "中文", "# 线上共享物理节点", "\t",
             "  write_cluster \"pg_cluster_1\"",
-            "\n\n    check \"auto\"", "#",
+            "\n\n    check \"auto\"", '"fbase#inside-string"',
         )) and b"\r\n" in final_bytes and not final_bytes.endswith(b"\n"),
     )
     ops.diff(before, conf)
