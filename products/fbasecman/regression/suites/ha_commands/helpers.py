@@ -8,7 +8,7 @@ from platform_regress.clients.psql import parse_psql_table
 from suites.ha_commands.runtime import HaCommandFailure
 
 LOCAL_HOST = os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1")
-__all__ = ['_add_30_cluster_datasources', '_add_34_mmr_groups', '_add_bulk_datasources', '_add_bulk_mmr_groups', '_add_groups_without_promoted', '_add_hash_inside_string', '_add_second_mmr_group', '_add_single_cluster_mmr_group', '_as_crlf', '_balance_read_only_transform', '_bulk_datasources_have_weight', '_bulk_groups_have', '_cluster_datasources_have_status', '_comprehensive_transform', '_datasource_block', '_group_fields_with_format', '_has_only_crlf', '_hint_transform', '_inject_after_start', '_mixed_topology_transform', '_node_has_weight', '_omit_group_defaults', '_pg3_as_single_line_block', '_port_transform', '_remove_test_path', '_rename_disk_datasource', '_route_user_scope', '_run_route_mode', '_run_sql_parse_heartbeat_bind_invalid', '_run_sql_parse_heartbeat_bind_normal', '_run_sql_parse_heartbeat_bind_unsupported', '_run_sql_parse_transactions', '_single_read_only', '_single_read_only_keep_scope', '_sql_parse_transform', '_status_with_format', '_wait_pg_cluster_ready', '_weight_with_format', '_without_final_newline', '_without_promoted']
+__all__ = ['_add_30_cluster_datasources', '_add_34_mmr_groups', '_add_bulk_datasources', '_add_bulk_mmr_groups', '_add_groups_without_promoted', '_add_hash_inside_string', '_add_second_mmr_group', '_add_single_cluster_mmr_group', '_as_crlf', '_balance_read_only_transform', '_bulk_datasources_have_weight', '_bulk_groups_have', '_cluster_datasources_have_status', '_comprehensive_transform', '_datasource_block', '_group_fields_with_format', '_has_only_crlf', '_matching_line', '_matching_lines', '_bulk_groups_missing', '_bulk_datasources_wrong_weight', '_cluster_datasources_missing_status', '_hint_transform', '_inject_after_start', '_mixed_topology_transform', '_node_has_weight', '_omit_group_defaults', '_pg3_as_single_line_block', '_port_transform', '_remove_test_path', '_rename_disk_datasource', '_route_user_scope', '_run_route_mode', '_run_sql_parse_heartbeat_bind_invalid', '_run_sql_parse_heartbeat_bind_normal', '_run_sql_parse_heartbeat_bind_unsupported', '_run_sql_parse_transactions', '_single_read_only', '_single_read_only_keep_scope', '_sql_parse_transform', '_status_with_format', '_wait_pg_cluster_ready', '_weight_with_format', '_without_final_newline', '_without_promoted']
 
 
 def _add_second_mmr_group(content):
@@ -158,15 +158,17 @@ def _run_sql_parse_heartbeat_bind_invalid(context):
     ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
+    premise_lines = {v: _matching_line(config_text, v) for v in (
+        'rw_split_method "sql_parse"', 'pool_reserve_prepared_statement yes',
+        'heartbeat_request "select 1"')}
     ops.check(
         "确认异常 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
-        "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
-        all(value in config_text for value in (
-            'rw_split_method "sql_parse"',
-            'pool_reserve_prepared_statement yes',
-            'heartbeat_request "select 1"',
-        )))
+        "rw_split_method: %r\n      prepared_statement: %r\n      heartbeat: %r" % (
+            premise_lines['rw_split_method "sql_parse"'],
+            premise_lines['pool_reserve_prepared_statement yes'],
+            premise_lines['heartbeat_request "select 1"']),
+        all(v != "<未找到>" for v in premise_lines.values()))
     probe = ops.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
     if not probe.exists():
         raise HaCommandFailure("missing heartbeat Bind probe: %s" % probe)
@@ -186,19 +188,45 @@ def _run_sql_parse_heartbeat_bind_invalid(context):
     )
 
 
+def _bulk_datasources_wrong_weight(text, weight):
+    """返回 weight 不符合期望的 bulk_ds_* 名单（空列表=全部符合）。"""
+    return ['bulk_ds_%02d' % index for index in range(1, 31)
+            if 'weight %d' % weight not in
+            _datasource_block(text, 'bulk_ds_%02d' % index)]
+
+
 def _bulk_datasources_have_weight(text, weight):
-    return all('weight %d' % weight in _datasource_block(text, 'bulk_ds_%02d' % index)
-               for index in range(1, 31))
+    return not _bulk_datasources_wrong_weight(text, weight)
+
+
+def _bulk_groups_missing(text, write_cluster, promoted_cluster):
+    """返回 write/promoted 不符合期望的 bulk_mmr_* group 名单。"""
+    missing = []
+    for index in range(1, 31):
+        name = 'bulk_mmr_%02d' % index
+        block = _datasource_block(text.replace('group "', 'datasources "'), name)
+        if ('write_cluster "%s"' % write_cluster not in block or
+                'promoted_cluster "%s"' % promoted_cluster not in block):
+            missing.append(name)
+    return missing
 
 
 def _bulk_groups_have(text, write_cluster, promoted_cluster):
-    for index in range(1, 31):
-        block = _datasource_block(text.replace('group "', 'datasources "'),
-                                  'bulk_mmr_%02d' % index)
-        if ('write_cluster "%s"' % write_cluster not in block or
-                'promoted_cluster "%s"' % promoted_cluster not in block):
-            return False
-    return True
+    return not _bulk_groups_missing(text, write_cluster, promoted_cluster)
+
+
+def _matching_line(text, needle):
+    """返回第一处包含 needle 的行（断言证据用），无匹配返回 <未找到>。"""
+    for line in text.splitlines():
+        if needle in line:
+            return line
+    return "<未找到>"
+
+
+def _matching_lines(text, needle, limit=5):
+    """返回所有包含 needle 的行（最多 limit 条），无匹配返回 [<未找到>]。"""
+    lines = [line for line in text.splitlines() if needle in line]
+    return lines[:limit] or ["<未找到>"]
 
 
 def _without_promoted(content):
@@ -220,15 +248,17 @@ def _run_sql_parse_heartbeat_bind_normal(context):
     ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
+    premise_lines = {v: _matching_line(config_text, v) for v in (
+        'rw_split_method "sql_parse"', 'pool_reserve_prepared_statement yes',
+        'heartbeat_request "select 1"')}
     ops.check(
         "确认 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
-        "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
-        all(value in config_text for value in (
-            'rw_split_method "sql_parse"',
-            'pool_reserve_prepared_statement yes',
-            'heartbeat_request "select 1"',
-        )))
+        "rw_split_method: %r\n      prepared_statement: %r\n      heartbeat: %r" % (
+            premise_lines['rw_split_method "sql_parse"'],
+            premise_lines['pool_reserve_prepared_statement yes'],
+            premise_lines['heartbeat_request "select 1"']),
+        all(v != "<未找到>" for v in premise_lines.values()))
     jar = jdbc_client.resolve_jar(ops.root / ops.env.config["local"]["jdbc_lib_dir"], None)
     source = ops.root / "suites" / "sql_parse" / "assets" / "HeartbeatBindNormal.java"
     if not jar.exists() or not source.exists():
@@ -338,15 +368,17 @@ def _run_sql_parse_heartbeat_bind_unsupported(context):
     ops = context.ops
     conf = ops.start(transform=_sql_parse_transform("mmr_group"))
     config_text = conf.read_text(encoding="utf-8")
+    premise_lines = {v: _matching_line(config_text, v) for v in (
+        'rw_split_method "sql_parse"', 'pool_reserve_prepared_statement yes',
+        'heartbeat_request "select 1"')}
     ops.check(
         "确认不支持格式 heartbeat Bind 测试配置",
         "mmr_group 启用 sql_parse、服务端 PreparedStatement 缓存及 select 1 heartbeat",
-        "rw_split_method=sql_parse; pool_reserve_prepared_statement=yes; heartbeat_request=select 1",
-        all(value in config_text for value in (
-            'rw_split_method "sql_parse"',
-            'pool_reserve_prepared_statement yes',
-            'heartbeat_request "select 1"',
-        )))
+        "rw_split_method: %r\n      prepared_statement: %r\n      heartbeat: %r" % (
+            premise_lines['rw_split_method "sql_parse"'],
+            premise_lines['pool_reserve_prepared_statement yes'],
+            premise_lines['heartbeat_request "select 1"']),
+        all(v != "<未找到>" for v in premise_lines.values()))
     probe = ops.root / "suites" / "ha_commands" / "assets" / "heartbeat_bind_probe.py"
     _, output = ops.run_command(
         [sys.executable, str(probe), str(ops.listen_port), "binary"],
@@ -882,8 +914,14 @@ def _add_hash_inside_string(content):
                            'log_syslog_ident "fbase#inside-string"', 1)
 
 
+def _cluster_datasources_missing_status(text, status):
+    """返回 status 不符合期望的 cluster_ds_* 名单（空列表=全部符合）。"""
+    return ['cluster_ds_%02d' % i for i in range(1, 31)
+            if 'status "%s"' % status not in
+            _datasource_block(text, 'cluster_ds_%02d' % i)]
+
+
 def _cluster_datasources_have_status(text, status):
-    return all('status "%s"' % status in _datasource_block(text, 'cluster_ds_%02d' % i)
-               for i in range(1, 31))
+    return not _cluster_datasources_missing_status(text, status)
 
 

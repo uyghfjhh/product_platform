@@ -53,8 +53,12 @@ def _run_set_cluster_30_datasource_roundtrip(context):
             "返回 SET CLUSTER 且命令不报错",
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 datasource PARTED 备份")
-    parted = _cluster_datasources_have_status(conf.read_text(encoding="utf-8"), "parted")
-    ops.check("验证 cluster 展开完整覆盖 30 个 datasource", "30 个节点均为 parted", "30 datasources parted=%s" % parted, parted)
+    not_parted = _cluster_datasources_missing_status(
+        conf.read_text(encoding="utf-8"), "parted")
+    ops.check("验证 cluster 展开完整覆盖 30 个 datasource",
+             "30 个节点均为 parted",
+             "符合=%d/30，不符项=%s" % (30 - len(not_parted), not_parted or "无"),
+             not not_parted)
     ops.diff_contains(before, conf, ('-    status "active"', '+    status "parted"'), "验证 30 datasource PARTED 配置 diff")
     ops.assert_table(
         'SHOW DATASOURCES;', "查看 30 datasource PARTED 后状态",
@@ -66,8 +70,12 @@ def _run_set_cluster_30_datasource_roundtrip(context):
             "返回 SET CLUSTER 且命令不报错",
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 datasource ACTIVE 恢复备份")
-    restored = _cluster_datasources_have_status(conf.read_text(encoding="utf-8"), "active")
-    ops.check("验证 30 个 datasource 全部恢复", "30 个节点均恢复 active", "30 datasources active=%s" % restored, restored)
+    not_active = _cluster_datasources_missing_status(
+        conf.read_text(encoding="utf-8"), "active")
+    ops.check("验证 30 个 datasource 全部恢复",
+             "30 个节点均恢复 active",
+             "符合=%d/30，不符项=%s" % (30 - len(not_active), not_active or "无"),
+             not not_active)
     ops.diff(before, conf)
     ops.assert_table(
         'SHOW DATASOURCES;', "查看 30 datasource 恢复后状态",
@@ -112,8 +120,8 @@ def _run_console_set_validation_toggle(context):
     ops.check(
         "确认 console_set_validation 默认开启",
         "配置文件包含 console_set_validation yes",
-        "console_set_validation yes=%s" %
-        ('console_set_validation yes' in conf.read_text(encoding="utf-8")),
+        "命中行: %s" % _matching_line(
+            conf.read_text(encoding="utf-8"), "console_set_validation yes"),
         'console_set_validation yes' in conf.read_text(encoding="utf-8"),
     )
     ops.psql(
@@ -173,8 +181,8 @@ def _run_console_set_validation_toggle(context):
     ops.check(
         "验证 Reload 日志记录 console_set_validation no",
         "日志包含 console_set_validation no",
-        "console_set_validation no=%s" %
-        ("console_set_validation no" in reload_log),
+        "命中日志行:\n      %s" % "\n      ".join(
+            _matching_lines(reload_log, "console_set_validation no")),
         "console_set_validation no" in reload_log,
     )
     ops.psql(
@@ -204,8 +212,8 @@ def _run_console_set_validation_toggle(context):
     ops.check(
         "验证 Reload 日志记录 console_set_validation yes",
         "日志包含 console_set_validation yes",
-        "console_set_validation yes=%s" %
-        ("console_set_validation yes" in reload_log),
+        "命中日志行:\n      %s" % "\n      ".join(
+            _matching_lines(reload_log, "console_set_validation yes")),
         "console_set_validation yes" in reload_log,
     )
     ops.psql_error(
@@ -293,7 +301,9 @@ def _run_refresh_cluster_probe_edges(context):
             if predicate(last):
                 return last
             time.sleep(1)
-        ops.check(title, expected, "monitor 快照在 %d 次轮询内未达预期" % attempts,
+        ops.check(title, expected,
+                 "轮询 %d 次后最后快照:\n      %s" % (
+                     attempts, "\n      ".join(last.splitlines()[:25])),
                  False)
 
     def nodes_online(output):
@@ -449,9 +459,10 @@ def _run_set_cluster_parted_active_roundtrip(context):
             '返回 SET CLUSTER',
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
     text = conf.read_text(encoding="utf-8")
+    parted_lines = _matching_lines(text, 'status "parted"')
     ops.check("验证 cluster 的两个 datasource 完整落盘",
              "pg_cluster_1 的 pg_1、pg_3 均为 status parted",
-             "status parted occurrences=%d" % text.count('    status "parted"\n'),
+             "匹配行: %s" % parted_lines,
              text.count('    status "parted"\n') == 2)
     ops.psql_business_error(
         'SELECT inet_server_port();',
@@ -540,7 +551,10 @@ def _run_refresh_cluster(context):
             if predicate(last):
                 return last
             time.sleep(1)
-        ops.check(title, expected, "monitor 快照在 %ss 内未达到预期" % attempts, False)
+        ops.check(title, expected,
+                 "轮询 %d 次后最后快照:\n      %s" % (
+                     attempts, "\n      ".join(last.splitlines()[:25])),
+                 False)
         return last
 
     for enabled, period in (("no", 30), ("yes", 300)):
@@ -602,8 +616,9 @@ def _run_write_cluster_format_preservation(context):
     promoted_line = '      promoted_cluster\t"pg_cluster_2"    # keep-promoted-format'
     ops.check("验证 WRITE 两字段周边格式保持",
              "两个字段分别保留原缩进、空格、tab 和行尾注释",
-             "write格式=%s；promoted格式=%s" %
-             (write_line in text, promoted_line in text),
+             "期望 write=%r\n      命中=%r\n      期望 promoted=%r\n      命中=%r" % (
+                 write_line, _matching_line(text, 'write_cluster'),
+                 promoted_line, _matching_line(text, 'promoted_cluster')),
              write_line in text and promoted_line in text)
     ops.assert_routing(
         "mmr_group", "查看格式保持 WRITE 切换后的运行态",

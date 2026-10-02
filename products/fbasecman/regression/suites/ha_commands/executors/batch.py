@@ -26,8 +26,12 @@ def _run_bulk_30_groups_non_mmr(context):
                   lambda output: "rep_group" in output and "is not an MMR group" in output)
     ops.assert_no_backup_created(backup, conf, "验证混入非 MMR group 未创建备份")
     ops.diff(before, conf)
-    unchanged = _bulk_groups_have(conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
-    ops.check("验证混入非 MMR 后 30 个 group 未部分修改", "全部保持初始状态", "unchanged=%s" % unchanged, unchanged)
+    missing = _bulk_groups_missing(
+        conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
+    ops.check("验证混入非 MMR 后 30 个 group 未部分修改",
+             "全部保持 write_cluster=pg_cluster_2 promoted_cluster=pg_cluster_1",
+             "符合=30/%d，不符项=%s" % (30 - len(missing), missing or "无"),
+             not missing)
     ops.assert_routing(
         "bulk_mmr_30", "查看混入非 MMR 命令后 MMR 状态",
         write_cluster="pg_cluster_2", write_leader="pg_2")
@@ -52,8 +56,13 @@ def _run_default_group_expansion_34(context):
             "返回 SET NODE 且命令不报错", lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 34 组默认展开备份")
     text = conf.read_text(encoding="utf-8")
-    changed = all('write_cluster "pg_cluster_1"' in _datasource_block(text.replace('group "', 'datasources "'), name) for name in names)
-    ops.check("验证默认范围完整覆盖 34 个 group", "34 个 group 全部切换", "34 groups changed=%s" % changed, changed)
+    not_changed = [
+        name for name in names
+        if 'write_cluster "pg_cluster_1"' not in
+        _datasource_block(text.replace('group "', 'datasources "'), name)]
+    ops.check("验证默认范围完整覆盖 34 个 group", "34 个 group 全部切换到 pg_cluster_1",
+             "已切换=%d/34，未切换项=%s" % (34 - len(not_changed), not_changed or "无"),
+             not not_changed)
     ops.diff_contains(before, conf, ('-    write_cluster "pg_cluster_2"', '+    write_cluster "pg_cluster_1"'), "验证 34 组默认展开配置 diff")
     ops.assert_routing(
         "expand_mmr_34", "查看 34 组默认展开后状态",
@@ -92,10 +101,11 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 节点权重修改备份")
     changed = conf.read_text(encoding="utf-8")
-    all_changed = _bulk_datasources_have_weight(changed, 11)
+    wrong = _bulk_datasources_wrong_weight(changed, 11)
     ops.check("验证 30 个 datasource 全部原子落盘",
              "bulk_ds_01 至 bulk_ds_30 均为 weight 11",
-             "30 datasources changed=%s" % all_changed, all_changed)
+             "符合=%d/30，不符项=%s" % (30 - len(wrong), wrong or "无"),
+             not wrong)
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证 30 节点权重配置 diff")
     ops.assert_table(
@@ -110,10 +120,11 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 节点权重恢复备份")
-    all_restored = _bulk_datasources_have_weight(conf.read_text(encoding="utf-8"), 10)
+    wrong = _bulk_datasources_wrong_weight(conf.read_text(encoding="utf-8"), 10)
     ops.check("验证 30 个 datasource 全部恢复",
              "bulk_ds_01 至 bulk_ds_30 均恢复 weight 10",
-             "30 datasources restored=%s" % all_restored, all_restored)
+             "符合=%d/30，不符项=%s" % (30 - len(wrong), wrong or "无"),
+             not wrong)
     ops.diff(before, conf)
     ops.assert_table(
         'SHOW DATASOURCES;',
@@ -134,8 +145,9 @@ def _run_batch_weight_atomicity(context):
             '返回 SET NODE', lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.diff_contains(before, conf, ('+    weight 11',), "验证两个 datasource 的批量配置 diff")
     text = conf.read_text(encoding='utf-8')
+    weight_lines = _matching_lines(text, 'weight 11')
     ops.check("验证批量修改完整落盘", "pg_3、pg_4 均为 weight 11",
-             "weight 11 occurrences=%d" % text.count('    weight 11\n'),
+             "weight 11 行: %s" % weight_lines,
              text.count('    weight 11\n') == 2)
     ops.assert_nodes("查看批量修改后的运行态",
                      {"pg_3": {"weight": "11"}, "pg_4": {"weight": "11"}})
@@ -353,11 +365,14 @@ def _run_comprehensive_all_groups_and_commands(context):
         },
         row_count=17,
     )
+    pool_text = conf.read_text(encoding="utf-8")
+    pool_lines = {mode: _matching_line(pool_text, 'pool "%s"' % mode)
+                  for mode in ("transaction", "session", "statement")}
     ops.check("阶段 1：检查 pool 模式组合", "session/transaction/statement 均在配置中",
-             "pool transaction/session/statement present=%s" % all(
-                 token in conf.read_text(encoding="utf-8")
-                 for token in ('pool "transaction"', 'pool "session"', 'pool "statement"')),
-             all(token in conf.read_text(encoding="utf-8")
+             "transaction: %r\n      session: %r\n      statement: %r" % (
+                 pool_lines["transaction"], pool_lines["session"],
+                 pool_lines["statement"]),
+             all(token in pool_text
                  for token in ('pool "transaction"', 'pool "session"', 'pool "statement"')))
     ops.assert_groups(
         "阶段 1：检查 MMR/REP 主组的多用户与 rw_split 方法集",
@@ -434,16 +449,10 @@ def _run_comprehensive_all_groups_and_commands(context):
             ("ha_rep_hint_tx", "rep_group", "REP hint"),
             ("ha_rep_port_tx", "rep_group", "REP port"),
             ("ha_rep_sql_tx", "rep_group", "REP sql_parse")):
-        ops.psql_business(
+        ops.assert_business_route(
             "SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(), current_user;",
             "阶段 3：%s 用户真实路由" % label,
-            "%s 用户完成 SQL 且后端端口属于集群成员" % label,
-            lambda output, valid=member_ports: (
-                (lambda rows: bool(rows) and
-                 rows[-1].get("inet_server_port") in valid)(
-                    parse_psql_table(output))),
-            group=group, user=user,
-        )
+            ports=member_ports, group=group, user=user)
 
     # Mixed endpoint/name batch: pg_3 is named, pg_4 is addressed by IPv4 endpoint.
     endpoint_pg4 = "%s:%s" % (host, ports["mmr2_standby1"])
@@ -539,12 +548,16 @@ def _run_comprehensive_all_groups_and_commands(context):
         "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
+    wc1_text = conf.read_text(encoding="utf-8")
+    not_switched = [g for g in all_mmr_groups
+                    if 'write_cluster "pg_cluster_1"' not in
+                    _datasource_block(
+                        wc1_text.replace('group "', 'datasources "'), g)]
     ops.check(
         "阶段 6：检查批量全修改配置",
         "8 个 MMR group 当前均写向 pg_cluster_1",
-        "write_cluster pg_cluster_1 occurrences=%s" %
-        conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"'),
-        conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"') == 8,
+        "符合=%d/8，未切换项=%s" % (8 - len(not_switched), not_switched or "无"),
+        wc1_text.count('write_cluster "pg_cluster_1"') == 8 and not not_switched,
     )
     for group in groups_write_1:
         ops.assert_routing(
@@ -566,12 +579,16 @@ def _run_comprehensive_all_groups_and_commands(context):
         "4 个 group 无需修改，另外 4 个切换到 pg_cluster_1",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
+    wc2_text = conf.read_text(encoding="utf-8")
+    not_switched = [g for g in all_mmr_groups
+                    if 'write_cluster "pg_cluster_1"' not in
+                    _datasource_block(
+                        wc2_text.replace('group "', 'datasources "'), g)]
     ops.check(
         "阶段 6：检查批量部分修改配置",
         "部分无需修改后 8 个 MMR group 均写向 pg_cluster_1",
-        "write_cluster pg_cluster_1 occurrences=%s" %
-        conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"'),
-        conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"') == 8,
+        "符合=%d/8，未切换项=%s" % (8 - len(not_switched), not_switched or "无"),
+        wc2_text.count('write_cluster "pg_cluster_1"') == 8 and not not_switched,
     )
     ops.psql(
         "SET NODE WRITE pg_2 IN GROUPS (%s);" % ",".join(groups_write_2),
@@ -734,7 +751,7 @@ def _run_mixed_topology_pool_mode_batch_write(context):
         block = _datasource_block(text.replace('group "', 'datasources "'), group)
         ops.check("验证混合配置 group %s 的 write_cluster 已切换" % group,
                  "write_cluster 为 pg_cluster_1",
-                 "group=%s switched=%s" % (group, 'write_cluster "pg_cluster_1"' in block),
+                 "group %s 命中行: %r" % (group, _matching_line(block, 'write_cluster')),
                  'write_cluster "pg_cluster_1"' in block)
     ops.diff_contains(before, conf,
                      ('-    write_cluster "pg_cluster_2"', '+    write_cluster "pg_cluster_1"'),
@@ -835,7 +852,7 @@ def _run_batch_mixed_no_change_and_change(context):
     pg_3_after = _datasource_block(conf.read_text(encoding="utf-8"), "pg_3")
     ops.check("验证已满足目标未被重复修改",
              "pg_3 datasource block 逐字节保持不变",
-             "pg_3 block unchanged=%s" % (pg_3_before == pg_3_after),
+             "修改后 block=%r" % pg_3_after,
              pg_3_before == pg_3_after)
     ops.assert_table(
         'SHOW DATASOURCES;', "查看混合批量命令后的运行态",
@@ -866,8 +883,12 @@ def _run_bulk_30_group_write_roundtrip(context):
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1 IN GROUPS (%s);' % group_list, "一次切换 30 个 MMR group 的写中心", "返回 SET NODE 且命令不报错", lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 组切换的配置备份")
-    switched = _bulk_groups_have(conf.read_text(encoding="utf-8"), "pg_cluster_1", "pg_cluster_2")
-    ops.check("验证 30 个 group 全部原子落盘", "30 个 group 均已切换", "30 groups switched=%s" % switched, switched)
+    missing = _bulk_groups_missing(
+        conf.read_text(encoding="utf-8"), "pg_cluster_1", "pg_cluster_2")
+    ops.check("验证 30 个 group 全部原子落盘",
+             "30 个 group 均已切换到 write=pg_cluster_1/promoted=pg_cluster_2",
+             "符合=%d/30，不符项=%s" % (30 - len(missing), missing or "无"),
+             not missing)
     ops.diff_contains(before, conf, ('-    write_cluster "pg_cluster_2"', '+    write_cluster "pg_cluster_1"'), "验证 30 组写中心切换配置 diff")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_2 IN GROUPS (%s);' % group_list, "一次恢复 30 个 MMR group 的写中心", "返回 SET NODE 且命令不报错", lambda output: "SET NODE" in output and "ERROR" not in output)
@@ -892,8 +913,12 @@ def _run_bulk_30_groups_invalid_target(context):
                   lambda output: "no_such_group" in output and "does not exist" in output)
     ops.assert_no_backup_created(backup, conf, "验证批量非法 group 未创建备份")
     ops.diff(before, conf)
-    unchanged = _bulk_groups_have(conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
-    ops.check("验证 30 个合法 group 未部分修改", "全部保持初始 write/promoted", "unchanged=%s" % unchanged, unchanged)
+    missing = _bulk_groups_missing(
+        conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
+    ops.check("验证 30 个合法 group 未部分修改",
+             "全部保持初始 write=pg_cluster_2/promoted=pg_cluster_1",
+             "符合=%d/30，不符项=%s" % (30 - len(missing), missing or "无"),
+             not missing)
     ops.assert_routing(
         "bulk_mmr_30", "查看批量非法 group 命令后状态",
         write_cluster="pg_cluster_2", write_leader="pg_2")

@@ -4,6 +4,7 @@ import time
 import os
 import stat
 import re
+import hashlib
 try:
     import fcntl
 except ImportError:
@@ -63,7 +64,8 @@ def _run_hash_inside_string_preservation(context):
     text = conf.read_text(encoding="utf-8")
     ops.check("验证字符串内部 # 未被当作注释",
              "log_syslog_ident 字符串逐字保持",
-             "字符串存在=%s" % (marker in text), marker in text)
+             "命中行: %s" % _matching_line(text, 'log_syslog_ident'),
+             marker in text)
     ops.assert_nodes("查看字符串 # 场景修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复包含 # 字符串配置中的 weight",
@@ -80,15 +82,17 @@ def _run_group_defaults_persistence(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     initial = conf.read_text(encoding="utf-8")
+    balance_block = _datasource_block(
+        initial.replace('group "', 'datasources "'), 'balance_group')
+    single_block = _datasource_block(
+        initial.replace('group "', 'datasources "'), 'single_group')
+    rep_block = _datasource_block(
+        initial.replace('group "', 'datasources "'), 'rep_group')
     ops.check("确认 group 默认字段测试前提",
              "balance/single 省略 access_mode，所有 check auto group 保留可连接 storage_db",
-             "balance access omitted=%s；single access omitted=%s；rep storage retained=%s" % (
-                 'access_mode' not in _datasource_block(initial.replace('group "',
-                     'datasources "'), 'balance_group'),
-                 'access_mode' not in _datasource_block(initial.replace('group "',
-                     'datasources "'), 'single_group'),
-                 'storage_db "postgres"' in _datasource_block(initial.replace('group "',
-                     'datasources "'), 'rep_group')),
+             "balance_group: %r\n      single_group: %r\n      rep_group.storage_db: %r" % (
+                 balance_block, single_block,
+                 _matching_line(rep_block, 'storage_db')),
              all((
                  'access_mode' not in _datasource_block(initial.replace('group "',
                      'datasources "'), 'balance_group'),
@@ -111,11 +115,17 @@ def _run_group_defaults_persistence(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证默认字段场景修改备份")
     changed = conf.read_text(encoding="utf-8")
+    restored_text = changed.replace('    weight 11', '    weight 10', 1)
+    first_diff = next(
+        ("第 %d 行\n      期望: %r\n      实际: %r" % (i + 1, e, a)
+         for i, (e, a) in enumerate(zip(initial.splitlines(),
+                                      restored_text.splitlines()))
+         if e != a), "无差异")
     ops.check("验证默认字段未被写回物化",
              "省略的 access_mode/storage_db 仍保持省略",
-             "除 weight 外配置结构保持=%s" %
-             (changed.replace('    weight 11', '    weight 10', 1) == initial),
-             changed.replace('    weight 11', '    weight 10', 1) == initial)
+             "首处差异: %s" % first_diff if restored_text != initial else
+             "除 weight 11 回写外全文逐行一致",
+             restored_text == initial)
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证默认字段场景的权重配置 diff")
     ops.assert_nodes("查看默认字段场景修改后的节点运行态", {"pg_3": {"weight": "11"}})
@@ -151,7 +161,10 @@ def _run_stable_lock_symlink_rejected(context):
     ops.diff(before, conf)
     ops.check("验证稳定锁链接目标未被修改",
              "lock-target 内容逐字节不变",
-             "target unchanged=%s" % (lock_target.read_bytes() == target_before),
+             "目标大小=%d 字节；sha256=%s；与操作前一致=%s" % (
+                 len(lock_target.read_bytes()),
+                 hashlib.sha256(lock_target.read_bytes()).hexdigest()[:16],
+                 lock_target.read_bytes() == target_before),
              lock_target.read_bytes() == target_before)
     ops.assert_nodes("查看锁符号链接拒绝后的运行态", {"pg_3": {"weight": "10"}})
     lock_path.unlink()
@@ -380,7 +393,9 @@ def _run_config_backup_dir(context):
     ops.check(
         "验证默认备份目录未创建",
         "配置项显式指定后不再创建默认 conf-backup",
-        "conf-backup 存在=%s" % default_dir.exists(),
+        "conf-backup 存在=%s；workdir 现有目录=%s" % (
+            default_dir.exists(),
+            sorted(p.name for p in ops.workdir.iterdir() if p.is_dir())),
         not default_dir.exists())
     ops.assert_nodes("查看修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup_explicit = ops.backup_checkpoint(conf, backup_dir=dir_explicit)
@@ -565,15 +580,13 @@ def _run_reload_restore_failure(context):
         "candidate corrupted after validation" in hook_text)
     runtime_state = ops._record_ha_state(
         'SET NODE WEIGHT pg_3=11;', "restore 失败后 console 状态")
+    runtime_rows = {r.get("node_name"): r
+                    for r in parse_psql_table(runtime_state)}
     ops.check(
         "验证结构化发布后的运行态",
         "pg_3 运行态 weight 为 11",
-        "runtime weight is 11=%s" % (lambda rows: bool(rows) and
-            rows.get("pg_3", {}).get("weight") == "11")(
-            {r.get("node_name"): r for r in parse_psql_table(runtime_state)}),
-        (lambda rows: bool(rows) and
-            rows.get("pg_3", {}).get("weight") == "11")(
-            {r.get("node_name"): r for r in parse_psql_table(runtime_state)}))
+        "pg_3 运行态行=%s" % runtime_rows.get("pg_3", "<缺失>"),
+        runtime_rows.get("pg_3", {}).get("weight") == "11")
     conf.write_bytes(before.read_bytes())
     ops.psql('RELOAD;', "测试清理：恢复初始配置并重新 Reload",
             "返回 RELOAD，运行态与磁盘重新一致",
@@ -758,9 +771,10 @@ def _run_application_name_persistence(context):
     initial = conf.read_text(encoding="utf-8")
     ops.check("确认 application_name 测试前提",
              "pg_1 未配置 application_name，pg_3 显式配置 pg_240",
-             "pg_1 default=%s；pg_3 explicit=%s" %
-             ('application_name' not in _datasource_block(initial, 'pg_1'),
-              'application_name "pg_240"' in _datasource_block(initial, 'pg_3')),
+             "pg_1 block: %r\n      pg_3 application_name 行: %r" % (
+                 _datasource_block(initial, 'pg_1'),
+                 _matching_line(
+                     _datasource_block(initial, 'pg_3'), 'application_name')),
              'application_name' not in _datasource_block(initial, 'pg_1') and
              'application_name "pg_240"' in _datasource_block(initial, 'pg_3'))
     ops.assert_nodes("查看 application_name 场景修改前的运行态",
@@ -774,9 +788,10 @@ def _run_application_name_persistence(context):
     changed = conf.read_text(encoding="utf-8")
     ops.check("验证 application_name 写回保持",
              "pg_1 仍无 application_name，pg_3 仍为 pg_240",
-             "pg_1 default=%s；pg_3 explicit=%s" %
-             ('application_name' not in _datasource_block(changed, 'pg_1'),
-              'application_name "pg_240"' in _datasource_block(changed, 'pg_3')),
+             "pg_1 block: %r\n      pg_3 application_name 行: %r" % (
+                 _datasource_block(changed, 'pg_1'),
+                 _matching_line(
+                     _datasource_block(changed, 'pg_3'), 'application_name')),
              'application_name' not in _datasource_block(changed, 'pg_1') and
              'application_name "pg_240"' in _datasource_block(changed, 'pg_3'))
     ops.diff_contains(before, conf, ('+    weight 11',),
@@ -826,9 +841,12 @@ def _run_rename_failure_protection(context):
                         if '.tmp.' in path.name)
     hook_hit = hook_log.exists() and "candidate rejected" in hook_log.read_text(
         encoding="utf-8", errors="replace")
+    hook_lines = _matching_lines(
+        hook_log.read_text(encoding="utf-8", errors="replace")
+        if hook_log.exists() else "", "candidate rejected")
     ops.check("验证 rename fault hook 命中且候选已清理",
              "hook 命中一次以上且 workdir 无候选 .tmp 文件",
-             "hook_hit=%s candidate_temp_files=%s" % (hook_hit, temp_files),
+             "hook 命中行=%s；候选临时文件=%s" % (hook_lines, temp_files or "无"),
              hook_hit and not temp_files)
     ops.assert_nodes("查看 rename 失败命令后的运行态", {"pg_3": {"weight": "10"}})
 
@@ -935,7 +953,9 @@ def _run_status_format_preservation(context):
     parted_line = '\tstatus    "parted"    # keep-status-format'
     ops.check("验证 status PARTED 周边格式保持",
              "保留 tab 缩进、多个空格和行尾注释",
-             "格式行存在=%s" % (parted_line in text), parted_line in text)
+             "期望=%r\n      命中=%r" % (
+                 parted_line, _matching_line(text, 'status')),
+             parted_line in text)
     ops.assert_table(
         'SHOW DATASOURCES;', "查看格式保持 PARTED 后的运行态",
         {"pg_3": {"config_status": "parted"}},
@@ -1116,9 +1136,11 @@ def _run_external_edit_conflict(context):
     external = conf.read_text(encoding="utf-8")
     ops.check("验证外部编辑被保留且候选未覆盖",
              "正式配置保留 hook 注释，pg_3 weight 未变为 11",
-             "external_comment=%s weight11=%s" %
-             ("external edit injected by hook" in external,
-              '    weight 11' in external),
+             "hook 注释行=%r；weight 11 命中行=%s；pg_3 weight 行=%r" % (
+                 _matching_line(external, "external edit injected by hook"),
+                 _matching_lines(external, '    weight 11'),
+                 _matching_line(
+                     _datasource_block(external, 'pg_3'), 'weight')),
              "external edit injected by hook" in external and
              '    weight 11' not in external)
     ops.diff_contains(before, conf,
@@ -1141,7 +1163,9 @@ def _run_weight_format_preservation(context):
     text = conf.read_text(encoding="utf-8")
     ops.check("验证 weight 字段周边格式保持",
              "保留 tab 缩进、多个空格和 # keep-weight-format 注释",
-             "格式行存在=%s" % ('\tweight    11    # keep-weight-format' in text),
+             "期望=%r\n      命中=%r" % (
+                 '\tweight    11    # keep-weight-format',
+                 _matching_line(text, 'weight')),
              '\tweight    11    # keep-weight-format' in text)
     ops.assert_nodes("查看格式保持修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
@@ -1172,7 +1196,7 @@ def _run_single_line_block_preservation(context):
     expected_line = initial_line.replace("weight 10", "weight 11", 1)
     ops.check("验证 datasource block 保持单行且仅替换 weight",
              "修改后整行等于初始行仅将 weight 10 替换为 weight 11",
-             "单行完全匹配=%s" % (changed_line == expected_line),
+             "期望行=%r\n      实际行=%r" % (expected_line, changed_line),
              changed_line == expected_line)
     ops.assert_nodes("查看单行 block 修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
@@ -1203,8 +1227,10 @@ def _run_backup_path_regular_file_rejected(context):
     ops.diff(before, conf)
     ops.check("验证备份路径占位文件未被替换",
              "conf-backup 仍为普通文件且内容逐字节不变",
-             "is_file=%s content_unchanged=%s" %
-             (backup_path.is_file(), backup_path.read_bytes() == sentinel),
+             "is_file=%s；大小=%d 字节；内容=%r；与哨兵一致=%s" % (
+                 backup_path.is_file(), backup_path.stat().st_size,
+                 backup_path.read_bytes()[:40],
+                 backup_path.read_bytes() == sentinel),
              backup_path.is_file() and backup_path.read_bytes() == sentinel)
     ops.assert_nodes("查看备份路径普通文件拒绝后的运行态", {"pg_3": {"weight": "10"}})
     backup_path.unlink()

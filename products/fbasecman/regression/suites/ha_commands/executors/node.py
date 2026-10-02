@@ -97,10 +97,10 @@ def _run_set_node_write_all_related_groups(context):
             '返回 SET NODE，命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     text = conf.read_text(encoding="utf-8")
+    write_lines = _matching_lines(text, 'write_cluster "pg_cluster_1"')
     ops.check("验证两个 MMR group 完整落盘",
              "两个 group 的 write_cluster 均为 pg_cluster_1",
-             "write_cluster pg_cluster_1 occurrences=%d" %
-             text.count('    write_cluster "pg_cluster_1"\n'),
+             "匹配行: %s" % write_lines,
              text.count('    write_cluster "pg_cluster_1"\n') == 2)
     ops.diff_contains(before, conf,
                      ('-    write_cluster "pg_cluster_2"',
@@ -563,9 +563,11 @@ def _run_missing_promoted_set_write(context):
                      ('-    write_cluster "pg_cluster_2"',
                       '+    write_cluster "pg_cluster_1"'),
                      "验证只修改 write_cluster 的配置 diff")
+    promoted_hits = _matching_lines(
+        conf.read_text(encoding='utf-8'), 'promoted_cluster')
     ops.check("验证未自动新增 promoted_cluster",
              "配置文件中不存在 promoted_cluster 字段",
-             "promoted_cluster present=%s" % ('promoted_cluster' in conf.read_text(encoding='utf-8')),
+             "promoted_cluster 命中行=%s" % promoted_hits,
              'promoted_cluster' not in conf.read_text(encoding='utf-8'))
     ops.assert_routing(
         "mmr_group", "查看命令后的运行态",

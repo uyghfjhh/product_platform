@@ -125,10 +125,16 @@ def _run_sql_parse_extended_protocol(context):
     write_ok = "WRITE_PORT=%s" % expected_write in output
     recovery_ok = all(marker in output for marker in (
         "ROLLBACK_RECOVERY=OK", "COMMIT_RECOVERY=OK", "PARAM_VALUE=42"))
+    evidence = [ln for ln in output.splitlines()
+                if any(tag in ln for tag in (
+                    "READ_PORT=", "WRITE_PORT=", "ROLLBACK_RECOVERY=",
+                    "COMMIT_RECOVERY=", "PARAM_VALUE="))]
     ops.check(
         "验证扩展协议 Parse/Bind/Execute 路由及失败事务恢复",
-        "参数化 SELECT 命中读候选，DDL 命中当前 write-leader；失败事务经 ROLLBACK/COMMIT 后均可继续",
-        output, read_ok and write_ok and recovery_ok)
+        "参数化 SELECT 命中读候选(允许端口 %s)，DDL 命中 write-leader %s；"
+        "失败事务经 ROLLBACK/COMMIT 后均可继续" % (read_ports, expected_write),
+        "命中标记:\n      %s" % "\n      ".join(evidence or ["<无>"]),
+        read_ok and write_ok and recovery_ok)
 
 
 def _run_rep_sql_parse_read_write_transactions(context):

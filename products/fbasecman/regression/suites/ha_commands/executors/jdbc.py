@@ -1,4 +1,5 @@
 import os
+import hashlib
 """HA console command executors: JDBC."""
 
 
@@ -76,9 +77,12 @@ def _run_jdbc_console_ha_commands(context):
         actual = fields(snapshot).get(identity, {}).get(field)
         check_results.append((snapshot, identity, field, expected, actual))
     for marker_name in ("ACTIVE_RESTORES_SINGLE_ROUTE", "WEIGHT_RESTORES_SINGLE_ROUTE"):
+        matched = next(
+            (ln for ln in output.splitlines() if marker_name in ln), "<未找到>")
         ops.check("验证 %s 路由结果" % marker_name,
-                 "结果为 pg_cluster_1 的 primary 或 standby",
-                 "marker output checked",
+                 "结果为 pg_cluster_1 的 primary(mmr1=%s) 或 standby1(%s)"
+                 % (ports["mmr1"], ports["mmr1_standby1"]),
+                 "输出行=%s" % matched,
                  any((marker_name + f"={port}") in output
                      for port in (ports["mmr1"], ports["mmr1_standby1"])))
     ops.check(
@@ -88,21 +92,24 @@ def _run_jdbc_console_ha_commands(context):
                   (item[0], item[1], item[2], item[3], item[4])
                   for item in check_results),
         all(item[3] == item[4] for item in check_results))
+    pre_refresh = (snapshots / "09_cluster_2_active.conf").read_bytes()
+    post_refresh = (snapshots / "10_after_refresh.conf").read_bytes()
     ops.check(
         "验证 REFRESH CLUSTER 不修改配置",
         "REFRESH 前后配置字节完全一致",
-        "refresh_config_unchanged=%s" %
-        ((snapshots / "09_cluster_2_active.conf").read_bytes() ==
-         (snapshots / "10_after_refresh.conf").read_bytes()),
-        (snapshots / "09_cluster_2_active.conf").read_bytes() ==
-        (snapshots / "10_after_refresh.conf").read_bytes())
+        "REFRESH 前 %d 字节 sha256=%s\n      REFRESH 后 %d 字节 sha256=%s" % (
+            len(pre_refresh), hashlib.sha256(pre_refresh).hexdigest()[:16],
+            len(post_refresh), hashlib.sha256(post_refresh).hexdigest()[:16]),
+        pre_refresh == post_refresh)
     final_objects, _ = ops._semantic_objects(conf.read_text(encoding="utf-8"))
     initial_objects, _ = ops._semantic_objects(before.decode("utf-8"))
     initial_objects[("group", "mmr_group")]["promoted_cluster"] = '"pg_cluster_1"'
+    semantic_diff = sorted(set(final_objects.items()) ^ set(
+        initial_objects.items()))
     ops.check(
         "验证 JDBC 高可用命令最终配置语义",
         "往返字段均恢复，仅保留 PROMOTED 命令新增的 promoted_cluster",
-        "final_semantics_expected=%s" % (final_objects == initial_objects),
+        "语义对象差异=%s" % (semantic_diff or "无"),
         final_objects == initial_objects)
     ops.check(
         "验证 JDBC 控制台命令及实际路由结果",
