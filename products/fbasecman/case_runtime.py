@@ -435,21 +435,27 @@ class FbasecmanCaseRuntime(ReportRuntime):
             "SHOW NODE_MONITOR;", title, expected, matches,
             retry_timeout=retry_timeout)
 
-    def assert_table(self, sql, title, expected_rows, key="node_name", retry_timeout=15):
+    def assert_table(self, sql, title, expected_rows, key="node_name",
+                     retry_timeout=15, row_count=None, absent=()):
         """Execute a console query and assert table rows with structured diffs."""
         from platform_regress.clients.psql import assert_table_rows
 
-        expected_desc = "; ".join(
+        expected_parts = [
             "%s [%s]" % (k, ", ".join("%s=%s" % (col, val) for col, val in v.items()))
             for k, v in expected_rows.items()
-        )
+        ]
+        if row_count is not None:
+            expected_parts.append("行总数=%d" % row_count)
+        expected_desc = "; ".join(expected_parts)
         command = build_psql_command(
             self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), self.listen_port,
             "admin", "console", sql,
         )
 
         def judge(result, output, attempt, elapsed):
-            passed, summary, _ = assert_table_rows(output, expected_rows, key=key)
+            passed, summary, _ = assert_table_rows(
+                output, expected_rows, key=key,
+                row_count=row_count, absent=absent)
             return result.returncode == 0 and passed, summary
 
         return self.asserted_command(
@@ -457,6 +463,220 @@ class FbasecmanCaseRuntime(ReportRuntime):
             retry_timeout=retry_timeout, interval=0.3, log_stem="assert_table",
             failure=lambda t, a, _r: "%s 失败:\n%s" % (t, a),
         )[0]
+
+    # ------------------------------------------------------------------
+    # fbasecman console SHOW 的领域断言（列结构是产品知识，故在本层）
+    # ------------------------------------------------------------------
+
+    def assert_nodes(self, title, expected_rows, retry_timeout=15,
+                     row_count=None, absent=()):
+        """SHOW NODES 结构化断言：按 node_name 校验各行字段。
+
+        expected_rows 形如 {"pg_1": {"weight": "10", "config_status":
+        "active", "effective_role": "PRIMARY", "current_primary": "pg_1"}}；
+        字段名取 SHOW NODES 输出列（cluster_name/host/port/storage_db/
+        weight/config_status/effective_role/current_primary/
+        effective_status/unavailable_reason）。row_count 校验总行数，
+        absent 校验列出的节点不存在于表中。"""
+        return self.assert_table("SHOW NODES;", title, expected_rows,
+                                 key="node_name", retry_timeout=retry_timeout,
+                                 row_count=row_count, absent=absent)
+
+    def assert_groups(self, title, expected_rows, retry_timeout=15,
+                      row_count=None, absent=()):
+        """SHOW GROUPS 结构化断言：按 group_name 校验 group_mode/
+        write_cluster/promoted_cluster/access_mode/backend_clusters 等列。"""
+        return self.assert_table("SHOW GROUPS;", title, expected_rows,
+                                 key="group_name", retry_timeout=retry_timeout,
+                                 row_count=row_count, absent=absent)
+
+    def assert_members(self, group, title, expected_rows, retry_timeout=15,
+                       row_count=None, absent=(), user=None):
+        """SHOW GROUP_MEMBERS 中指定 group 行的结构化断言（按 node_name）。
+
+        SHOW GROUP_MEMBERS 是 (group, user, node) 三元投影——同一节点会按
+        group 的每个用户重复出现。user 给出时先按用户过滤，使每个节点在
+        断言范围内唯一；row_count 校验的也是过滤后的行数。"""
+        from platform_regress.clients.psql import parse_psql_table
+
+        expected_parts = [
+            "%s [%s]" % (k, ", ".join("%s=%s" % (c, v) for c, v in f.items()))
+            for k, f in expected_rows.items()]
+        if user is not None:
+            expected_parts.append("user=%s" % user)
+        if row_count is not None:
+            expected_parts.append("成员行数=%d" % row_count)
+        expected_desc = "; ".join(expected_parts)
+        command = build_psql_command(
+            self.env.config["local"]["postgres_dir"],
+            os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), self.listen_port,
+            "admin", "console", "SHOW GROUP_MEMBERS;")
+
+        def judge(result, output, attempt, elapsed):
+            rows = [row for row in parse_psql_table(output)
+                    if row.get("group_name") == group and
+                    (user is None or row.get("user") == user)]
+            row_map = {row.get("node_name"): row for row in rows}
+            errors, matches = [], []
+            for key_val, fields in expected_rows.items():
+                row = row_map.get(key_val)
+                if row is None:
+                    errors.append("%s 未在 %s 成员中出现" % (key_val, group))
+                    continue
+                for col, want in fields.items():
+                    got = row.get(col)
+                    if got == want:
+                        matches.append("%s.%s=%s" % (key_val, col, got))
+                    else:
+                        errors.append("%s.%s: 期望=%s 实际=%s"
+                                      % (key_val, col, want, got))
+            if row_count is not None and len(rows) != row_count:
+                errors.append("成员数=%d，期望 %d" % (len(rows), row_count))
+            for key_val in absent:
+                if key_val in row_map:
+                    errors.append("%s 不应是 %s 成员" % (key_val, group))
+            passed = result.returncode == 0 and not errors
+            summary = "; ".join(matches + ["❌ " + e for e in errors])
+            return passed, summary
+
+        return self.asserted_command(
+            command, title, expected_desc or "成员投影符合预期", judge,
+            retry_timeout=retry_timeout, interval=0.3,
+            log_stem="assert_members",
+            failure=lambda t, a, _r: "%s 失败:\n%s" % (t, a))[0]
+
+    def assert_routing(self, group, title, write_cluster=None,
+                       write_leader=None, users=None, retry_timeout=15):
+        """SHOW GROUP_ROUTING 的结构化断言。
+
+        write_cluster/write_leader：每个用户的 WRITE 候选行都必须指向
+        该 cluster/节点，且 is_write_target=true、route_status=AVAILABLE；
+        非 WRITE 候选行不得是写目标。users 给出时校验投影只覆盖这些用户。"""
+        from platform_regress.clients.psql import parse_psql_table
+
+        command = build_psql_command(
+            self.env.config["local"]["postgres_dir"],
+            os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"), self.listen_port,
+            "admin", "console", "SHOW GROUP_ROUTING %s;" % group)
+
+        def judge(result, output, attempt, elapsed):
+            rows = [row for row in parse_psql_table(output)
+                    if row.get("group_name") == group]
+            errors = []
+            if not rows:
+                errors.append("无 %s 的路由投影行" % group)
+            if users is not None:
+                found = {row.get("user_name") for row in rows}
+                missing = [u for u in users if u not in found]
+                if missing:
+                    errors.append("用户投影缺失: %s" % ",".join(missing))
+            write_rows = [r for r in rows if r.get("candidate_type") == "WRITE"]
+            if write_leader is not None or write_cluster is not None:
+                if not write_rows:
+                    errors.append("无 WRITE 候选行")
+                for row in write_rows:
+                    if write_cluster is not None and \
+                            row.get("cluster_name") != write_cluster:
+                        errors.append("WRITE 候选 cluster=%s，期望 %s"
+                                      % (row.get("cluster_name"), write_cluster))
+                    if write_leader is not None and \
+                            row.get("candidate_node") != write_leader:
+                        errors.append("WRITE 候选节点=%s，期望 %s"
+                                      % (row.get("candidate_node"), write_leader))
+                    if row.get("is_write_target") != "true":
+                        errors.append("%s is_write_target=%s" % (
+                            row.get("candidate_node"),
+                            row.get("is_write_target")))
+                    if row.get("route_status") != "AVAILABLE":
+                        errors.append("%s route_status=%s" % (
+                            row.get("candidate_node"),
+                            row.get("route_status")))
+            for row in rows:
+                if row.get("candidate_type") != "WRITE" and \
+                        row.get("is_write_target") == "true":
+                    errors.append("非 WRITE 候选 %s 却是写目标"
+                                  % row.get("candidate_node"))
+            passed = result.returncode == 0 and not errors
+            writes = {(r.get("candidate_node"), r.get("cluster_name"))
+                      for r in write_rows}
+            summary = "WRITE候选=%s；READ候选=%d行" % (
+                sorted(writes) or "无",
+                len(rows) - len(write_rows))
+            if errors:
+                summary += "；❌ " + "; ".join(errors)
+            return passed, summary
+
+        expected = []
+        if write_cluster or write_leader:
+            expected.append("WRITE 候选=%s@%s is_write_target=true "
+                            "route_status=AVAILABLE" % (
+                                write_leader or "*", write_cluster or "*"))
+        if users is not None:
+            expected.append("用户投影=%s" % ",".join(users))
+        return self.asserted_command(
+            command, title, "；".join(expected) or "路由投影有效", judge,
+            retry_timeout=retry_timeout, interval=0.3,
+            log_stem="assert_routing",
+            failure=lambda t, a, _r: "%s 失败:\n%s" % (t, a))[0]
+
+    def assert_business_route(self, sql, title, port=None, ports=None,
+                              recovery=None, group="mmr_group",
+                              user="postgres", frontend_port=None,
+                              retry_timeout=0):
+        """业务路由断言：解析输出表中 inet_server_port()/pg_is_in_recovery()
+        的**列值**精确匹配，替代 ``str(port) in output`` 的弱断言。
+
+        port 校验唯一后端端口；ports 校验端口属于给定候选集合
+        （读路由在多个候选间分发时使用）；frontend_port 指定连接进
+        fbasecman 的前端端口（默认 listen_port，port 分流方法用
+        read_port）。"""
+        from platform_regress.clients.psql import parse_psql_table
+
+        command = build_psql_command(
+            self.env.config["local"]["postgres_dir"],
+            os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
+            frontend_port or self.listen_port, user, group, sql)
+
+        def judge(result, output, attempt, elapsed):
+            rows = parse_psql_table(output)
+            errors = []
+            if not rows:
+                errors.append("未解析到结果行")
+                row = {}
+            else:
+                row = rows[-1]
+            if port is not None:
+                got = row.get("inet_server_port")
+                if got != str(port):
+                    errors.append("inet_server_port=%s，期望 %s" % (got, port))
+            if ports is not None:
+                valid = {str(p) for p in ports}
+                got = row.get("inet_server_port")
+                if got not in valid:
+                    errors.append("inet_server_port=%s，期望属于 %s"
+                                  % (got, sorted(valid)))
+            if recovery is not None:
+                want = "t" if recovery else "f"
+                got = row.get("pg_is_in_recovery")
+                if got != want:
+                    errors.append("pg_is_in_recovery=%s，期望 %s" % (got, want))
+            passed = result.returncode == 0 and not errors
+            summary = "命中行=%s" % (row or "<无>") + \
+                ("；❌ " + "; ".join(errors) if errors else "")
+            return passed, summary
+
+        expected = []
+        if port is not None:
+            expected.append("inet_server_port=%s" % port)
+        if ports is not None:
+            expected.append("inet_server_port∈%s"
+                            % sorted(str(p) for p in ports))
+        if recovery is not None:
+            expected.append("pg_is_in_recovery=%s" % ("t" if recovery else "f"))
+        return self.asserted_command(
+            command, title, "；".join(expected) or "业务路由有效", judge,
+            retry_timeout=retry_timeout, log_stem="assert_business_route",
+            failure=lambda t, a, _r: "%s 失败:\n%s" % (t, a))[0]
 
     def psql_business(self, sql, title, expected, predicate, group="mmr_group",
                       port=None, user="postgres", retry_timeout=0):

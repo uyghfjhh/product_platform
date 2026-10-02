@@ -2,6 +2,7 @@
 
 
 from suites.ha_commands.helpers import *
+from platform_regress.clients.psql import parse_psql_table
 __all__ = ['_run_batch_mixed_no_change_and_change', '_run_batch_status_invalid_target_atomicity', '_run_batch_weight_atomicity', '_run_bulk_30_datasource_weight_roundtrip', '_run_bulk_30_group_write_roundtrip', '_run_bulk_30_groups_invalid_target', '_run_bulk_30_groups_non_mmr', '_run_comprehensive_all_groups_and_commands', '_run_default_group_expansion_34', '_run_duplicate_and_mixed_status_targets', '_run_mixed_topology_pool_mode_batch_write', '_run_name_endpoint_status_deduplication', '_run_set_node_write_in_groups_duplicate_group']
 
 
@@ -12,10 +13,12 @@ def _run_bulk_30_groups_non_mmr(context):
     before.write_bytes(conf.read_bytes())
     names = ['bulk_mmr_%02d' % i for i in range(1, 31)]
     group_list = ','.join(names + ['rep_group'])
-    ops.psql('SHOW GROUP_ROUTING bulk_mmr_01;', "查看混入非 MMR group 命令前状态", "pg_cluster_2",
-            lambda output: "bulk_mmr_01" in output and "pg_cluster_2" in output)
-    ops.psql('SHOW GROUP_ROUTING rep_group;', "查看非 MMR group 命令前状态", "rep_group 为 replication",
-            lambda output: "rep_group" in output and "replication" in output)
+    ops.assert_routing(
+        "bulk_mmr_01", "查看混入非 MMR group 命令前状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
+    ops.assert_routing(
+        "rep_group", "查看非 MMR group 命令前状态",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WRITE pg_1 IN GROUPS (%s);' % group_list,
                   "30 个 MMR group 混入非 MMR group 时原子拒绝",
@@ -25,10 +28,12 @@ def _run_bulk_30_groups_non_mmr(context):
     ops.diff(before, conf)
     unchanged = _bulk_groups_have(conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
     ops.check("验证混入非 MMR 后 30 个 group 未部分修改", "全部保持初始状态", "unchanged=%s" % unchanged, unchanged)
-    ops.psql('SHOW GROUP_ROUTING bulk_mmr_30;', "查看混入非 MMR 命令后 MMR 状态", "pg_cluster_2",
-            lambda output: "bulk_mmr_30" in output and "pg_cluster_2" in output)
-    ops.psql('SHOW GROUP_ROUTING rep_group;', "查看混入非 MMR 命令后 REP 状态", "rep_group 仍为 replication",
-            lambda output: "rep_group" in output and "replication" in output)
+    ops.assert_routing(
+        "bulk_mmr_30", "查看混入非 MMR 命令后 MMR 状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
+    ops.assert_routing(
+        "rep_group", "查看混入非 MMR 命令后 REP 状态",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
 
 
 def _run_default_group_expansion_34(context):
@@ -39,8 +44,9 @@ def _run_default_group_expansion_34(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     names = ['expand_mmr_%02d' % i for i in range(1, 35)]
-    ops.psql('SHOW GROUP_ROUTING expand_mmr_01;', "查看 34 组默认展开前状态", "pg_cluster_2",
-            lambda output: "expand_mmr_01" in output and "pg_cluster_2" in output)
+    ops.assert_routing(
+        "expand_mmr_01", "查看 34 组默认展开前状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1;', "省略 IN GROUPS 自动展开 34 个 MMR group",
             "返回 SET NODE 且命令不报错", lambda output: "SET NODE" in output and "ERROR" not in output)
@@ -49,8 +55,9 @@ def _run_default_group_expansion_34(context):
     changed = all('write_cluster "pg_cluster_1"' in _datasource_block(text.replace('group "', 'datasources "'), name) for name in names)
     ops.check("验证默认范围完整覆盖 34 个 group", "34 个 group 全部切换", "34 groups changed=%s" % changed, changed)
     ops.diff_contains(before, conf, ('-    write_cluster "pg_cluster_2"', '+    write_cluster "pg_cluster_1"'), "验证 34 组默认展开配置 diff")
-    ops.psql('SHOW GROUP_ROUTING expand_mmr_34;', "查看 34 组默认展开后状态", "pg_cluster_1",
-            lambda output: "expand_mmr_34" in output and "pg_cluster_1" in output)
+    ops.assert_routing(
+        "expand_mmr_34", "查看 34 组默认展开后状态",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
     idempotent = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1;', "重复执行 34 组默认展开命令并记录 NO CHANGE 输出",
             "返回 NO CONFIG CHANGE；NO CHANGE 详情写入 fbasecman.log",
@@ -72,10 +79,12 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
     names = ['bulk_ds_%02d' % index for index in range(1, 31)]
     assignments_11 = ','.join('%s=11' % name for name in names)
     assignments_10 = ','.join('%s=10' % name for name in names)
-    ops.psql('SHOW DATASOURCES;', "查看 30 节点权重修改前的控制台状态",
-            "bulk_ds_01 和 bulk_ds_30 均为 active",
-            lambda output: all(v in output for v in
-                               ("bulk_ds_01", "bulk_ds_30", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;',
+        "查看 30 节点权重修改前的控制台状态",
+        {"bulk_ds_01": {"config_status": "active", "weight": "10"},
+         "bulk_ds_30": {"config_status": "active", "weight": "10"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT %s;' % assignments_11,
             "一次修改 30 个 datasource 权重",
@@ -89,10 +98,12 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
              "30 datasources changed=%s" % all_changed, all_changed)
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证 30 节点权重配置 diff")
-    ops.psql('SHOW DATASOURCES;', "查看 30 节点权重修改后的控制台状态",
-            "bulk_ds_01 和 bulk_ds_30 均仍为 active，Reload 后节点完整",
-            lambda output: all(v in output for v in
-                               ("bulk_ds_01", "bulk_ds_30", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;',
+        "查看 30 节点权重修改后的控制台状态",
+        {"bulk_ds_01": {"config_status": "active", "weight": "11"},
+         "bulk_ds_30": {"config_status": "active", "weight": "11"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT %s;' % assignments_10,
             "一次恢复 30 个 datasource 权重",
@@ -104,10 +115,12 @@ def _run_bulk_30_datasource_weight_roundtrip(context):
              "bulk_ds_01 至 bulk_ds_30 均恢复 weight 10",
              "30 datasources restored=%s" % all_restored, all_restored)
     ops.diff(before, conf)
-    ops.psql('SHOW DATASOURCES;', "查看 30 节点权重恢复后的控制台状态",
-            "bulk_ds_01 和 bulk_ds_30 均为 active，恢复后节点完整",
-            lambda output: all(v in output for v in
-                               ("bulk_ds_01", "bulk_ds_30", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;',
+        "查看 30 节点权重恢复后的控制台状态",
+        {"bulk_ds_01": {"config_status": "active", "weight": "10"},
+         "bulk_ds_30": {"config_status": "active", "weight": "10"}},
+        key="node_name")
 
 
 def _run_batch_weight_atomicity(context):
@@ -115,9 +128,8 @@ def _run_batch_weight_atomicity(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW NODES;', "查看批量修改前的节点权重",
-            'pg_3、pg_4 的初始 weight 均为 10',
-            lambda output: all(v in output for v in ("pg_3", "pg_4", "10")))
+    ops.assert_nodes("查看批量修改前的节点权重",
+                     {"pg_3": {"weight": "10"}, "pg_4": {"weight": "10"}})
     ops.psql('SET NODE WEIGHT pg_3=11,pg_4=11;', "批量修改 pg_3、pg_4 权重",
             '返回 SET NODE', lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.diff_contains(before, conf, ('+    weight 11',), "验证两个 datasource 的批量配置 diff")
@@ -125,9 +137,8 @@ def _run_batch_weight_atomicity(context):
     ops.check("验证批量修改完整落盘", "pg_3、pg_4 均为 weight 11",
              "weight 11 occurrences=%d" % text.count('    weight 11\n'),
              text.count('    weight 11\n') == 2)
-    ops.psql('SHOW NODES;', "查看批量修改后的运行态",
-            'pg_3、pg_4 的 weight 均为 11',
-            lambda output: all(v in output for v in ("pg_3", "pg_4", "11")))
+    ops.assert_nodes("查看批量修改后的运行态",
+                     {"pg_3": {"weight": "11"}, "pg_4": {"weight": "11"}})
     ops.psql('SET NODE WEIGHT pg_3=10,pg_4=10;', "批量恢复 pg_3、pg_4 权重",
             '返回 SET NODE', lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.diff(before, conf)
@@ -137,9 +148,8 @@ def _run_batch_weight_atomicity(context):
                   lambda output: all(v in output for v in
                                      ("ERROR:", "no_such_node", "does not exist")))
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看原子拒绝后的节点权重",
-            'pg_3、pg_4 仍为初始 weight 10',
-            lambda output: all(v in output for v in ("pg_3", "pg_4", "10")))
+    ops.assert_nodes("查看原子拒绝后的节点权重",
+                     {"pg_3": {"weight": "10"}, "pg_4": {"weight": "10"}})
 
 
 def _run_name_endpoint_status_deduplication(context):
@@ -150,9 +160,10 @@ def _run_name_endpoint_status_deduplication(context):
     host = ops.env.config["database"]["mmr_host"]
     port = ops.env.config["database"]["ports"]["mmr1_standby1"]
     target_list = "pg_3,%s:%s" % (host, port)
-    ops.psql('SHOW DATASOURCES;', "查看名称/endpoint 去重命令前的运行态",
-            'pg_3 为 active',
-            lambda output: "pg_3" in output and "active" in output)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看名称/endpoint 去重命令前的运行态",
+        {"pg_3": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql(
         'SET NODE PARTED %s;' % target_list,
@@ -164,9 +175,10 @@ def _run_name_endpoint_status_deduplication(context):
     ops.diff_contains(before, conf,
                      ('-    status "active"', '+    status "parted"'),
                      "验证名称/endpoint 去重后的配置 diff")
-    ops.psql('SHOW DATASOURCES;', "查看名称/endpoint PARTED 后的运行态",
-            'pg_3 为 parted',
-            lambda output: "pg_3" in output and "parted" in output)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看名称/endpoint PARTED 后的运行态",
+        {"pg_3": {"config_status": "parted"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql(
         'SET NODE ACTIVE %s;' % target_list,
@@ -186,12 +198,9 @@ def _run_set_node_write_in_groups_duplicate_group(context):
     conf = ops.start(transform=_add_second_mmr_group)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "查看重复 group 命令前的运行态",
-        'write cluster 为 pg_cluster_2，pg_2 为 write-leader',
-        lambda output: all(v in output for v in ("pg_cluster_2", "pg_2", "write-leader")),
-    )
+    ops.assert_routing(
+        "mmr_group", "查看重复 group 命令前的运行态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
     backup = ops.backup_checkpoint(conf)
     ops.psql_error(
         'SET NODE WRITE pg_1 IN GROUPS (mmr_group,mmr_group);',
@@ -201,12 +210,9 @@ def _run_set_node_write_in_groups_duplicate_group(context):
     )
     ops.assert_no_backup_created(backup, conf, "验证重复 group 未创建备份")
     ops.diff(before, conf)
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "验证重复 group 命令后的运行态",
-        'write cluster 仍为 pg_cluster_2，pg_2 仍为 write-leader',
-        lambda output: all(v in output for v in ("pg_cluster_2", "pg_2", "write-leader")),
-    )
+    ops.assert_routing(
+        "mmr_group", "验证重复 group 命令后的运行态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 
 def _run_batch_status_invalid_target_atomicity(context):
@@ -214,9 +220,11 @@ def _run_batch_status_invalid_target_atomicity(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW DATASOURCES;', "查看批量状态错误命令前的运行态",
-            'pg_3、pg_4 均为 active',
-            lambda output: all(v in output for v in ("pg_3", "pg_4", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看批量状态错误命令前的运行态",
+        {"pg_3": {"config_status": "active"},
+         "pg_4": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql_error(
         'SET NODE PARTED pg_3,no_such_node,pg_4;',
@@ -226,9 +234,11 @@ def _run_batch_status_invalid_target_atomicity(context):
     )
     ops.assert_no_backup_created(backup, conf, "验证批量状态错误未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW DATASOURCES;', "验证批量状态错误命令后的运行态",
-            'pg_3、pg_4 均仍为 active',
-            lambda output: all(v in output for v in ("pg_3", "pg_4", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "验证批量状态错误命令后的运行态",
+        {"pg_3": {"config_status": "active"},
+         "pg_4": {"config_status": "active"}},
+        key="node_name")
 
 
 def _run_comprehensive_all_groups_and_commands(context):
@@ -239,18 +249,48 @@ def _run_comprehensive_all_groups_and_commands(context):
     before.write_bytes(conf.read_bytes())
     rendered_bytes = conf.read_bytes()
     rendered = rendered_bytes.decode("utf-8")
+    db = ops.env.config["database"]
+    ports = db["ports"]
+    host = db["mmr_host"]
+    # transform 在 metadata 中登记了 14 个 datasource 的真实
+    # name/host/port/cluster/system_identifier——期望值从它推导。
+    meta = {item["name"]: item for item in ops.datasource_metadata}
+    pg_cluster_1 = [n for n, m in meta.items() if m["cluster"] == "pg_cluster_1"]
+    pg_cluster_2 = [n for n, m in meta.items() if m["cluster"] == "pg_cluster_2"]
+
+    def node_row(name):
+        item = meta[name]
+        primary = name in ("pg_1", "pg_2")
+        return {
+            "cluster_name": item["cluster"],
+            "host": item["host"], "port": str(item["port"]),
+            "storage_db": "postgres", "weight": "10",
+            "config_status": "active",
+            "effective_role": "PRIMARY" if primary else "REPLICA",
+            "current_primary": "pg_1" if item["cluster"] == "pg_cluster_1"
+                               else "pg_2",
+        }
+
+    def all_nodes(**overrides):
+        rows = {}
+        for name in meta:
+            row = node_row(name)
+            row.update(overrides.get(name, {}))
+            rows[name] = row
+        return rows
+
     ops.check(
         "阶段 1：检查线上配置格式特征",
-            "中文/英文注释、Tab、非对齐缩进、连续空行、CRLF、末尾无换行和字符串内 # 均保留",
-            "comment_cn=%s comment_en=%s tab=%s uneven_indent=%s blank_line=%s crlf=%s no_final_newline=%s hash_in_string=%s" % (
+        "中文/英文注释、Tab、非对齐缩进、连续空行、CRLF、末尾无换行和字符串内 # 均保留",
+        "comment_cn=%s comment_en=%s tab=%s uneven_indent=%s blank_line=%s crlf=%s no_final_newline=%s hash_in_string=%s" % (
             "中文" in rendered,
             "# 线上共享物理节点" in rendered,
             "\t" in rendered,
             "  write_cluster \"pg_cluster_1\"" in rendered,
-                "\n\n    check \"auto\"" in rendered,
-                b"\r\n" in rendered_bytes,
-                not rendered_bytes.endswith(b"\n"),
-                "#" in rendered,
+            "\n\n    check \"auto\"" in rendered,
+            b"\r\n" in rendered_bytes,
+            not rendered_bytes.endswith(b"\n"),
+            "#" in rendered,
         ),
         all(marker in rendered for marker in (
             "中文", "# 线上共享物理节点", "\t",
@@ -259,63 +299,121 @@ def _run_comprehensive_all_groups_and_commands(context):
         )) and b"\r\n" in rendered_bytes and not rendered_bytes.endswith(b"\n"),
     )
 
-    ops.psql("SHOW GROUPS;", "阶段 1：检查 17 个 group 和 pool/rw_split 配置",
-            "17 个 group、四类 group mode 及 none/hint/port/sql_parse 均可见",
-            lambda output: all(value in output for value in (
-                "mmr_group", "mmr_group_h", "rep_group_c", "balance_group_c",
-                "single_group_c", "rep_group", "balance_group", "single_group",
-                "hint", "port", "sql_parse",)),)
+    ops.assert_groups(
+        "阶段 1：检查 17 个 group 的模式、写中心与 promoted cluster",
+        {
+            "mmr_group": {"group_mode": "mmr", "write_cluster": "pg_cluster_2",
+                          "promoted_cluster": "pg_cluster_1",
+                          "write_port": str(ops.listen_port)},
+            "mmr_group_b": {"group_mode": "mmr", "write_cluster": "pg_cluster_1",
+                            "promoted_cluster": "pg_cluster_2"},
+            "mmr_group_c": {"group_mode": "mmr", "write_cluster": "pg_cluster_2",
+                            "promoted_cluster": "pg_cluster_1"},
+            "mmr_group_d": {"group_mode": "mmr", "write_cluster": "pg_cluster_1",
+                            "promoted_cluster": "pg_cluster_2"},
+            "mmr_group_e": {"group_mode": "mmr", "write_cluster": "pg_cluster_2",
+                            "promoted_cluster": "pg_cluster_1"},
+            "mmr_group_f": {"group_mode": "mmr", "write_cluster": "pg_cluster_1",
+                            "promoted_cluster": "pg_cluster_2"},
+            "mmr_group_g": {"group_mode": "mmr", "write_cluster": "pg_cluster_2",
+                            "promoted_cluster": "pg_cluster_1"},
+            "mmr_group_h": {"group_mode": "mmr", "write_cluster": "pg_cluster_1",
+                            "promoted_cluster": "pg_cluster_2"},
+            "rep_group": {"group_mode": "replication",
+                          "backend_clusters": "pg_cluster_1"},
+            "rep_group_b": {"group_mode": "replication",
+                            "backend_clusters": "pg_cluster_1"},
+            "rep_group_c": {"group_mode": "replication",
+                            "backend_clusters": "pg_cluster_1"},
+            "balance_group": {"group_mode": "balance",
+                              "access_mode": "read_write"},
+            "balance_group_b": {"group_mode": "balance",
+                                "access_mode": "read_only"},
+            "balance_group_c": {"group_mode": "balance",
+                                "access_mode": "read_write"},
+            "single_group": {"group_mode": "single",
+                             "access_mode": "read_write"},
+            "single_group_b": {"group_mode": "single",
+                               "access_mode": "read_only"},
+            "single_group_c": {"group_mode": "single",
+                               "access_mode": "read_only"},
+        },
+        row_count=17,
+    )
     ops.check("阶段 1：检查 pool 模式组合", "session/transaction/statement 均在配置中",
              "pool transaction/session/statement present=%s" % all(
                  token in conf.read_text(encoding="utf-8")
                  for token in ('pool "transaction"', 'pool "session"', 'pool "statement"')),
              all(token in conf.read_text(encoding="utf-8")
                  for token in ('pool "transaction"', 'pool "session"', 'pool "statement"')))
-    ops.psql(
-        "SHOW GROUPS;",
-        "阶段 1：检查 MMR/REP 主组的多用户和 session pool 场景",
-        "mmr_group 和 rep_group 均加载多个用户，并包含各自的 session pool 用户",
-        lambda output: all(value in output for value in (
-            "mmr_group", "ha_mmr_session", "ha_mmr_hint_tx",
-            "rep_group", "ha_rep_session", "ha_rep_hint_tx", "postgres")),
+    ops.assert_groups(
+        "阶段 1：检查 MMR/REP 主组的多用户与 rw_split 方法集",
+        {
+            "mmr_group": {
+                "user_names":
+                    "ha_mmr_hint_tx,ha_mmr_port_tx,ha_mmr_sql_tx,"
+                    "ha_mmr_session,postgres",
+                "rw_split_methods": "hint,port,sql_parse,none,none",
+            },
+            "rep_group": {
+                "user_names":
+                    "ha_rep_hint_tx,ha_rep_port_tx,ha_rep_sql_tx,"
+                    "ha_rep_session,postgres",
+                "rw_split_methods": "hint,port,sql_parse,none,none",
+            },
+        },
     )
-    ops.psql("SHOW GROUP_MEMBERS;", "阶段 1：检查 group 成员",
-            "MMR、REP、Balance、Single 成员均可见",
-            lambda output: all(value in output for value in ("pg_1", "pg_2", "pg_3", "pg_4")),)
-    ops.psql("SHOW NODES;", "阶段 1：检查 datasource 节点和权重",
-            "四个 datasource 均可见",
-            lambda output: all(value in output for value in ("pg_1", "pg_2", "pg_3", "pg_4")),)
-    ops.psql("SHOW NODE_STATUS;", "阶段 1：检查节点初始状态",
-            "节点状态输出可用",
-            lambda output: "pg_1" in output and "pg_2" in output)
-    for group in ("mmr_group", "rep_group", "balance_group", "single_group"):
-        ops.psql("SHOW GROUP_ROUTING %s;" % group,
-                "阶段 2：检查 %s 运行态路由" % group,
-                "%s route 返回有效状态" % group,
-                lambda output, group=group: group in output)
-    ops.psql_business(
+    ops.assert_members(
+        "mmr_group",
+        "阶段 1：检查 mmr_group 成员投影（两 cluster 各 7 节点）",
+        {
+            "pg_1": {"cluster_name": "pg_cluster_1", "weight": "10",
+                     "group_role": "non-write-leader", "state": "active"},
+            "pg_2": {"cluster_name": "pg_cluster_2", "weight": "10",
+                     "group_role": "write-leader", "state": "active"},
+            "pg_3": {"cluster_name": "pg_cluster_1", "weight": "10",
+                     "group_role": "replica", "primary": "pg_1"},
+            "pg_4": {"cluster_name": "pg_cluster_2", "weight": "10",
+                     "group_role": "replica", "primary": "pg_2"},
+        },
+        user="postgres", row_count=14,
+        retry_timeout=30,
+    )
+    ops.assert_nodes(
+        "阶段 1：检查 14 个 datasource 的 cluster/权重/角色/状态",
+        all_nodes(), row_count=14, retry_timeout=30)
+    ops.assert_table(
+        "SHOW NODE_STATUS;",
+        "阶段 1：检查 mmr_group postgres 投影的初始路由角色",
+        {
+            "mmr_group|postgres|pg_1": {"group_role": "non-write-leader",
+                                       "state": "active", "is_abnormal": "OK"},
+            "mmr_group|postgres|pg_2": {"group_role": "write-leader",
+                                       "state": "active", "is_abnormal": "OK"},
+        },
+        key=("group_name", "user", "node_name"), retry_timeout=30)
+    ops.assert_routing("mmr_group", "阶段 2：检查 mmr_group 运行态路由",
+                       write_cluster="pg_cluster_2", write_leader="pg_2",
+                       retry_timeout=30)
+    ops.assert_routing("rep_group", "阶段 2：检查 rep_group 运行态路由",
+                       write_cluster="pg_cluster_1", write_leader="pg_1")
+    for group in ("balance_group", "single_group"):
+        ops.assert_routing(group, "阶段 2：检查 %s 运行态路由" % group)
+    ops.assert_business_route(
         "SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(), current_user;",
-        "阶段 3：none 模式真实业务路由",
-        "返回后端地址、端口、恢复状态和用户",
-        lambda output: "inet_server_port" in output or "postgres" in output,
-    )
-    ops.psql_business(
+        "阶段 3：none 模式真实业务路由命中写中心",
+        port=ports["mmr2"], retry_timeout=30)
+    ops.assert_business_route(
         "SELECT current_user, inet_server_port(), pg_backend_pid();",
-        "阶段 3：MMR 多用户组的 session pool 用户真实路由",
-        "客户端 ha_mmr_session 以 session pool 连接 mmr_group，后端使用 storage_user postgres 并命中当前写中心 pg_cluster_2",
-        lambda output: "postgres" in output and
-        str(ops.env.config["database"]["ports"]["mmr2"]) in output,
-        group="mmr_group", user="ha_mmr_session", retry_timeout=30,
-    )
-    ops.psql_business(
+        "阶段 3：MMR session pool 用户命中当前写中心 pg_cluster_2",
+        port=ports["mmr2"],
+        group="mmr_group", user="ha_mmr_session", retry_timeout=30)
+    ops.assert_business_route(
         "SELECT current_user, inet_server_port(), pg_is_in_recovery(), pg_backend_pid();",
-        "阶段 3：REP 多用户组的 session pool 用户真实路由",
-        "客户端 ha_rep_session 以 session pool 连接 rep_group，后端使用 storage_user postgres 并命中 pg_cluster_1 primary",
-        lambda output: "postgres" in output and
-        str(ops.env.config["database"]["ports"]["mmr1"]) in output and
-        " f " in output,
-        group="rep_group", user="ha_rep_session", retry_timeout=30,
-    )
+        "阶段 3：REP session pool 用户命中 pg_cluster_1 primary",
+        port=ports["mmr1"], recovery=False,
+        group="rep_group", user="ha_rep_session", retry_timeout=30)
+    member_ports = {str(item["port"]) for item in meta.values()}
     for user, group, label in (
             ("ha_mmr_hint_tx", "mmr_group", "MMR hint"),
             ("ha_mmr_port_tx", "mmr_group", "MMR port"),
@@ -326,41 +424,51 @@ def _run_comprehensive_all_groups_and_commands(context):
         ops.psql_business(
             "SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(), current_user;",
             "阶段 3：%s 用户真实路由" % label,
-            "%s 用户能完成 SQL 并返回后端端口" % label,
-            lambda output: "inet_server_port" in output or "postgres" in output,
+            "%s 用户完成 SQL 且后端端口属于集群成员" % label,
+            lambda output, valid=member_ports: (
+                (lambda rows: bool(rows) and
+                 rows[-1].get("inet_server_port") in valid)(
+                    parse_psql_table(output))),
             group=group, user=user,
         )
 
     # Mixed endpoint/name batch: pg_3 is named, pg_4 is addressed by IPv4 endpoint.
+    endpoint_pg4 = "%s:%s" % (host, ports["mmr2_standby1"])
     ops.psql(
-        "SET NODE PARTED pg_3,%s:%s;" % (
-            ops.env.config["database"]["mmr_host"],
-            ops.env.config["database"]["ports"]["mmr2_standby1"]),
+        "SET NODE PARTED pg_3,%s;" % endpoint_pg4,
         "阶段 4：名称与 IPv4 host:port 混合批量 PARTED",
-        "命令成功并按物理节点更新状态",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
-    ops.psql(
-        "SHOW NODE_STATUS;",
-        "阶段 4：检查混合寻址后的节点状态",
-        "pg_3 和 pg_4 均为 parted",
-        lambda output: "pg_3" in output and "pg_4" in output and "parted" in output.lower(),
+    ops.assert_nodes(
+        "阶段 4：检查混合寻址后 pg_3/pg_4 均为 parted",
+        {"pg_3": {"config_status": "parted"},
+         "pg_4": {"config_status": "parted"}},
     )
     ops.psql(
-        "SET NODE ACTIVE pg_3,%s:%s;" % (
-            ops.env.config["database"]["mmr_host"],
-            ops.env.config["database"]["ports"]["mmr2_standby1"]),
+        "SET NODE ACTIVE pg_3,%s;" % endpoint_pg4,
         "阶段 4：恢复混合寻址节点 ACTIVE",
-        "命令成功",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
+    )
+    ops.assert_nodes(
+        "阶段 4：pg_3/pg_4 恢复 active",
+        {"pg_3": {"config_status": "active"},
+         "pg_4": {"config_status": "active"}},
     )
     _wait_pg_cluster_ready(context, "pg_cluster_1", "pg_1", ("pg_3",))
     _wait_pg_cluster_ready(context, "pg_cluster_2", "pg_2", ("pg_4",))
     ops.psql(
         "SET NODE PARTED pg_3;",
         "阶段 4：准备批量部分无需修改场景",
-        "仅 pg_3 进入 parted",
+        "仅 pg_3 进入 parted（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
+    )
+    ops.assert_nodes(
+        "阶段 4：仅 pg_3 parted，pg_1/pg_4 不受影响",
+        {"pg_3": {"config_status": "parted"},
+         "pg_1": {"config_status": "active"},
+         "pg_4": {"config_status": "active"}},
     )
     ops.psql(
         "SET NODE ACTIVE (pg_1,pg_3);",
@@ -368,44 +476,54 @@ def _run_comprehensive_all_groups_and_commands(context):
         "pg_1 已 active 保持不变，pg_3 从 parted 恢复",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
+    ops.assert_nodes(
+        "阶段 4：批量 ACTIVE 后 pg_1/pg_3 均为 active",
+        {"pg_1": {"config_status": "active", "effective_role": "PRIMARY"},
+         "pg_3": {"config_status": "active"}},
+    )
     _wait_pg_cluster_ready(
         context, "pg_cluster_1", "pg_1", ("pg_3",),
         "阶段 4：验证部分无需修改的 ACTIVE 批量 monitor 投影")
 
     ops.psql(
-        "SET NODE WEIGHT (pg_3=11,%s:%s=12);" % (
-            ops.env.config["database"]["mmr_host"],
-            ops.env.config["database"]["ports"]["mmr2_standby1"]),
+        "SET NODE WEIGHT (pg_3=11,%s=12);" % endpoint_pg4,
         "阶段 5：批量 WEIGHT 全部目标修改",
-        "pg_3 和 endpoint 目标权重均更新",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
-    ops.psql("SHOW NODES;", "阶段 5：检查批量权重运行态",
-            "节点显示权重 11 和 12",
-            lambda output: "11" in output and "12" in output)
+    ops.assert_nodes(
+        "阶段 5：pg_3 权重=11、endpoint(pg_4) 权重=12",
+        {"pg_3": {"weight": "11"}, "pg_4": {"weight": "12"}},
+    )
     ops.psql(
-        "SET NODE WEIGHT (pg_3=10,%s:%s=10);" % (
-            ops.env.config["database"]["mmr_host"],
-            ops.env.config["database"]["ports"]["mmr2_standby1"]),
+        "SET NODE WEIGHT (pg_3=10,%s=10);" % endpoint_pg4,
         "阶段 5：恢复批量权重",
-        "权重恢复成功",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
+    )
+    ops.assert_nodes(
+        "阶段 5：权重恢复为 10",
+        {"pg_3": {"weight": "10"}, "pg_4": {"weight": "10"}},
     )
 
     ops.psql_error(
         "SET NODE WEIGHT (pg_3=11,no_such_node=12);",
         "阶段 5：批量 WEIGHT 部分非法目标原子拒绝",
-        "返回错误且合法目标不被部分写入",
+        "返回 ERROR 且错误信息含 no_such_node",
         lambda output: "ERROR" in output and "no_such_node" in output,
     )
+    ops.assert_nodes(
+        "阶段 5：原子拒绝后 pg_3 权重未被部分写入",
+        {"pg_3": {"weight": "10"}},
+    )
 
-    groups_write_2 = "mmr_group,mmr_group_c,mmr_group_e,mmr_group_g"
-    groups_write_1 = "mmr_group_b,mmr_group_d,mmr_group_f,mmr_group_h"
-    all_mmr_groups = groups_write_2 + "," + groups_write_1
+    groups_write_2 = ["mmr_group", "mmr_group_c", "mmr_group_e", "mmr_group_g"]
+    groups_write_1 = ["mmr_group_b", "mmr_group_d", "mmr_group_f", "mmr_group_h"]
+    all_mmr_groups = groups_write_2 + groups_write_1
     ops.psql(
-        "SET NODE WRITE pg_1 IN GROUPS (%s);" % groups_write_2,
+        "SET NODE WRITE pg_1 IN GROUPS (%s);" % ",".join(groups_write_2),
         "阶段 6：4 个 MMR group 批量全修改 WRITE",
-        "4 个原写向 pg_cluster_2 的 group 全部切换到 pg_cluster_1",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
     ops.check(
@@ -415,14 +533,22 @@ def _run_comprehensive_all_groups_and_commands(context):
         conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"'),
         conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"') == 8,
     )
+    for group in groups_write_1:
+        ops.assert_routing(
+            group, "阶段 6：%s 切换后写中心为 pg_cluster_1" % group,
+            write_cluster="pg_cluster_1", write_leader="pg_1")
     ops.psql(
-        "SET NODE WRITE pg_2 IN GROUPS (%s);" % groups_write_2,
+        "SET NODE WRITE pg_2 IN GROUPS (%s);" % ",".join(groups_write_2),
         "阶段 6：恢复批量全修改的 4 个 MMR group",
-        "4 个 group 恢复写向 pg_cluster_2",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
+    for group in groups_write_2:
+        ops.assert_routing(
+            group, "阶段 6：%s 恢复写中心为 pg_cluster_2" % group,
+            write_cluster="pg_cluster_2", write_leader="pg_2")
     ops.psql(
-        "SET NODE WRITE pg_1 IN GROUPS (%s);" % all_mmr_groups,
+        "SET NODE WRITE pg_1 IN GROUPS (%s);" % ",".join(all_mmr_groups),
         "阶段 6：8 个 MMR group 批量部分修改",
         "4 个 group 无需修改，另外 4 个切换到 pg_cluster_1",
         lambda output: "SET NODE" in output and "ERROR" not in output,
@@ -435,9 +561,9 @@ def _run_comprehensive_all_groups_and_commands(context):
         conf.read_text(encoding="utf-8").count('write_cluster "pg_cluster_1"') == 8,
     )
     ops.psql(
-        "SET NODE WRITE pg_2 IN GROUPS (%s);" % groups_write_2,
+        "SET NODE WRITE pg_2 IN GROUPS (%s);" % ",".join(groups_write_2),
         "阶段 6：恢复批量部分修改的 4 个变更 group",
-        "原写中心为 pg_cluster_2 的 4 个 group 完成恢复",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
 
@@ -450,57 +576,97 @@ def _run_comprehensive_all_groups_and_commands(context):
     ops.psql(
         "SET NODE WRITE pg_1 IN GROUP mmr_group;",
         "阶段 6：MMR 指定 group 切换 WRITE",
-        "写中心切换到 pg_cluster_1",
+        "命令成功（SET NODE 完成标记）",
         lambda output: "SET NODE" in output and "ERROR" not in output,
     )
-    ops.psql_business(
+    ops.assert_groups(
+        "阶段 6：WRITE 联动 promoted 互换",
+        {"mmr_group": {"write_cluster": "pg_cluster_1",
+                       "promoted_cluster": "pg_cluster_2"}},
+    )
+    ops.assert_routing(
+        "mmr_group", "阶段 6：mmr_group 写中心切到 pg_cluster_1",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
+    ops.assert_business_route(
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_port(), pg_is_in_recovery();",
-        "阶段 6：WRITE 切换后的真实业务路由",
-        "命中 pg_cluster_1 写节点",
-        lambda output: str(ops.env.config["database"]["ports"]["mmr1"]) in output,
-    )
+        "阶段 6：WRITE 切换后业务命中 pg_cluster_1 写节点",
+        port=ports["mmr1"], recovery=False, retry_timeout=30)
+    # fb_console_command.c: PROMOTED 仅在 write!=target 且
+    # promoted!=target 时落盘；两 cluster 组中两字段占满时恒为空操作。
     ops.psql(
         "SET NODE PROMOTED pg_2 IN GROUP mmr_group;",
-        "阶段 7：切换 MMR promoted cluster",
-        "目标已是 promoted cluster，返回 SET NODE 或 NO CONFIG CHANGE",
-        lambda output: ("SET NODE" in output or "NO CONFIG CHANGE" in output)
-        and "ERROR" not in output,
-    )
-    ops.psql(
-        "SET NODE WRITE pg_2 IN GROUP mmr_group;",
-        "阶段 7：为恢复 promoted 先恢复原写中心",
-        "write cluster 临时恢复到 pg_cluster_2",
-        lambda output: "SET NODE" in output and "ERROR" not in output,
+        "阶段 7：PROMOTED 已是备用写中心的 cluster（幂等空操作）",
+        "返回 NO CONFIG CHANGE，配置不变",
+        lambda output: "NO CONFIG CHANGE" in output,
     )
     ops.psql(
         "SET NODE PROMOTED pg_1 IN GROUP mmr_group;",
-        "阶段 7：恢复 MMR promoted cluster",
-        "promoted cluster 已随 WRITE 恢复，返回 SET NODE 或 NO CONFIG CHANGE",
-        lambda output: ("SET NODE" in output or "NO CONFIG CHANGE" in output)
-        and "ERROR" not in output,
+        "阶段 7：PROMOTED 当前写中心 cluster（空操作）",
+        "返回 NO CONFIG CHANGE，配置不变",
+        lambda output: "NO CONFIG CHANGE" in output,
+    )
+    ops.assert_groups(
+        "阶段 7：两次幂等 PROMOTED 后写/备中心不变",
+        {"mmr_group": {"write_cluster": "pg_cluster_1",
+                       "promoted_cluster": "pg_cluster_2"}},
+    )
+    ops.psql(
+        "SET NODE WRITE pg_2 IN GROUP mmr_group;",
+        "阶段 7：恢复 mmr_group 写中心到 pg_cluster_2",
+        "命令成功（SET NODE 完成标记）",
+        lambda output: "SET NODE" in output and "ERROR" not in output,
+    )
+    ops.assert_groups(
+        "阶段 7：写/备中心恢复初始值（WRITE 再次互换 promoted）",
+        {"mmr_group": {"write_cluster": "pg_cluster_2",
+                       "promoted_cluster": "pg_cluster_1"}},
     )
     ops.psql(
         "SET CLUSTER PARTED pg_cluster_1;",
         "阶段 8：SET CLUSTER PARTED 批量隔离 cluster",
-        "cluster 成员全部进入 parted",
+        "命令成功（SET CLUSTER 完成标记）",
         lambda output: "SET CLUSTER" in output and "ERROR" not in output,
+    )
+    ops.assert_nodes(
+        "阶段 8：pg_cluster_1 全部 7 节点进入 parted，pg_cluster_2 不受影响",
+        {name: {"config_status": "parted"} for name in pg_cluster_1},
+    )
+    ops.assert_nodes(
+        "阶段 8：pg_cluster_2 成员仍为 active",
+        {name: {"config_status": "active"} for name in pg_cluster_2},
     )
     ops.psql(
         "SET CLUSTER ACTIVE pg_cluster_1;",
         "阶段 8：SET CLUSTER ACTIVE 恢复 cluster",
-        "cluster 成员恢复 active",
+        "命令成功（SET CLUSTER 完成标记）",
         lambda output: "SET CLUSTER" in output and "ERROR" not in output,
+    )
+    ops.assert_nodes(
+        "阶段 8：pg_cluster_1 全部恢复 active",
+        {name: {"config_status": "active"} for name in pg_cluster_1},
     )
     _wait_pg_cluster_ready(
         context, "pg_cluster_1", "pg_1", ("pg_3",),
         "阶段 8：验证 cluster ACTIVE 后 monitor 投影恢复")
+    # 阶段 7 已把 mmr_group 恢复为 write=pg_cluster_2/promoted=
+    # pg_cluster_1；此处 WRITE 同一目标是幂等空操作（NO CONFIG
+    # CHANGE），同时校验最终路由确实回到初始写中心。
     ops.psql(
         "SET NODE WRITE pg_2 IN GROUP mmr_group;",
-        "阶段 10：恢复初始 MMR write cluster",
-        "write cluster 已恢复到 pg_cluster_2，返回 SET NODE 或 NO CONFIG CHANGE",
-        lambda output: ("SET NODE" in output or "NO CONFIG CHANGE" in output)
+        "阶段 10：幂等恢复初始 MMR write cluster",
+        "返回 SET NODE 或 NO CONFIG CHANGE（已是目标写中心）",
+        lambda output: ("SET NODE" in output or
+                        "NO CONFIG CHANGE" in output)
         and "ERROR" not in output,
+    )
+    ops.assert_routing(
+        "mmr_group", "阶段 10：mmr_group 写中心为 pg_cluster_2",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
+    ops.assert_groups(
+        "阶段 10：mmr_group 写/备中心恢复初始配置",
+        {"mmr_group": {"write_cluster": "pg_cluster_2",
+                       "promoted_cluster": "pg_cluster_1"}},
     )
     final_bytes = conf.read_bytes()
     final_text = final_bytes.decode("utf-8")
@@ -527,13 +693,13 @@ def _run_mixed_topology_pool_mode_batch_write(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     group_names = "mmr_group,mmr_hint_mix,mmr_sql_mix"
-    ops.psql('SHOW GROUP_ROUTING mmr_group;', "查看混合拓扑批量命令前的基准 MMR 状态",
-            "mmr_group 为 VALID 且 pg_cluster_2",
-            lambda output: all(v in output for v in ("mmr_group", "active", "pg_cluster_2")))
-    ops.psql('SHOW GROUPS;', "查看混合拓扑只读 Balance 配置",
-            "balance_read_mix 为 balance/read_only",
-            lambda output: all(v in output for v in
-                               ("balance_read_mix", "balance", "read_only")))
+    ops.assert_routing(
+        "mmr_group", "查看混合拓扑批量命令前的基准 MMR 状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
+    ops.assert_groups(
+        "查看混合拓扑只读 Balance 配置",
+        {"balance_read_mix": {"group_mode": "balance",
+                              "access_mode": "read_only"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1 IN GROUPS (%s);' % group_names,
             "混合 topology 中批量切换 3 个 MMR group 的写中心",
@@ -550,48 +716,42 @@ def _run_mixed_topology_pool_mode_batch_write(context):
     ops.diff_contains(before, conf,
                      ('-    write_cluster "pg_cluster_2"', '+    write_cluster "pg_cluster_1"'),
                      "验证混合配置只替换目标 MMR 的写中心")
-    ops.psql('SHOW GROUP_ROUTING mmr_hint_mix;', "查看混合配置批量切换后的 hint MMR 状态",
-            "mmr_hint_mix 为 VALID 且 pg_cluster_1",
-            lambda output: all(v in output for v in ("mmr_hint_mix", "active", "pg_cluster_1")))
-    ops.psql('SHOW GROUP_ROUTING rep_port_mix;', "确认混合配置 REP port group 未被批量 MMR 命令修改",
-            "rep_port_mix 仍为 replication",
-            lambda output: "rep_port_mix" in output and "replication" in output)
-    expected_mmr1 = str(ops.env.config["database"]["ports"]["mmr1"])
-    expected_mmr2 = str(ops.env.config["database"]["ports"]["mmr2"])
-    ops.psql_business(
+    ops.assert_routing(
+        "mmr_hint_mix", "查看混合配置批量切换后的 hint MMR 状态",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
+    ops.assert_routing(
+        "rep_port_mix", "确认混合配置 REP port group 未被批量 MMR 命令修改",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
+    expected_mmr1 = ops.env.config["database"]["ports"]["mmr1"]
+    expected_mmr2 = ops.env.config["database"]["ports"]["mmr2"]
+    ops.assert_business_route(
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_port(), current_user;",
         "验证批量 WRITE 后 MMR hint 真实路由",
-        "mix_hint 写事务命中 pg_cluster_1 primary",
-        lambda output: expected_mmr1 in output and "postgres" in output,
-        group="mmr_hint_mix", user="mix_hint")
-    ops.psql_business(
+        port=expected_mmr1, group="mmr_hint_mix", user="mix_hint",
+        retry_timeout=30)
+    ops.assert_business_route(
         "BEGIN; CREATE TEMP TABLE ha_mixed_sql_probe(id int); "
         "SELECT inet_server_port(); ROLLBACK;",
         "验证批量 WRITE 后 MMR sql_parse 真实路由",
-        "mix_sql 含 DDL 的事务命中 pg_cluster_1 primary 并回滚",
-        lambda output: expected_mmr1 in output and "CREATE TABLE" in output
-        and "ROLLBACK" in output,
-        group="mmr_sql_mix", user="mix_sql")
+        port=expected_mmr1, group="mmr_sql_mix", user="mix_sql",
+        retry_timeout=30)
     ops.psql('SET CLUSTER PARTED pg_cluster_1;',
             "在 mixed topology 隔离当前 MMR write/REP backend cluster",
             "返回 SET CLUSTER，并由各路由入口立即观察新状态",
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
-    ops.psql_business(
+    ops.assert_business_route(
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_port(), current_user;",
         "验证 cluster PARTED 后 MMR hint promoted 路由",
-        "mix_hint 写事务切换到 promoted pg_cluster_2 primary",
-        lambda output: expected_mmr2 in output and "postgres" in output,
-        group="mmr_hint_mix", user="mix_hint")
-    ops.psql_business(
+        port=expected_mmr2, group="mmr_hint_mix", user="mix_hint",
+        retry_timeout=30)
+    ops.assert_business_route(
         "BEGIN; CREATE TEMP TABLE ha_mixed_sql_failover(id int); "
         "SELECT inet_server_port(); ROLLBACK;",
         "验证 cluster PARTED 后 MMR sql_parse promoted 路由",
-        "mix_sql 写事务切换到 promoted pg_cluster_2 primary",
-        lambda output: expected_mmr2 in output and "CREATE TABLE" in output
-        and "ROLLBACK" in output,
-        group="mmr_sql_mix", user="mix_sql")
+        port=expected_mmr2, group="mmr_sql_mix", user="mix_sql",
+        retry_timeout=30)
     ops.psql_business_error(
         "SELECT inet_server_port();",
         "验证 cluster PARTED 后 REP port 路由不可用",
@@ -605,12 +765,11 @@ def _run_mixed_topology_pool_mode_batch_write(context):
     _wait_pg_cluster_ready(
         context, "pg_cluster_1", "pg_1", ("pg_3",),
         "等待 mixed topology 的 pg_cluster_1 路由投影恢复")
-    ops.psql_business(
+    ops.assert_business_route(
         "SELECT inet_server_port(), current_user;",
         "验证 cluster ACTIVE 后 REP port 路由恢复",
-        "mix_port write_port 重新命中 replication primary",
-        lambda output: expected_mmr1 in output and "postgres" in output,
-        group="rep_port_mix", port=ops.listen_port, user="mix_port")
+        port=expected_mmr1, group="rep_port_mix", user="mix_port",
+        retry_timeout=30)
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_2 IN GROUPS (%s);' % group_names,
             "恢复混合 topology 中 3 个 MMR group 的写中心",
@@ -618,9 +777,9 @@ def _run_mixed_topology_pool_mode_batch_write(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证混合 MMR 批量恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW GROUP_ROUTING mmr_sql_mix;', "查看混合配置恢复后的 sql_parse MMR 状态",
-            "mmr_sql_mix 为 VALID 且 pg_cluster_2",
-            lambda output: all(v in output for v in ("mmr_sql_mix", "active", "pg_cluster_2")))
+    ops.assert_routing(
+        "mmr_sql_mix", "查看混合配置恢复后的 sql_parse MMR 状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 
 def _run_batch_mixed_no_change_and_change(context):
@@ -636,10 +795,11 @@ def _run_batch_mixed_no_change_and_change(context):
     mixed_before = ops.workdir / "before-mixed-command.conf"
     mixed_before.write_bytes(conf.read_bytes())
     pg_3_before = _datasource_block(mixed_before.read_text(encoding="utf-8"), "pg_3")
-    ops.psql('SHOW DATASOURCES;', "查看混合批量命令前的运行态",
-            "pg_3 为 parted，pg_4 为 active",
-            lambda output: "pg_3" in output and "pg_4" in output and
-                           "parted" in output and "active" in output)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看混合批量命令前的运行态",
+        {"pg_3": {"config_status": "parted"},
+         "pg_4": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE PARTED pg_3,pg_4;',
             "批量处理已为 parted 的 pg_3 和待修改的 pg_4",
@@ -654,9 +814,11 @@ def _run_batch_mixed_no_change_and_change(context):
              "pg_3 datasource block 逐字节保持不变",
              "pg_3 block unchanged=%s" % (pg_3_before == pg_3_after),
              pg_3_before == pg_3_after)
-    ops.psql('SHOW DATASOURCES;', "查看混合批量命令后的运行态",
-            "pg_3、pg_4 均为 parted",
-            lambda output: output.count("parted") >= 2)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看混合批量命令后的运行态",
+        {"pg_3": {"config_status": "parted"},
+         "pg_4": {"config_status": "parted"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE ACTIVE pg_3,pg_4;', "恢复混合批量状态",
             "返回 SET NODE 且命令不报错",
@@ -675,12 +837,9 @@ def _run_bulk_30_group_write_roundtrip(context):
     names = ['bulk_mmr_%02d' % index for index in range(1, 31)]
     group_list = ','.join(names)
     for group in (names[0], names[-1]):
-        ops.psql('SHOW GROUP_ROUTING %s;' % group,
-                "查看 30 组切换前 %s 的运行态" % group,
-                "%s pg_cluster_2 pg_cluster_1" % group,
-                lambda output, group=group: all(v in output for v in
-                                                (group, "pg_cluster_2",
-                                                 "pg_cluster_1", "active")))
+        ops.assert_routing(
+            group, "查看 30 组切换前 %s 的运行态" % group,
+            write_cluster="pg_cluster_2", write_leader="pg_2")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1 IN GROUPS (%s);' % group_list, "一次切换 30 个 MMR group 的写中心", "返回 SET NODE 且命令不报错", lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 30 组切换的配置备份")
@@ -700,8 +859,9 @@ def _run_bulk_30_groups_invalid_target(context):
     before.write_bytes(conf.read_bytes())
     names = ['bulk_mmr_%02d' % i for i in range(1, 31)]
     group_list = ','.join(names + ['no_such_group'])
-    ops.psql('SHOW GROUP_ROUTING bulk_mmr_01;', "查看批量非法 group 命令前状态", "pg_cluster_2",
-            lambda output: "bulk_mmr_01" in output and "pg_cluster_2" in output)
+    ops.assert_routing(
+        "bulk_mmr_01", "查看批量非法 group 命令前状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WRITE pg_1 IN GROUPS (%s);' % group_list,
                   "30 个合法 group 混入不存在 group 时原子拒绝",
@@ -711,8 +871,9 @@ def _run_bulk_30_groups_invalid_target(context):
     ops.diff(before, conf)
     unchanged = _bulk_groups_have(conf.read_text(encoding="utf-8"), "pg_cluster_2", "pg_cluster_1")
     ops.check("验证 30 个合法 group 未部分修改", "全部保持初始 write/promoted", "unchanged=%s" % unchanged, unchanged)
-    ops.psql('SHOW GROUP_ROUTING bulk_mmr_30;', "查看批量非法 group 命令后状态", "pg_cluster_2",
-            lambda output: "bulk_mmr_30" in output and "pg_cluster_2" in output)
+    ops.assert_routing(
+        "bulk_mmr_30", "查看批量非法 group 命令后状态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 
 def _run_duplicate_and_mixed_status_targets(context):
@@ -721,12 +882,11 @@ def _run_duplicate_and_mixed_status_targets(context):
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
     backup = ops.backup_checkpoint(conf)
-    ops.psql(
-        'SHOW DATASOURCES;',
-        "查看重复状态命令前的运行态",
-        'pg_3、pg_4 均为 active',
-        lambda output: all(v in output for v in ("pg_3", "pg_4", "active")),
-    )
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看重复状态命令前的运行态",
+        {"pg_3": {"config_status": "active"},
+         "pg_4": {"config_status": "active"}},
+        key="node_name")
     ops.psql(
         'SET NODE PARTED pg_3,pg_3,pg_4;',
         "执行重复与混合 datasource 的 PARTED 命令",
@@ -740,12 +900,11 @@ def _run_duplicate_and_mixed_status_targets(context):
         "验证重复与混合状态目标的配置 diff",
     )
     backup = ops.backup_checkpoint(conf)
-    ops.psql(
-        'SHOW DATASOURCES;',
-        "查看重复与混合 PARTED 命令后的运行态",
-        'pg_3、pg_4 均为 parted',
-        lambda output: all(v in output for v in ("pg_3", "pg_4", "parted")),
-    )
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看重复与混合 PARTED 命令后的运行态",
+        {"pg_3": {"config_status": "parted"},
+         "pg_4": {"config_status": "parted"}},
+        key="node_name")
     ops.psql(
         'SET NODE ACTIVE pg_3,pg_3,pg_4;',
         "恢复重复与混合 datasource 的 ACTIVE 状态",

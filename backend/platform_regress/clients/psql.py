@@ -111,7 +111,8 @@ def parse_psql_table(output):
     return []
 
 
-def assert_table_rows(output, expected_rows, key="node_name"):
+def assert_table_rows(output, expected_rows, key="node_name",
+                      row_count=None, absent=()):
     """
     Assert that table output contains expected rows and fields.
 
@@ -120,15 +121,45 @@ def assert_table_rows(output, expected_rows, key="node_name"):
         "pg_220": {"group_role": "write-leader", "state": "active", "is_abnormal": "OK"},
         "pg_240": {"group_role": "replica", "primary": "pg_220", "state": "active"},
     }
+    key may be a column name or a tuple of column names joined by "|" to
+    address composite-key tables such as SHOW GROUP_ROUTING projections.
+
+    row_count: when not None, the parsed table must contain exactly this
+    many rows — catches silently missing or duplicated members that
+    per-row expectations alone cannot see.
+    absent: iterable of key values that must NOT appear in the table —
+    for asserting a parted/removed node is gone rather than merely
+    "not matching".
 
     Returns: (passed: bool, summary_text: str, details: list of dicts)
     """
     rows = parse_psql_table(output)
-    row_map = {row.get(key): row for row in rows if key in row}
+    if isinstance(key, (tuple, list)):
+        def row_key(row):
+            return "|".join(row.get(col, "") for col in key)
+    else:
+        def row_key(row):
+            return row.get(key)
+    row_map = {row_key(row): row for row in rows
+               if row_key(row) not in (None, "")}
 
     all_passed = True
     summary_lines = []
     details = []
+
+    if row_count is not None and len(rows) != row_count:
+        all_passed = False
+        summary_lines.append(
+            "❌ 行数=%d，期望 %d 行" % (len(rows), row_count))
+        details.append({"status": "ROW_COUNT", "actual": len(rows),
+                        "expected": row_count})
+
+    for key_val in absent:
+        if row_map.get(key_val) is not None:
+            all_passed = False
+            summary_lines.append(
+                "❌ [%s=%s] 该行不应出现" % (key, key_val))
+            details.append({"key": key_val, "status": "UNEXPECTED"})
 
     for key_val, expected_fields in expected_rows.items():
         actual_row = row_map.get(key_val)

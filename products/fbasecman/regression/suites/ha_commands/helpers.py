@@ -3,6 +3,7 @@ import os
 
 import sys
 from platform_regress.clients import jdbc as jdbc_client
+from platform_regress.clients.psql import parse_psql_table
 
 from suites.ha_commands.runtime import HaCommandFailure
 
@@ -130,19 +131,27 @@ def _hint_transform(group):
     return transform
 
 
-def _run_route_mode(context, group, mode, sql, expected_text, predicate,
-                    transform=None, port=None):
+def _run_route_mode(context, group, mode, sql, expected_text, predicate=None,
+                    transform=None, port=None, route_port=None,
+                    route_ports=None, recovery=None):
     ops = context.ops
     title = "%s (%s)" % (group, mode)
     ops.start(transform=transform)
-    ops.psql(
-        'SHOW GROUP_ROUTING %s;' % group,
-        "%s：查看运行态路由" % title,
-        "%s group_mode=%s 且存在可用路由候选" % (group, mode),
-        lambda output: group in output and mode in output,
-    )
-    ops.psql_business(sql, "%s：真实业务连接验证" % title,
-                     expected_text, predicate, group=group, port=port)
+    if mode == "mmr":
+        ops.assert_routing(group, "%s：查看运行态路由" % title,
+                           write_cluster="pg_cluster_2",
+                           write_leader="pg_2", retry_timeout=30)
+    elif mode == "replication":
+        ops.assert_routing(group, "%s：查看运行态路由" % title,
+                           write_cluster="pg_cluster_1",
+                           write_leader="pg_1", retry_timeout=30)
+    else:
+        ops.assert_groups("%s：查看 group 配置" % title,
+                          {group: {"group_mode": mode}})
+    ops.assert_business_route(
+        sql, "%s：真实业务连接验证" % title,
+        port=route_port, ports=route_ports, recovery=recovery,
+        group=group, frontend_port=port, retry_timeout=30)
 
 
 def _run_sql_parse_heartbeat_bind_invalid(context):
@@ -667,23 +676,23 @@ def _remove_test_path(path):
 def _run_sql_parse_transactions(context, group, mode, read_ports, write_port):
     ops = context.ops
     ops.start(transform=_sql_parse_transform(group))
-    ops.psql('SHOW GROUP_ROUTING %s;' % group,
-            "%s sql_parse：查看运行态路由" % group,
-            "%s group_mode=%s 且存在可用路由" % (group, mode),
-            lambda output: group in output and mode in output)
-    ops.psql_business(
+    if mode == "mmr":
+        ops.assert_routing(group, "%s sql_parse：查看运行态路由" % group,
+                           write_cluster="pg_cluster_2",
+                           write_leader="pg_2", retry_timeout=30)
+    else:
+        ops.assert_routing(group, "%s sql_parse：查看运行态路由" % group,
+                           write_cluster="pg_cluster_1",
+                           write_leader="pg_1", retry_timeout=30)
+    ops.assert_business_route(
         'SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery();',
         "%s sql_parse：验证只读 SELECT 路由" % group,
-        "SELECT 落到允许的读候选端口",
-        lambda output: any(str(port) in output for port in read_ports),
-        group=group)
-    ops.psql_business(
+        ports=read_ports, group=group, retry_timeout=30)
+    ops.assert_business_route(
         'BEGIN; CREATE TEMP TABLE ha_sql_parse_probe(id int); '
         'SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery(); ROLLBACK;',
         "%s sql_parse：验证写事务路由" % group,
-        "包含 DDL 的事务落到 primary/write-leader 端口并回滚",
-        lambda output: str(write_port) in output and "CREATE TABLE" in output and "ROLLBACK" in output,
-        group=group)
+        port=write_port, group=group, retry_timeout=30)
 
 
 def _node_has_weight(output, node, weight):

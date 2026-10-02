@@ -12,37 +12,37 @@ __all__ = ['_run_balance_read_only_route', '_run_balance_route', '_run_four_grou
 
 def _run_mmr_hint_route(context):
     ops = context.ops
-    port = str(ops.env.config["database"]["ports"]["mmr2"])
+    port = ops.env.config["database"]["ports"]["mmr2"]
     _run_route_mode(
         context, "mmr_group", "mmr",
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "写 Hint 请求落到 pg_cluster_2 的 pg_2 端口",
-        lambda output: port in output and "postgres" in output,
+        route_port=port, recovery=False,
         transform=_hint_transform("mmr_group"),
     )
 
 
 def _run_single_route(context):
     ops = context.ops
-    port = str(ops.env.config["database"]["ports"]["mmr1"])
+    port = ops.env.config["database"]["ports"]["mmr1"]
     _run_route_mode(
         context, "single_group", "single",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "single 请求固定落到 pg_cluster_1 主端口",
-        lambda output: port in output and "postgres" in output,
+        route_port=port, recovery=False,
     )
 
 
 def _run_rep_hint_write_route(context):
     ops = context.ops
-    primary = str(ops.env.config["database"]["ports"]["mmr1"])
+    primary = ops.env.config["database"]["ports"]["mmr1"]
     _run_route_mode(
         context, "rep_group", "replication",
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "写 Hint 请求落到 replication primary",
-        lambda output: primary in output and "postgres" in output,
+        route_port=primary, recovery=False,
         transform=_hint_transform("rep_group"),
     )
 
@@ -50,24 +50,24 @@ def _run_rep_hint_write_route(context):
 def _run_rep_port_read_route(context):
     ops = context.ops
     ports = ops.env.config["database"]["ports"]
-    readable = (str(ports["mmr1_standby1"]), str(ports["mmr1"]))
+    readable = (ports["mmr1_standby1"], ports["mmr1"])
     _run_route_mode(
         context, "rep_group", "replication",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "非 write_port 请求落到 replication 读候选",
-        lambda output: any(port in output for port in readable) and "postgres" in output,
+        route_ports=readable,
         transform=_port_transform(context, "rep_group"), port=ops.read_port,
     )
 
 
 def _run_rep_port_write_route(context):
     ops = context.ops
-    backend = str(ops.env.config["database"]["ports"]["mmr1"])
+    backend = ops.env.config["database"]["ports"]["mmr1"]
     _run_route_mode(
         context, "rep_group", "replication",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "write_port 请求落到 replication cluster 的 primary 端口",
-        lambda output: backend in output and "postgres" in output,
+        route_port=backend, recovery=False,
         transform=_port_transform(context, "rep_group"), port=ops.listen_port,
     )
 
@@ -75,24 +75,24 @@ def _run_rep_port_write_route(context):
 def _run_balance_route(context):
     ops = context.ops
     ports = ops.env.config["database"]["ports"]
-    allowed = tuple(str(ports[key]) for key in
+    allowed = tuple(ports[key] for key in
                     ("mmr1", "mmr1_standby1", "mmr2", "mmr2_standby1"))
     _run_route_mode(
         context, "balance_group", "balance",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "balance 请求落到配置的后端候选端口",
-        lambda output: any(port in output for port in allowed) and "postgres" in output,
+        route_ports=allowed,
     )
 
 
 def _run_mmr_port_write_route(context):
     ops = context.ops
-    backend = str(ops.env.config["database"]["ports"]["mmr2"])
+    backend = ops.env.config["database"]["ports"]["mmr2"]
     _run_route_mode(
         context, "mmr_group", "mmr",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "write_port 请求落到 MMR write cluster 的 pg_2 端口",
-        lambda output: backend in output and "postgres" in output,
+        route_port=backend, recovery=False,
         transform=_port_transform(context, "mmr_group"), port=ops.listen_port,
     )
 
@@ -142,13 +142,13 @@ def _run_rep_sql_parse_read_write_transactions(context):
 def _run_mmr_port_read_route(context):
     ops = context.ops
     ports = ops.env.config["database"]["ports"]
-    readable = tuple(str(ports[key]) for key in
+    readable = tuple(ports[key] for key in
                      ("mmr1", "mmr1_standby1", "mmr2_standby1"))
     _run_route_mode(
         context, "mmr_group", "mmr",
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "非 write_port 请求落到 MMR 可读候选",
-        lambda output: any(port in output for port in readable) and "postgres" in output,
+        route_ports=readable,
         transform=_port_transform(context, "mmr_group"), port=ops.read_port,
     )
 
@@ -156,17 +156,20 @@ def _run_mmr_port_read_route(context):
 def _run_four_group_modes_route_visibility(context):
     ops = context.ops
     ops.start()
-    for group_name, mode in (
-            ("mmr_group", "mmr"), ("rep_group", "rep"),
-            ("balance_group", "balance"), ("single_group", "single")):
-        ops.psql(
-            'SHOW GROUP_ROUTING %s;' % group_name,
-            "查看 %s 的运行态" % group_name,
-            '%s 的 group_mode 为 %s，且存在 VALID 路由候选' % (group_name, mode),
-            lambda output, group_name=group_name, mode=mode: all(value in output for value in (
-                group_name, mode, "active",
-            )),
-        )
+    ops.assert_groups(
+        "查看四种 group_mode 的配置态",
+        {"mmr_group": {"group_mode": "mmr"},
+         "rep_group": {"group_mode": "replication"},
+         "balance_group": {"group_mode": "balance"},
+         "single_group": {"group_mode": "single"}})
+    ops.assert_routing(
+        "mmr_group", "查看 mmr_group 运行态路由",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
+    ops.assert_routing(
+        "rep_group", "查看 rep_group 运行态路由",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
+    for group_name in ("balance_group", "single_group"):
+        ops.assert_routing(group_name, "查看 %s 运行态路由候选" % group_name)
 
 
 def _run_mmr_sql_parse_read_write_transactions(context):
@@ -184,33 +187,38 @@ def _run_balance_read_only_route(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     ports = ops.env.config["database"]["ports"]
-    pg5_port = str(ports["mmr1_standby2"])
-    ops.psql('SHOW GROUP_ROUTING balance_read_only;',
-            "查看双 replica Balance read-only 初始路由",
-            "两个 replica 均 active，group 为 READ_PREFERRED/VALID",
-            lambda output: all(value in output for value in
-                               ("balance_read_only", "READ_PREFERRED", "pg_3", "pg_5", "active")))
+    pg5_port = ports["mmr1_standby2"]
+    ops.assert_groups(
+        "查看双 replica Balance read-only 初始配置",
+        {"balance_read_only": {"group_mode": "balance",
+                               "access_mode": "read_only",
+                               "backend_clusters": "pg_cluster_1"}})
+    ops.assert_members(
+        "balance_read_only", "确认两个 replica 成员均 active",
+        {"pg_3": {"state": "active", "weight": "10"},
+         "pg_5": {"state": "active", "weight": "10"}},
+        user="balance_reader", retry_timeout=30)
     ops.psql('SET NODE WEIGHT pg_3=0;',
             "将 pg_3 权重设为 0",
             "返回 SET NODE，pg_3 不再参与新业务连接选择",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     for attempt in range(1, 5):
-        ops.psql_business(
+        ops.assert_business_route(
             'SELECT inet_server_port(), pg_is_in_recovery();',
             "验证 weight=0 后第 %d 次 Balance 只读路由" % attempt,
-            "连接只命中 weight=10 的 pg_5 replica",
-            lambda output: pg5_port in output and " t" in output,
-            group="balance_read_only", user="balance_reader")
+            port=pg5_port, recovery=True,
+            group="balance_read_only", user="balance_reader",
+            retry_timeout=30)
     ops.psql('SET NODE PARTED pg_3,pg_5;',
             "隔离 Balance read-only 的全部 replica",
             "返回 SET NODE，两个 replica 均进入 parted",
             lambda output: "SET NODE" in output and "ERROR" not in output)
-    ops.psql_business(
+    ops.assert_business_route(
         'SELECT inet_server_port(), pg_is_in_recovery();',
         "验证无 active replica 时 Balance read-only 回退 primary",
-        "源码定义 read_only Balance 无 replica 时回退 pg_cluster_1 primary",
-        lambda output: str(ports["mmr1"]) in output and " f" in output,
-        group="balance_read_only", user="balance_reader")
+        port=ports["mmr1"], recovery=False,
+        group="balance_read_only", user="balance_reader",
+        retry_timeout=30)
     ops.psql('SET NODE ACTIVE pg_3,pg_5;',
             "恢复 Balance read-only 的全部 replica",
             "返回 SET NODE，两个 replica 均恢复 active",
@@ -218,12 +226,12 @@ def _run_balance_read_only_route(context):
     _wait_pg_cluster_ready(
         context, "pg_cluster_1", "pg_1", ("pg_3", "pg_5"),
         "等待 Balance replica ACTIVE 后 monitor 投影恢复")
-    ops.psql_business(
+    ops.assert_business_route(
         'SELECT inet_server_port(), pg_is_in_recovery();',
         "验证 replica ACTIVE 后 Balance read-only 路由恢复",
-        "连接重新命中 weight=10 的 pg_5 replica",
-        lambda output: pg5_port in output and " t" in output,
-        group="balance_read_only", user="balance_reader")
+        port=pg5_port, recovery=True,
+        group="balance_read_only", user="balance_reader",
+        retry_timeout=30)
     ops.psql('SET NODE WEIGHT pg_3=10;',
             "恢复 pg_3 初始权重",
             "返回 SET NODE，配置恢复初始权重",
@@ -234,13 +242,13 @@ def _run_balance_read_only_route(context):
 def _run_replication_route(context):
     ops = context.ops
     ports = ops.env.config["database"]["ports"]
-    allowed = (str(ports["mmr1"]), str(ports["mmr1_standby1"]))
+    allowed = (ports["mmr1"], ports["mmr1_standby1"])
     _run_route_mode(
         context, "rep_group", "replication",
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; "
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "只读请求落到 replication group 的 pg_cluster_1 主备之一",
-        lambda output: any(port in output for port in allowed) and "postgres" in output,
+        route_ports=allowed,
         transform=_hint_transform("rep_group"),
     )
 
@@ -248,14 +256,14 @@ def _run_replication_route(context):
 def _run_mmr_hint_read_route(context):
     ops = context.ops
     ports = ops.env.config["database"]["ports"]
-    readable = tuple(str(ports[key]) for key in
+    readable = tuple(ports[key] for key in
                      ("mmr1", "mmr1_standby1", "mmr2", "mmr2_standby1"))
     _run_route_mode(
         context, "mmr_group", "mmr",
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; "
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "只读 Hint 请求落到 MMR 合法读候选；无优先读节点时允许回退 write-leader",
-        lambda output: any(port in output for port in readable) and "postgres" in output,
+        route_ports=readable,
         transform=_hint_transform("mmr_group"),
     )
 

@@ -16,9 +16,11 @@ def _run_refresh_cluster_syntax_errors(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW CLUSTERS;', "查看 REFRESH 语法错误前的运行态",
-            'pg_cluster_1 为 VALID 且 current primary 为 pg_1',
-            lambda output: all(v in output for v in ("pg_cluster_1", "VALID", "pg_1")))
+    ops.assert_table(
+        'SHOW CLUSTERS;', "查看 REFRESH 语法错误前的运行态",
+        {"pg_cluster_1": {"topology_state": "VALID",
+                          "current_primary": "pg_1"}},
+        key="cluster_name", retry_timeout=30)
     for sql, title in (
         ('REFRESH CLUSTER;', "执行缺少 cluster 名的 REFRESH 命令"),
         ('REFRESH NODE pg_1;', "执行错误关键字的 REFRESH 命令"),
@@ -29,9 +31,11 @@ def _run_refresh_cluster_syntax_errors(context):
                       lambda output: "ERROR:" in output)
         ops.assert_no_backup_created(backup, conf, "验证 REFRESH 语法错误未创建备份")
         ops.diff(before, conf)
-        ops.psql('SHOW CLUSTERS;', "验证 REFRESH 语法错误后的运行态",
-                'pg_cluster_1 仍为 VALID 且 current primary 为 pg_1',
-                lambda output: all(v in output for v in ("pg_cluster_1", "VALID", "pg_1")))
+        ops.assert_table(
+            'SHOW CLUSTERS;', "验证 REFRESH 语法错误后的运行态",
+            {"pg_cluster_1": {"topology_state": "VALID",
+                              "current_primary": "pg_1"}},
+            key="cluster_name", retry_timeout=30)
 
 
 def _run_set_cluster_30_datasource_roundtrip(context):
@@ -39,9 +43,11 @@ def _run_set_cluster_30_datasource_roundtrip(context):
     conf = ops.start(transform=_add_30_cluster_datasources)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW DATASOURCES;', "查看 30 datasource cluster 操作前状态",
-            "cluster_ds_01 和 cluster_ds_30 均为 active",
-            lambda output: all(v in output for v in ("cluster_ds_01", "cluster_ds_30", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看 30 datasource cluster 操作前状态",
+        {"cluster_ds_01": {"config_status": "active"},
+         "cluster_ds_30": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET CLUSTER PARTED bulk_cluster;', "将 30 个 datasource 批量置为 PARTED",
             "返回 SET CLUSTER 且命令不报错",
@@ -50,9 +56,11 @@ def _run_set_cluster_30_datasource_roundtrip(context):
     parted = _cluster_datasources_have_status(conf.read_text(encoding="utf-8"), "parted")
     ops.check("验证 cluster 展开完整覆盖 30 个 datasource", "30 个节点均为 parted", "30 datasources parted=%s" % parted, parted)
     ops.diff_contains(before, conf, ('-    status "active"', '+    status "parted"'), "验证 30 datasource PARTED 配置 diff")
-    ops.psql('SHOW DATASOURCES;', "查看 30 datasource PARTED 后状态",
-            "cluster_ds_01 和 cluster_ds_30 均为 parted",
-            lambda output: all(v in output for v in ("cluster_ds_01", "cluster_ds_30", "parted")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看 30 datasource PARTED 后状态",
+        {"cluster_ds_01": {"config_status": "parted"},
+         "cluster_ds_30": {"config_status": "parted"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET CLUSTER ACTIVE bulk_cluster;', "恢复 30 个 datasource 为 ACTIVE",
             "返回 SET CLUSTER 且命令不报错",
@@ -61,9 +69,11 @@ def _run_set_cluster_30_datasource_roundtrip(context):
     restored = _cluster_datasources_have_status(conf.read_text(encoding="utf-8"), "active")
     ops.check("验证 30 个 datasource 全部恢复", "30 个节点均恢复 active", "30 datasources active=%s" % restored, restored)
     ops.diff(before, conf)
-    ops.psql('SHOW DATASOURCES;', "查看 30 datasource 恢复后状态",
-            "cluster_ds_01 和 cluster_ds_30 均为 active",
-            lambda output: all(v in output for v in ("cluster_ds_01", "cluster_ds_30", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看 30 datasource 恢复后状态",
+        {"cluster_ds_01": {"config_status": "active"},
+         "cluster_ds_30": {"config_status": "active"}},
+        key="node_name")
 
 
 def _run_set_cluster_invalid_commands(context):
@@ -71,9 +81,11 @@ def _run_set_cluster_invalid_commands(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW CLUSTERS;', "查看非法 SET CLUSTER 命令前的运行态",
-            'pg_cluster_1 为 VALID 且成员为 active',
-            lambda output: all(v in output for v in ("pg_cluster_1", "VALID")))
+    ops.assert_table(
+        'SHOW CLUSTERS;', "查看非法 SET CLUSTER 命令前的运行态",
+        {"pg_cluster_1": {"topology_state": "VALID",
+                          "current_primary": "pg_1"}},
+        key="cluster_name", retry_timeout=30)
     for sql, title, predicate in (
         ('SET CLUSTER PARTED no_such_cluster;', "执行不存在 cluster 的 PARTED 命令",
          lambda output: all(v in output for v in ("ERROR:", "no_such_cluster", "does not exist"))),
@@ -84,9 +96,11 @@ def _run_set_cluster_invalid_commands(context):
         ops.psql_error(sql, title, '返回 ERROR 且命令被拒绝', predicate)
         ops.assert_no_backup_created(backup, conf, "验证非法 SET CLUSTER 未创建备份")
         ops.diff(before, conf)
-        ops.psql('SHOW CLUSTERS;', "验证非法 SET CLUSTER 命令后的运行态",
-                'pg_cluster_1 仍为 VALID 且成员为 active',
-                lambda output: all(v in output for v in ("pg_cluster_1", "VALID")))
+        ops.assert_table(
+            'SHOW CLUSTERS;', "验证非法 SET CLUSTER 命令后的运行态",
+            {"pg_cluster_1": {"topology_state": "VALID",
+                              "current_primary": "pg_1"}},
+            key="cluster_name", retry_timeout=30)
 
 
 def _run_console_set_validation_toggle(context):
@@ -207,9 +221,11 @@ def _run_set_cluster_active_idempotent(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW CLUSTERS;', "查看 SET CLUSTER ACTIVE 执行前的运行态",
-            'pg_cluster_1 为 VALID 且 current primary 为 pg_1',
-            lambda output: all(v in output for v in ("pg_cluster_1", "VALID", "pg_1")))
+    ops.assert_table(
+        'SHOW CLUSTERS;', "查看 SET CLUSTER ACTIVE 执行前的运行态",
+        {"pg_cluster_1": {"topology_state": "VALID",
+                          "current_primary": "pg_1"}},
+        key="cluster_name", retry_timeout=30)
     ops.psql(
         'SET CLUSTER ACTIVE pg_cluster_1;',
         "执行 SET CLUSTER ACTIVE 幂等命令",
@@ -218,14 +234,14 @@ def _run_set_cluster_active_idempotent(context):
             and "ERROR" not in output,
     )
     ops.diff(before, conf)
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "验证 SET CLUSTER ACTIVE 后的运行态",
-        'mmr_group 的 pg_cluster_1 为 VALID，current primary 为 pg_1，且仍有 active 候选节点',
-        lambda output: all(value in output for value in (
-            "mmr_group", "pg_cluster_1", "pg_1",
-        )),
-    )
+    ops.assert_table(
+        'SHOW CLUSTERS;', "验证 SET CLUSTER ACTIVE 后的运行态",
+        {"pg_cluster_1": {"topology_state": "VALID",
+                          "current_primary": "pg_1"}},
+        key="cluster_name", retry_timeout=30)
+    ops.assert_routing(
+        "mmr_group", "验证 SET CLUSTER ACTIVE 后 mmr_group 路由不变",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 
 def _run_set_node_promoted_write_cluster_conflict(context):
@@ -297,9 +313,11 @@ def _run_refresh_cluster_probe_edges(context):
         before = ops.workdir / ("before-%s.conf" % enabled)
         before.write_bytes(conf.read_bytes())
 
-        ops.psql('SHOW CLUSTERS;', "%s：查看 REFRESH 前的 cluster 运行态" % enabled,
-                'pg_cluster_1 为 VALID 且 current primary 为 pg_1',
-                lambda output: all(v in output for v in ("pg_cluster_1", "VALID", "pg_1")))
+        ops.assert_table(
+            'SHOW CLUSTERS;', "%s：查看 REFRESH 前的 cluster 运行态" % enabled,
+            {"pg_cluster_1": {"topology_state": "VALID",
+                              "current_primary": "pg_1"}},
+            key="cluster_name", retry_timeout=30)
         for sql, name_desc in (
             ('REFRESH CLUSTER no_such_cluster;', "不存在的 cluster 名"),
             ('REFRESH CLUSTER pg_1;', "误传 datasource 名"),
@@ -312,9 +330,11 @@ def _run_refresh_cluster_probe_edges(context):
             ops.assert_no_backup_created(
                 backup, conf, "%s：验证 %s 拒绝未创建备份" % (enabled, name_desc))
         ops.diff(before, conf)
-        ops.psql('SHOW CLUSTERS;', "%s：验证名称拒绝后的 cluster 运行态" % enabled,
-                'pg_cluster_1 仍为 VALID 且 current primary 为 pg_1',
-                lambda output: all(v in output for v in ("pg_cluster_1", "VALID", "pg_1")))
+        ops.assert_table(
+            'SHOW CLUSTERS;', "%s：验证名称拒绝后的 cluster 运行态" % enabled,
+            {"pg_cluster_1": {"topology_state": "VALID",
+                              "current_primary": "pg_1"}},
+            key="cluster_name", retry_timeout=30)
 
         wait_monitor("%s：确认初始节点监控状态" % enabled,
                      "pg_1 与 pg_3 connect_status=ONLINE", nodes_online)
@@ -339,9 +359,11 @@ def _run_refresh_cluster_probe_edges(context):
         wait_monitor("%s：验证节点恢复后监控回到 ONLINE" % enabled,
                      "pg_1 与 pg_3 connect_status=ONLINE", nodes_online)
         ops.diff(before, conf)
-        ops.psql('SHOW CLUSTERS;', "%s：查看本模式结束时的 cluster 运行态" % enabled,
-                'pg_cluster_1 为 VALID',
-                lambda output: "pg_cluster_1" in output and "VALID" in output)
+        ops.assert_table(
+            'SHOW CLUSTERS;', "%s：查看本模式结束时的 cluster 运行态" % enabled,
+            {"pg_cluster_1": {"topology_state": "VALID",
+                              "current_primary": "pg_1"}},
+            key="cluster_name", retry_timeout=30)
 
 
 def _run_set_cluster_write_promoted_roundtrip(context):
@@ -349,14 +371,13 @@ def _run_set_cluster_write_promoted_roundtrip(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
+    ops.assert_groups(
         "查看 SET CLUSTER WRITE/PROMOTED 执行前的运行态",
-        'write cluster 为 pg_cluster_2，promoted cluster 为 pg_cluster_1',
-        lambda output: all(value in output for value in (
-            "pg_cluster_2", "pg_cluster_1", "active",
-        )),
-    )
+        {"mmr_group": {"write_cluster": "pg_cluster_2",
+                       "promoted_cluster": "pg_cluster_1"}})
+    ops.assert_routing(
+        "mmr_group", "确认初始写路由投影",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
     ops.psql(
         'SET CLUSTER WRITE pg_cluster_1;',
         "执行 SET CLUSTER WRITE 切换写中心",
@@ -372,22 +393,18 @@ def _run_set_cluster_write_promoted_roundtrip(context):
          '+    promoted_cluster "pg_cluster_2"'),
         "验证 SET CLUSTER WRITE 的 write/promoted 配置变更",
     )
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "验证 SET CLUSTER WRITE 后的运行态",
-        'write cluster 为 pg_cluster_1，promoted cluster 为 pg_cluster_2',
-        lambda output: all(value in output for value in (
-            "pg_cluster_1", "pg_cluster_2", "active",
-        )),
-    )
-    ops.psql_business(
+    ops.assert_groups(
+        "验证 SET CLUSTER WRITE 后 write/promoted 互换",
+        {"mmr_group": {"write_cluster": "pg_cluster_1",
+                       "promoted_cluster": "pg_cluster_2"}})
+    ops.assert_routing(
+        "mmr_group", "验证 SET CLUSTER WRITE 后的路由投影",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
+    ops.assert_business_route(
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; "
         "SELECT inet_server_port(), current_user;",
         "验证 SET CLUSTER WRITE 后的实际写路由",
-        '业务连接应落到 pg_cluster_1 primary，并返回 postgres 用户',
-        lambda output: str(ops.env.config["database"]["ports"]["mmr1"]) in output
-        and "postgres" in output,
-    )
+        port=ops.env.config["database"]["ports"]["mmr1"], retry_timeout=30)
 
     after_write = ops.workdir / "after-cluster-write.conf"
     after_write.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
@@ -398,14 +415,10 @@ def _run_set_cluster_write_promoted_roundtrip(context):
         lambda output: ("SET CLUSTER" in output or "NO CONFIG CHANGE" in output)
         and "ERROR" not in output,
     )
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "验证 SET CLUSTER PROMOTED 后的运行态",
-        'write cluster 为 pg_cluster_1，promoted cluster 仍为 pg_cluster_2',
-        lambda output: all(value in output for value in (
-            "pg_cluster_1", "pg_cluster_2", "active",
-        )),
-    )
+    ops.assert_groups(
+        "验证 SET CLUSTER PROMOTED 后配置不变（目标已是 write cluster）",
+        {"mmr_group": {"write_cluster": "pg_cluster_1",
+                       "promoted_cluster": "pg_cluster_2"}})
     ops.psql(
         'SET CLUSTER WRITE pg_cluster_2;',
         "恢复 SET CLUSTER WRITE 初始写中心",
@@ -413,14 +426,13 @@ def _run_set_cluster_write_promoted_roundtrip(context):
         lambda output: "SET CLUSTER" in output and "ERROR" not in output,
     )
     ops.diff(before, conf)
-    ops.psql(
-        'SHOW GROUP_ROUTING mmr_group;',
-        "验证 SET CLUSTER WRITE/PROMOTED 恢复后的运行态",
-        'write cluster 为 pg_cluster_2，promoted cluster 为 pg_cluster_1',
-        lambda output: all(value in output for value in (
-            "pg_cluster_2", "pg_cluster_1", "active",
-        )),
-    )
+    ops.assert_groups(
+        "验证 SET CLUSTER WRITE/PROMOTED 恢复后的配置",
+        {"mmr_group": {"write_cluster": "pg_cluster_2",
+                       "promoted_cluster": "pg_cluster_1"}})
+    ops.assert_routing(
+        "mmr_group", "验证恢复后的路由投影",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 
 def _run_set_cluster_parted_active_roundtrip(context):
@@ -428,9 +440,11 @@ def _run_set_cluster_parted_active_roundtrip(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW DATASOURCES;', "查看 cluster 隔离前的节点状态",
-            'pg_1、pg_3 均为 active',
-            lambda output: all(v in output for v in ("pg_1", "pg_3", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看 cluster 隔离前的节点状态",
+        {"pg_1": {"config_status": "active"},
+         "pg_3": {"config_status": "active"}},
+        key="node_name")
     ops.psql('SET CLUSTER PARTED pg_cluster_1;', "隔离 pg_cluster_1",
             '返回 SET CLUSTER',
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
@@ -448,27 +462,28 @@ def _run_set_cluster_parted_active_roundtrip(context):
     )
     ops.diff_contains(before, conf, ('+    status "parted"',),
                      "验证 SET CLUSTER PARTED 的配置 diff")
-    ops.psql('SHOW DATASOURCES;', "验证 cluster 隔离后的运行态",
-            'pg_1、pg_3 均显示 parted',
-            lambda output: all(v in output for v in ("pg_1", "pg_3", "parted")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "验证 cluster 隔离后的运行态",
+        {"pg_1": {"config_status": "parted"},
+         "pg_3": {"config_status": "parted"}},
+        key="node_name")
     ops.psql('SET CLUSTER ACTIVE pg_cluster_1;', "恢复 pg_cluster_1",
             '返回 SET CLUSTER',
             lambda output: "SET CLUSTER" in output and "ERROR" not in output)
     _wait_pg_cluster_ready(
         context, "pg_cluster_1", "pg_1", ("pg_3",),
         "等待 cluster ACTIVE 的即时探测和路由投影完成")
-    ops.psql_business(
+    ops.assert_business_route(
         'SELECT inet_server_port(), current_user;',
         "验证 cluster ACTIVE 后 Single 业务路由恢复",
-        "single_group 重新命中 pg_cluster_1 primary",
-        lambda output: str(ops.env.config["database"]["ports"]["mmr1"]) in output
-        and "postgres" in output,
-        group="single_group",
-    )
+        port=ops.env.config["database"]["ports"]["mmr1"],
+        group="single_group", retry_timeout=30)
     ops.diff(before, conf)
-    ops.psql('SHOW DATASOURCES;', "验证 cluster 恢复后的运行态",
-            'pg_1、pg_3 均恢复 active',
-            lambda output: all(v in output for v in ("pg_1", "pg_3", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "验证 cluster 恢复后的运行态",
+        {"pg_1": {"config_status": "active"},
+         "pg_3": {"config_status": "active"}},
+        key="node_name")
 def _run_refresh_cluster(context):
     ops = context.ops
     db = ops.env.config["database"]
@@ -573,10 +588,9 @@ def _run_write_cluster_format_preservation(context):
     conf = ops.start(transform=_group_fields_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW GROUP_ROUTING mmr_group;', "查看格式保持 WRITE 前的运行态",
-            'pg_cluster_2，pg_cluster_1',
-            lambda output: all(v in output for v in
-                               ("pg_cluster_2", "pg_cluster_1")))
+    ops.assert_routing(
+        "mmr_group", "查看格式保持 WRITE 前的运行态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_1 IN GROUP mmr_group;',
             "切换带特殊格式的 WRITE 字段",
@@ -591,10 +605,9 @@ def _run_write_cluster_format_preservation(context):
              "write格式=%s；promoted格式=%s" %
              (write_line in text, promoted_line in text),
              write_line in text and promoted_line in text)
-    ops.psql('SHOW GROUP_ROUTING mmr_group;', "查看格式保持 WRITE 切换后的运行态",
-            'pg_cluster_1，pg_cluster_2，pg_1 为 write-leader',
-            lambda output: all(v in output for v in
-                               ("pg_cluster_1", "pg_cluster_2", "pg_1", "write-leader")))
+    ops.assert_routing(
+        "mmr_group", "查看格式保持 WRITE 切换后的运行态",
+        write_cluster="pg_cluster_1", write_leader="pg_1")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WRITE pg_2 IN GROUP mmr_group;',
             "恢复带特殊格式的 WRITE 字段",
@@ -602,9 +615,8 @@ def _run_write_cluster_format_preservation(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 WRITE 格式恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW GROUP_ROUTING mmr_group;', "验证格式保持 WRITE 恢复后的运行态",
-            'pg_cluster_2，pg_cluster_1，pg_2 为 write-leader',
-            lambda output: all(v in output for v in
-                               ("pg_cluster_2", "pg_cluster_1", "pg_2", "write-leader")))
+    ops.assert_routing(
+        "mmr_group", "验证格式保持 WRITE 恢复后的运行态",
+        write_cluster="pg_cluster_2", write_leader="pg_2")
 
 

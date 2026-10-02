@@ -10,6 +10,7 @@ except ImportError:
     fcntl = None
 
 from suites.ha_commands.helpers import *
+from platform_regress.clients.psql import parse_psql_table
 __all__ = ['_run_application_name_persistence', '_run_backup_directory_permissions', '_run_backup_path_regular_file_rejected', '_run_backup_symlink_rejected', '_run_candidate_validation_rejected', '_run_config_backup_dir', '_run_crlf_format_preservation', '_run_duplicate_and_conflicting_weights', '_run_duplicate_object_rejected_after_start', '_run_eof_without_newline_preservation', '_run_external_edit_conflict', '_run_file_metadata_preservation', '_run_group_defaults_persistence', '_run_hash_inside_string_preservation', '_run_include_rejected_after_start', '_run_locked_disk_object_resolution', '_run_locked_invalid_numeric_token', '_run_readonly_config_directory', '_run_readonly_config_file', '_run_reload_failure_rollback', '_run_reload_restore_failure', '_run_rename_failure_protection', '_run_single_line_block_preservation', '_run_single_read_only_persistence', '_run_stable_lock_contention', '_run_stable_lock_directory_rejected', '_run_stable_lock_permissions', '_run_stable_lock_symlink_rejected', '_run_status_format_preservation', '_run_weight_format_preservation']
 
 
@@ -19,9 +20,7 @@ def _run_readonly_config_file(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     os.chmod(conf, 0o444)
-    ops.psql('SHOW NODES;', "查看只读配置文件命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置文件命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "配置文件无写权限时拒绝持久化命令",
@@ -30,9 +29,7 @@ def _run_readonly_config_file(context):
     ops.assert_no_backup_created(backup, conf,
                                 "验证只读配置文件命令未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看只读配置文件拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置文件拒绝后的运行态", {"pg_3": {"weight": "10"}})
     os.chmod(conf, 0o640)
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "恢复配置文件权限后修改权重",
@@ -40,9 +37,7 @@ def _run_readonly_config_file(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证配置文件权限修复后的修改备份")
-    ops.psql('SHOW NODES;', "查看配置文件权限修复后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看配置文件权限修复后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复只读配置文件用例权重",
             "返回 SET NODE 且命令不报错",
@@ -50,9 +45,7 @@ def _run_readonly_config_file(context):
     ops.assert_backup_created(backup, conf,
                              "验证只读配置文件用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看只读配置文件用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置文件用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_hash_inside_string_preservation(context):
@@ -61,9 +54,7 @@ def _run_hash_inside_string_preservation(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     marker = 'log_syslog_ident "fbase#inside-string"'
-    ops.psql('SHOW NODES;', "查看字符串 # 保持命令前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看字符串 # 保持命令前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改包含 # 字符串配置中的 weight",
             '返回 SET NODE 且命令不报错',
@@ -73,18 +64,14 @@ def _run_hash_inside_string_preservation(context):
     ops.check("验证字符串内部 # 未被当作注释",
              "log_syslog_ident 字符串逐字保持",
              "字符串存在=%s" % (marker in text), marker in text)
-    ops.psql('SHOW NODES;', "查看字符串 # 场景修改后的运行态",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看字符串 # 场景修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复包含 # 字符串配置中的 weight",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证字符串 # 场景恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证字符串 # 场景恢复后的运行态",
-            'pg_3 的 weight 恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证字符串 # 场景恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_group_defaults_persistence(context):
@@ -117,8 +104,7 @@ def _run_group_defaults_persistence(context):
                 "%s 使用默认 READ_WRITE 且存在 VALID 路由" % group,
                 lambda output, group=group, mode=mode, access=access:
                 all(v in output for v in (group, mode, "active")))
-    ops.psql('SHOW NODES;', "查看默认字段场景修改前的节点运行态", "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看默认字段场景修改前的节点运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "默认字段配置下修改节点权重",
             "返回 SET NODE 且命令不报错",
@@ -132,16 +118,14 @@ def _run_group_defaults_persistence(context):
              changed.replace('    weight 11', '    weight 10', 1) == initial)
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证默认字段场景的权重配置 diff")
-    ops.psql('SHOW NODES;', "查看默认字段场景修改后的节点运行态", "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看默认字段场景修改后的节点运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复默认字段配置下的节点权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证默认字段场景恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看默认字段场景恢复后的节点运行态", "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看默认字段场景恢复后的节点运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_stable_lock_symlink_rejected(context):
@@ -156,9 +140,7 @@ def _run_stable_lock_symlink_rejected(context):
     lock_target.write_text("must remain unchanged\n", encoding="utf-8")
     target_before = lock_target.read_bytes()
     lock_path.symlink_to(lock_target.name)
-    ops.psql('SHOW NODES;', "查看锁符号链接命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁符号链接命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "拒绝通过稳定锁符号链接更新配置",
@@ -171,9 +153,7 @@ def _run_stable_lock_symlink_rejected(context):
              "lock-target 内容逐字节不变",
              "target unchanged=%s" % (lock_target.read_bytes() == target_before),
              lock_target.read_bytes() == target_before)
-    ops.psql('SHOW NODES;', "查看锁符号链接拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁符号链接拒绝后的运行态", {"pg_3": {"weight": "10"}})
     lock_path.unlink()
     lock_path.touch(mode=0o600)
     os.chmod(lock_path, 0o600)
@@ -183,9 +163,7 @@ def _run_stable_lock_symlink_rejected(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证恢复普通锁后的配置备份")
-    ops.psql('SHOW NODES;', "查看普通锁恢复后修改的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看普通锁恢复后修改的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复锁符号链接用例节点权重",
             "返回 SET NODE 且命令不报错",
@@ -193,9 +171,7 @@ def _run_stable_lock_symlink_rejected(context):
     ops.assert_backup_created(backup, conf,
                              "验证锁符号链接用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看锁符号链接用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁符号链接用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_file_metadata_preservation(context):
@@ -205,9 +181,7 @@ def _run_file_metadata_preservation(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     initial_stat = conf.stat()
-    ops.psql('SHOW NODES;', "查看文件元数据场景命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看文件元数据场景命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改 0640 配置文件中的节点权重",
             "返回 SET NODE 且命令不报错",
@@ -235,9 +209,7 @@ def _run_file_metadata_preservation(context):
              metadata_ok)
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证文件元数据场景配置 diff")
-    ops.psql('SHOW NODES;', "查看文件元数据场景命令后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看文件元数据场景命令后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复 0640 配置文件中的节点权重",
             "返回 SET NODE 且命令不报错",
@@ -252,9 +224,7 @@ def _run_file_metadata_preservation(context):
              stat.S_IMODE(restored_stat.st_mode) == expected_mode and
              restored_stat.st_uid == initial_stat.st_uid and
              restored_stat.st_gid == initial_stat.st_gid)
-    ops.psql('SHOW NODES;', "查看文件元数据场景恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看文件元数据场景恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_duplicate_and_conflicting_weights(context):
@@ -262,9 +232,7 @@ def _run_duplicate_and_conflicting_weights(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW NODES;', "查看重复同值命令前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看重复同值命令前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql(
         'SET NODE WEIGHT pg_3=11,pg_3=11;',
@@ -275,18 +243,14 @@ def _run_duplicate_and_conflicting_weights(context):
     ops.assert_backup_created(backup, conf, "验证重复同值 WEIGHT 的配置备份")
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证重复同值只产生一次配置修改")
-    ops.psql('SHOW NODES;', "查看重复同值命令后的节点权重",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看重复同值命令后的节点权重", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复 pg_3 初始权重",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证恢复 WEIGHT 的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看冲突 WEIGHT 命令前的节点权重",
-            'pg_3 的 weight 已恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看冲突 WEIGHT 命令前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error(
         'SET NODE WEIGHT pg_3=11,pg_3=12;',
@@ -296,9 +260,7 @@ def _run_duplicate_and_conflicting_weights(context):
     )
     ops.assert_no_backup_created(backup, conf, "验证冲突 WEIGHT 未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证冲突 WEIGHT 命令后的节点权重",
-            'pg_3 的 weight 仍为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证冲突 WEIGHT 命令后的节点权重", {"pg_3": {"weight": "10"}})
 
 
 def _run_eof_without_newline_preservation(context):
@@ -306,9 +268,7 @@ def _run_eof_without_newline_preservation(context):
     conf = ops.start(transform=_without_final_newline)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看 EOF 格式修改前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看 EOF 格式修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改 EOF 无换行配置中的 weight",
             '返回 SET NODE 且命令不报错',
@@ -319,18 +279,14 @@ def _run_eof_without_newline_preservation(context):
              "配置最后一个字节不是 CR 或 LF",
              "结尾字节=%r" % (data[-1:] if data else b""),
              bool(data) and not data.endswith((b"\n", b"\r")))
-    ops.psql('SHOW NODES;', "查看 EOF 格式修改后的运行态",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看 EOF 格式修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复 EOF 无换行配置中的 weight",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 EOF 格式恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证 EOF 格式恢复后的运行态",
-            'pg_3 的 weight 恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证 EOF 格式恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_candidate_validation_rejected(context):
@@ -340,9 +296,7 @@ def _run_candidate_validation_rejected(context):
         conf, 'not_a_real_parameter "candidate validation must reject this"')
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看候选校验失败命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看候选校验失败命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "验证非法候选配置拒绝高可用命令",
@@ -359,9 +313,7 @@ def _run_candidate_validation_rejected(context):
              "workdir 中不遗留候选 .tmp 文件",
              "candidate temp files=%s" % temp_files,
              not temp_files)
-    ops.psql('SHOW NODES;', "查看候选校验失败命令后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看候选校验失败命令后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_config_backup_dir(context):
@@ -430,9 +382,7 @@ def _run_config_backup_dir(context):
         "配置项显式指定后不再创建默认 conf-backup",
         "conf-backup 存在=%s" % default_dir.exists(),
         not default_dir.exists())
-    ops.psql('SHOW NODES;', "查看修改前的节点权重",
-            "pg_3 的初始 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup_explicit = ops.backup_checkpoint(conf, backup_dir=dir_explicit)
     backup_default = ops.backup_checkpoint(conf, backup_dir=default_dir)
     ops.psql('SET NODE WEIGHT pg_3=11;', "显式备份目录下修改 pg_3 权重为 11",
@@ -443,9 +393,7 @@ def _run_config_backup_dir(context):
     check_backup_file(dir_explicit, name, "验证显式目录备份文件命名和权限")
     ops.assert_no_backup_created(
         backup_default, conf, "验证默认 conf-backup 未产生备份")
-    ops.psql('SHOW NODES;', "查看显式目录用例修改后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看显式目录用例修改后的运行态", {"pg_3": {"weight": "11"}})
     backup_explicit = ops.backup_checkpoint(conf, backup_dir=dir_explicit)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复显式目录用例权重",
             "返回 SET NODE 且命令不报错",
@@ -567,10 +515,8 @@ def _run_config_backup_dir(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup_explicit, conf, "验证恢复备份写入显式目录")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看用例结束时的节点权重",
-            "pg_3 和 pg_4 weight 均恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10)
-            and _node_has_weight(output, 'pg_4', 10))
+    ops.assert_nodes("查看用例结束时的节点权重",
+                     {"pg_3": {"weight": "10"}, "pg_4": {"weight": "10"}})
 
     ops.record_step(
         "停止 fbasecman 准备启动期校验", "停止当前实例",
@@ -622,16 +568,18 @@ def _run_reload_restore_failure(context):
     ops.check(
         "验证结构化发布后的运行态",
         "pg_3 运行态 weight 为 11",
-        "runtime weight is 11=%s" % _node_has_weight(runtime_state, 'pg_3', 11),
-        _node_has_weight(runtime_state, 'pg_3', 11))
+        "runtime weight is 11=%s" % (lambda rows: bool(rows) and
+            rows.get("pg_3", {}).get("weight") == "11")(
+            {r.get("node_name"): r for r in parse_psql_table(runtime_state)}),
+        (lambda rows: bool(rows) and
+            rows.get("pg_3", {}).get("weight") == "11")(
+            {r.get("node_name"): r for r in parse_psql_table(runtime_state)}))
     conf.write_bytes(before.read_bytes())
     ops.psql('RELOAD;', "测试清理：恢复初始配置并重新 Reload",
             "返回 RELOAD，运行态与磁盘重新一致",
             lambda output: "RELOAD" in output and "ERROR" not in output)
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证故障清理后的运行态",
-            "pg_3 weight 为初始值 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("验证故障清理后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_locked_disk_object_resolution(context):
@@ -639,26 +587,30 @@ def _run_locked_disk_object_resolution(context):
     conf = ops.start(transform=_rename_disk_datasource)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW DATASOURCES;', "查看磁盘对象重命名前运行态", "pg_3_disk 为 active replica",
-            lambda output: all(v in output for v in ("pg_3_disk", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看磁盘对象重命名前运行态",
+        {"pg_3_disk": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3_disk=11;', "按加锁后磁盘对象名称修改权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证磁盘对象名称修改备份")
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'), "验证磁盘对象名称权重 diff")
-    ops.psql('SHOW DATASOURCES;', "查看磁盘对象名称修改后的运行态",
-            "pg_3_disk 仍为 active replica",
-            lambda output: all(v in output for v in ("pg_3_disk", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看磁盘对象名称修改后的运行态",
+        {"pg_3_disk": {"config_status": "active", "weight": "11"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3_disk=10;', "恢复磁盘对象名称节点权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证磁盘对象名称恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW DATASOURCES;', "查看磁盘对象名称恢复后的运行态",
-            "pg_3_disk 恢复为 active replica",
-            lambda output: all(v in output for v in ("pg_3_disk", "active")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看磁盘对象名称恢复后的运行态",
+        {"pg_3_disk": {"config_status": "active", "weight": "10"}},
+        key="node_name")
 
 
 def _run_backup_symlink_rejected(context):
@@ -672,9 +624,7 @@ def _run_backup_symlink_rejected(context):
     backup_dir = ops.workdir / "conf-backup"
     _remove_test_path(backup_dir)
     backup_dir.symlink_to(target.name, target_is_directory=True)
-    ops.psql('SHOW NODES;', "查看备份目录符号链接命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份目录符号链接命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "拒绝通过 conf-backup 符号链接创建备份",
@@ -690,9 +640,7 @@ def _run_backup_symlink_rejected(context):
              "backup-target 保持为空",
              "backup-target files=%s" % target_files,
              not target_files)
-    ops.psql('SHOW NODES;', "查看备份目录符号链接拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份目录符号链接拒绝后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_readonly_config_directory(context):
@@ -700,9 +648,7 @@ def _run_readonly_config_directory(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看只读配置目录命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置目录命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     os.chmod(ops.workdir, 0o500)
     try:
@@ -723,18 +669,14 @@ def _run_readonly_config_directory(context):
              "workdir 中不遗留 .tmp 文件",
              "candidate temp files=%s" % temp_files,
              not temp_files)
-    ops.psql('SHOW NODES;', "查看只读配置目录拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置目录拒绝后的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "恢复配置目录权限后修改权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证配置目录修复后的修改备份")
-    ops.psql('SHOW NODES;', "查看配置目录修复后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看配置目录修复后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复只读配置目录用例权重",
             "返回 SET NODE 且命令不报错",
@@ -742,9 +684,7 @@ def _run_readonly_config_directory(context):
     ops.assert_backup_created(backup, conf,
                              "验证只读配置目录用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看只读配置目录用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看只读配置目录用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_crlf_format_preservation(context):
@@ -752,9 +692,7 @@ def _run_crlf_format_preservation(context):
     conf = ops.start(transform=_as_crlf)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看 CRLF 配置修改前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看 CRLF 配置修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改 CRLF 配置中的 weight",
             '返回 SET NODE 且命令不报错',
@@ -766,18 +704,14 @@ def _run_crlf_format_preservation(context):
              "CRLF数量=%d；裸LF数量=%d" %
              (data.count(b"\r\n"), data.replace(b"\r\n", b"").count(b"\n")),
              _has_only_crlf(data))
-    ops.psql('SHOW NODES;', "查看 CRLF 配置修改后的运行态",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看 CRLF 配置修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复 CRLF 配置中的 weight",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 CRLF 恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证 CRLF 配置恢复后的运行态",
-            'pg_3 的 weight 恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证 CRLF 配置恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_stable_lock_permissions(context):
@@ -788,9 +722,7 @@ def _run_stable_lock_permissions(context):
     lock_path = ops.workdir / 'conf-backup' / (conf.name + '.lock')
     lock_path.touch(mode=0o600, exist_ok=True)
     os.chmod(lock_path, 0o666)
-    ops.psql('SHOW NODES;', "查看不安全锁权限命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看不安全锁权限命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "拒绝使用 other-writable 的稳定锁",
@@ -799,9 +731,7 @@ def _run_stable_lock_permissions(context):
     ops.assert_no_backup_created(backup, conf,
                                 "验证不安全锁权限命令未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看不安全锁权限拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看不安全锁权限拒绝后的运行态", {"pg_3": {"weight": "10"}})
     os.chmod(lock_path, 0o600)
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修复稳定锁权限后修改权重",
@@ -809,9 +739,7 @@ def _run_stable_lock_permissions(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证修复锁权限后的修改备份")
-    ops.psql('SHOW NODES;', "查看修复稳定锁权限后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看修复稳定锁权限后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复稳定锁权限用例权重",
             "返回 SET NODE 且命令不报错",
@@ -819,9 +747,7 @@ def _run_stable_lock_permissions(context):
     ops.assert_backup_created(backup, conf,
                              "验证稳定锁权限用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看稳定锁权限用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看稳定锁权限用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_application_name_persistence(context):
@@ -837,10 +763,8 @@ def _run_application_name_persistence(context):
               'application_name "pg_240"' in _datasource_block(initial, 'pg_3')),
              'application_name' not in _datasource_block(initial, 'pg_1') and
              'application_name "pg_240"' in _datasource_block(initial, 'pg_3'))
-    ops.psql('SHOW NODES;', "查看 application_name 场景修改前的运行态",
-            "pg_1、pg_3 weight 均为 10",
-            lambda output: (_node_has_weight(output, 'pg_1', 10) and
-                            _node_has_weight(output, 'pg_3', 10)))
+    ops.assert_nodes("查看 application_name 场景修改前的运行态",
+                     {"pg_1": {"weight": "10"}, "pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_1=11,pg_3=11;',
             "同时修改默认和显式 application_name 节点",
@@ -857,10 +781,8 @@ def _run_application_name_persistence(context):
              'application_name "pg_240"' in _datasource_block(changed, 'pg_3'))
     ops.diff_contains(before, conf, ('+    weight 11',),
                      "验证 application_name 场景仅修改权重")
-    ops.psql('SHOW NODES;', "查看 application_name 场景修改后的运行态",
-            "pg_1、pg_3 weight 均为 11",
-            lambda output: (_node_has_weight(output, 'pg_1', 11) and
-                            _node_has_weight(output, 'pg_3', 11)))
+    ops.assert_nodes("查看 application_name 场景修改后的运行态",
+                     {"pg_1": {"weight": "11"}, "pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_1=10,pg_3=10;',
             "恢复默认和显式 application_name 节点权重",
@@ -868,10 +790,8 @@ def _run_application_name_persistence(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 application_name 场景恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看 application_name 场景恢复后的运行态",
-            "pg_1、pg_3 weight 均恢复为 10",
-            lambda output: (_node_has_weight(output, 'pg_1', 10) and
-                            _node_has_weight(output, 'pg_3', 10)))
+    ops.assert_nodes("查看 application_name 场景恢复后的运行态",
+                     {"pg_1": {"weight": "10"}, "pg_3": {"weight": "10"}})
 
 
 def _run_rename_failure_protection(context):
@@ -893,9 +813,7 @@ def _run_rename_failure_protection(context):
     conf = ops.start(env=env)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看 rename 故障命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看 rename 故障命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "候选文件 renameat 返回 EIO 时拒绝提交",
@@ -912,9 +830,7 @@ def _run_rename_failure_protection(context):
              "hook 命中一次以上且 workdir 无候选 .tmp 文件",
              "hook_hit=%s candidate_temp_files=%s" % (hook_hit, temp_files),
              hook_hit and not temp_files)
-    ops.psql('SHOW NODES;', "查看 rename 失败命令后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看 rename 失败命令后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_duplicate_object_rejected_after_start(context):
@@ -926,16 +842,14 @@ def _run_duplicate_object_rejected_after_start(context):
     end = text.index('\n}\n', start) + 3
     conf.write_text(text + "\n" + text[start:end] + "\n", encoding="utf-8")
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看同名 datasource 注入前的运行态", "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看同名 datasource 注入前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;', "拒绝包含同名 datasource 的配置写入",
                   '返回重复对象配置错误',
                   lambda output: "ERROR:" in output and "invalid or ambiguous" in output)
     ops.assert_no_backup_created(backup, conf)
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看同名对象拒绝后的运行态", "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看同名对象拒绝后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_stable_lock_contention(context):
@@ -943,9 +857,7 @@ def _run_stable_lock_contention(context):
     conf = ops.start()
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看稳定锁占用命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看稳定锁占用命令前的运行态", {"pg_3": {"weight": "10"}})
     lock_path = ops.workdir / 'conf-backup' / (conf.name + '.lock')
     lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
     if fcntl is not None:
@@ -970,18 +882,14 @@ def _run_stable_lock_contention(context):
     ops.assert_no_backup_created(backup, conf,
                                 "验证锁冲突命令未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看稳定锁冲突后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看稳定锁冲突后的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "锁释放后修改节点权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证锁释放后修改的配置备份")
-    ops.psql('SHOW NODES;', "查看锁释放后修改的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看锁释放后修改的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复稳定锁用例节点权重",
             "返回 SET NODE 且命令不报错",
@@ -989,9 +897,7 @@ def _run_stable_lock_contention(context):
     ops.assert_backup_created(backup, conf,
                              "验证稳定锁用例恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看稳定锁用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看稳定锁用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_include_rejected_after_start(context):
@@ -1001,16 +907,14 @@ def _run_include_rejected_after_start(context):
     _inject_after_start(conf, 'include "%s";' % (ops.workdir / "included.conf"))
     before.write_bytes(conf.read_bytes())
     (ops.workdir / "included.conf").write_text("# injected include\n", encoding="utf-8")
-    ops.psql('SHOW NODES;', "查看 include 注入前的运行态", "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看 include 注入前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;', "拒绝包含 include 的配置写入",
                   '返回 include directives and cannot be updated 错误',
                   lambda output: "include" in output and "cannot be updated" in output)
     ops.assert_no_backup_created(backup, conf)
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看 include 拒绝后的运行态", "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看 include 拒绝后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_status_format_preservation(context):
@@ -1018,9 +922,10 @@ def _run_status_format_preservation(context):
     conf = ops.start(transform=_status_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW DATASOURCES;', "查看格式保持 PARTED 前的运行态",
-            'pg_3 为 active',
-            lambda output: "pg_3" in output and "active" in output)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看格式保持 PARTED 前的运行态",
+        {"pg_3": {"config_status": "active"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE PARTED pg_3;', "修改带特殊格式的 status 为 PARTED",
             '返回 SET NODE 且命令不报错',
@@ -1031,9 +936,10 @@ def _run_status_format_preservation(context):
     ops.check("验证 status PARTED 周边格式保持",
              "保留 tab 缩进、多个空格和行尾注释",
              "格式行存在=%s" % (parted_line in text), parted_line in text)
-    ops.psql('SHOW DATASOURCES;', "查看格式保持 PARTED 后的运行态",
-            'pg_3 为 parted',
-            lambda output: "pg_3" in output and "parted" in output)
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看格式保持 PARTED 后的运行态",
+        {"pg_3": {"config_status": "parted"}},
+        key="node_name")
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE ACTIVE pg_3;', "恢复带特殊格式的 status 为 ACTIVE",
             '返回 SET NODE 且命令不报错',
@@ -1051,18 +957,20 @@ def _run_single_read_only_persistence(context):
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
     standby_port = str(ops.env.config["database"]["ports"]["mmr1_standby1"])
-    ops.psql('SHOW GROUP_ROUTING single_group;', "查看 single read_only 命令前运行态",
-            "single_group 为 single，候选 pg_3 为 active",
-            lambda output: all(v in output for v in
-                               ("single_group", "single", "pg_3", "replica", "active")))
-    ops.psql_business(
+    ops.assert_table(
+        'SHOW GROUP_ROUTING single_group;',
+        "查看 single read_only 命令前运行态",
+        {"postgres|pg_3": {"group_mode": "single",
+                           "effective_grouprole": "replica",
+                           "effective_state": "active",
+                           "route_status": "AVAILABLE"}},
+        key=("user_name", "candidate_node"), retry_timeout=30)
+    ops.assert_business_route(
         'SELECT inet_server_addr(), inet_server_port(), pg_is_in_recovery();',
         "验证 single read_only 修改前的真实读路由",
-        "连接落到 pg_3 备库且 pg_is_in_recovery 为 true",
-        lambda output: standby_port in output and " t" in output,
-        group="single_group")
-    ops.psql('SHOW NODES;', "查看 single read_only 修改前的节点权重", "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+        port=standby_port, recovery=True,
+        group="single_group", retry_timeout=30)
+    ops.assert_nodes("查看 single read_only 修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "single read_only 配置下修改备库权重",
             "返回 SET NODE 且命令不报错",
@@ -1070,10 +978,13 @@ def _run_single_read_only_persistence(context):
     ops.assert_backup_created(backup, conf, "验证 single read_only 修改备份")
     ops.diff_contains(before, conf, ('-    weight 10', '+    weight 11'),
                      "验证 single read_only 场景权重配置 diff")
-    ops.psql('SHOW GROUP_ROUTING single_group;', "查看 single read_only 命令后运行态",
-            "single_group 仍为 READ_ONLY，pg_3 仍为 active replica",
-            lambda output: all(v in output for v in
-                               ("single_group", "pg_3", "replica", "active")))
+    ops.assert_table(
+        'SHOW GROUP_ROUTING single_group;',
+        "查看 single read_only 命令后运行态",
+        {"postgres|pg_3": {"effective_grouprole": "replica",
+                           "effective_state": "active",
+                           "route_status": "AVAILABLE"}},
+        key=("user_name", "candidate_node"), retry_timeout=30)
     ops.psql_business_error(
         'CREATE TEMP TABLE ha_single_ro_test(i int);',
         "验证 single read_only 拒绝业务写 SQL",
@@ -1086,10 +997,13 @@ def _run_single_read_only_persistence(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证 single read_only 恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW GROUP_ROUTING single_group;', "查看 single read_only 恢复后运行态",
-            "single_group 仍为 READ_ONLY，pg_3 为 active replica",
-            lambda output: all(v in output for v in
-                               ("single_group", "pg_3", "replica", "active")))
+    ops.assert_table(
+        'SHOW GROUP_ROUTING single_group;',
+        "查看 single read_only 恢复后运行态",
+        {"postgres|pg_3": {"effective_grouprole": "replica",
+                           "effective_state": "active",
+                           "route_status": "AVAILABLE"}},
+        key=("user_name", "candidate_node"), retry_timeout=30)
 
 
 def _run_reload_failure_rollback(context):
@@ -1105,14 +1019,17 @@ def _run_reload_failure_rollback(context):
         "先后验证 SHOW、配置备份、配置 diff 和恢复后的运行态",
         "PASS",
     )
-    ops.psql('SHOW DATASOURCES;', "查看唯一只读副本 PARTED 前的 datasource 状态",
-            "pg_3 为 active replica",
-            lambda output: all(v in output for v in
-                               ("pg_3", "active")))
-    ops.psql('SHOW GROUP_ROUTING single_group;', "查看唯一只读副本 PARTED 前的路由",
-            "single_group 为 VALID READ_ONLY，候选为 pg_3 replica",
-            lambda output: all(v in output for v in
-                               ("single_group", "active", "pg_3")))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看唯一只读副本 PARTED 前的 datasource 状态",
+        {"pg_3": {"config_status": "active"}},
+        key="node_name")
+    ops.assert_table(
+        'SHOW GROUP_ROUTING single_group;',
+        "查看唯一只读副本 PARTED 前的路由",
+        {"postgres|pg_3": {"effective_grouprole": "replica",
+                           "effective_state": "active",
+                           "route_status": "AVAILABLE"}},
+        key=("user_name", "candidate_node"), retry_timeout=30)
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE PARTED pg_3;', "PARTED single_group 当前唯一只读副本 pg_3",
             "返回 SET NODE 且命令不报错",
@@ -1121,14 +1038,16 @@ def _run_reload_failure_rollback(context):
                              "验证唯一只读副本 PARTED 的配置备份")
     ops.diff_contains(before, conf, ('-    status "active"', '+    status "parted"'),
                      "验证 pg_3 PARTED 配置 diff")
-    ops.psql('SHOW DATASOURCES;', "查看唯一只读副本 PARTED 后的状态",
-            "pg_3 为 parted replica",
-            lambda output: all(v in output for v in
-                               ("pg_3", "parted")))
-    ops.psql('SHOW GROUP_ROUTING single_group;', "查看唯一只读副本 PARTED 后的路由",
-            "single_group 为 READ_ONLY，且无 replica 时回退到 pg_1 primary",
-            lambda output: ("single_group" in output and "pg_1" in output and "primary" in output
-                            and "candidate_node" in output))
+    ops.assert_table(
+        'SHOW DATASOURCES;', "查看唯一只读副本 PARTED 后的状态",
+        {"pg_3": {"config_status": "parted"}},
+        key="node_name")
+    ops.assert_table(
+        'SHOW GROUP_ROUTING single_group;',
+        "查看唯一只读副本 PARTED 后的路由（回退 primary）",
+        {"postgres|pg_1": {"effective_grouprole": "primary",
+                           "route_status": "AVAILABLE"}},
+        key=("user_name", "candidate_node"), retry_timeout=30)
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE ACTIVE pg_3;', "恢复 single_group 唯一只读副本 pg_3",
             "返回 SET NODE 且命令不报错",
@@ -1151,8 +1070,7 @@ def _run_locked_invalid_numeric_token(context):
     conf.write_text(text[:weight] + '    weight 10abc' + text[weight + len('    weight 10'):], encoding="utf-8")
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看非法数字 token 命令前的运行态", "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看非法数字 token 命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=10;',
                   "拒绝锁内解析的 10abc 非法数字 token",
@@ -1160,8 +1078,7 @@ def _run_locked_invalid_numeric_token(context):
                   lambda output: "configuration objects" in output and "invalid or ambiguous" in output)
     ops.assert_no_backup_created(backup, conf, "验证非法数字 token 未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看非法数字 token 拒绝后的运行态", "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看非法数字 token 拒绝后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_external_edit_conflict(context):
@@ -1186,9 +1103,7 @@ def _run_external_edit_conflict(context):
     conf = ops.start(env=env)
     before = ops.workdir / "before-command.conf"
     before.write_bytes(conf.read_bytes())
-    ops.psql('SHOW NODES;', "查看外部编辑冲突命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看外部编辑冲突命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "外部编辑发生时拒绝覆盖正式配置",
@@ -1209,9 +1124,7 @@ def _run_external_edit_conflict(context):
     ops.diff_contains(before, conf,
                      ('+# external edit injected by hook',),
                      "验证配置 diff 仅包含外部编辑")
-    ops.psql('SHOW NODES;', "查看外部编辑冲突后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看外部编辑冲突后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_weight_format_preservation(context):
@@ -1219,9 +1132,7 @@ def _run_weight_format_preservation(context):
     conf = ops.start(transform=_weight_with_format)
     before = ops.workdir / "before-command.conf"
     before.write_text(conf.read_text(encoding="utf-8"), encoding="utf-8")
-    ops.psql('SHOW NODES;', "查看格式保持命令前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看格式保持命令前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改带特殊格式的 weight 字段",
             '返回 SET NODE 且命令不报错',
@@ -1232,18 +1143,14 @@ def _run_weight_format_preservation(context):
              "保留 tab 缩进、多个空格和 # keep-weight-format 注释",
              "格式行存在=%s" % ('\tweight    11    # keep-weight-format' in text),
              '\tweight    11    # keep-weight-format' in text)
-    ops.psql('SHOW NODES;', "查看格式保持修改后的运行态",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看格式保持修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复带特殊格式的 weight 字段",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证格式保持恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证格式保持恢复后的运行态",
-            'pg_3 的 weight 恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证格式保持恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_single_line_block_preservation(context):
@@ -1253,9 +1160,7 @@ def _run_single_line_block_preservation(context):
     before.write_bytes(conf.read_bytes())
     initial_line = next(line for line in conf.read_text(encoding="utf-8").splitlines()
                         if line.startswith('datasources "pg_3" {'))
-    ops.psql('SHOW NODES;', "查看单行 block 修改前的节点权重",
-            'pg_3 的 weight 为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("查看单行 block 修改前的节点权重", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "修改单行 datasource block 的 weight",
             '返回 SET NODE 且命令不报错',
@@ -1269,18 +1174,14 @@ def _run_single_line_block_preservation(context):
              "修改后整行等于初始行仅将 weight 10 替换为 weight 11",
              "单行完全匹配=%s" % (changed_line == expected_line),
              changed_line == expected_line)
-    ops.psql('SHOW NODES;', "查看单行 block 修改后的运行态",
-            'pg_3 的 weight 为 11',
-            lambda output: _node_has_weight(output, "pg_3", 11))
+    ops.assert_nodes("查看单行 block 修改后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复单行 datasource block 的 weight",
             '返回 SET NODE 且命令不报错',
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证单行 block 恢复的配置备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "验证单行 block 恢复后的运行态",
-            'pg_3 的 weight 恢复为 10',
-            lambda output: _node_has_weight(output, "pg_3", 10))
+    ops.assert_nodes("验证单行 block 恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_backup_path_regular_file_rejected(context):
@@ -1292,9 +1193,7 @@ def _run_backup_path_regular_file_rejected(context):
     sentinel = b"must remain a regular file\n"
     _remove_test_path(backup_path)
     backup_path.write_bytes(sentinel)
-    ops.psql('SHOW NODES;', "查看备份路径普通文件命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份路径普通文件命令前的运行态", {"pg_3": {"weight": "10"}})
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "conf-backup 为普通文件时拒绝配置更新",
                   "返回配置更新失败和 Not a directory",
@@ -1307,9 +1206,7 @@ def _run_backup_path_regular_file_rejected(context):
              "is_file=%s content_unchanged=%s" %
              (backup_path.is_file(), backup_path.read_bytes() == sentinel),
              backup_path.is_file() and backup_path.read_bytes() == sentinel)
-    ops.psql('SHOW NODES;', "查看备份路径普通文件拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份路径普通文件拒绝后的运行态", {"pg_3": {"weight": "10"}})
     backup_path.unlink()
     backup_path.mkdir(mode=0o700)
     backup = ops.backup_checkpoint(conf)
@@ -1318,9 +1215,7 @@ def _run_backup_path_regular_file_rejected(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证备份路径修复后的修改备份")
-    ops.psql('SHOW NODES;', "查看备份路径修复后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看备份路径修复后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复备份路径类型用例权重",
             "返回 SET NODE 且命令不报错",
@@ -1328,9 +1223,7 @@ def _run_backup_path_regular_file_rejected(context):
     ops.assert_backup_created(backup, conf,
                              "验证备份路径类型用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看备份路径类型用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份路径类型用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_backup_directory_permissions(context):
@@ -1342,17 +1235,13 @@ def _run_backup_directory_permissions(context):
     _remove_test_path(backup_dir)
     backup_dir.mkdir(mode=0o700)
     os.chmod(backup_dir, 0o777)
-    ops.psql('SHOW NODES;', "查看不安全备份目录命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看不安全备份目录命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=11;', "使用可写的 conf-backup 目录修改权重",
             "返回 SET NODE 且命令不报错",
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf, "验证可写备份目录下的修改备份")
-    ops.psql('SHOW NODES;', "查看可写备份目录后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看可写备份目录后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复备份目录权限用例权重",
             "返回 SET NODE 且命令不报错",
@@ -1360,9 +1249,7 @@ def _run_backup_directory_permissions(context):
     ops.assert_backup_created(backup, conf,
                              "验证备份目录权限用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看备份目录权限用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看备份目录权限用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 
 def _run_stable_lock_directory_rejected(context):
@@ -1374,9 +1261,7 @@ def _run_stable_lock_directory_rejected(context):
     if lock_path.exists() or lock_path.is_symlink():
         lock_path.unlink()
     lock_path.mkdir(mode=0o700)
-    ops.psql('SHOW NODES;', "查看锁目录命令前的运行态",
-            "pg_3 weight 为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁目录命令前的运行态", {"pg_3": {"weight": "10"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql_error('SET NODE WEIGHT pg_3=11;',
                   "稳定锁为目录时拒绝配置更新",
@@ -1385,9 +1270,7 @@ def _run_stable_lock_directory_rejected(context):
     ops.assert_no_backup_created(backup, conf,
                                 "验证锁目录命令未创建备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看锁目录拒绝后的运行态",
-            "pg_3 weight 仍为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁目录拒绝后的运行态", {"pg_3": {"weight": "10"}})
     lock_path.rmdir()
     lock_path.touch(mode=0o600)
     os.chmod(lock_path, 0o600)
@@ -1397,9 +1280,7 @@ def _run_stable_lock_directory_rejected(context):
             lambda output: "SET NODE" in output and "ERROR" not in output)
     ops.assert_backup_created(backup, conf,
                              "验证锁目录修复后的修改备份")
-    ops.psql('SHOW NODES;', "查看锁目录修复后的运行态",
-            "pg_3 weight 为 11",
-            lambda output: _node_has_weight(output, 'pg_3', 11))
+    ops.assert_nodes("查看锁目录修复后的运行态", {"pg_3": {"weight": "11"}})
     backup = ops.backup_checkpoint(conf)
     ops.psql('SET NODE WEIGHT pg_3=10;', "恢复锁目录用例节点权重",
             "返回 SET NODE 且命令不报错",
@@ -1407,8 +1288,6 @@ def _run_stable_lock_directory_rejected(context):
     ops.assert_backup_created(backup, conf,
                              "验证锁目录用例恢复备份")
     ops.diff(before, conf)
-    ops.psql('SHOW NODES;', "查看锁目录用例恢复后的运行态",
-            "pg_3 weight 恢复为 10",
-            lambda output: _node_has_weight(output, 'pg_3', 10))
+    ops.assert_nodes("查看锁目录用例恢复后的运行态", {"pg_3": {"weight": "10"}})
 
 

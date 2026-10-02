@@ -5,7 +5,6 @@ suite registry, and psql client helpers — the generic machinery products build
 """
 
 import os
-from pathlib import Path
 
 import pytest
 import yaml
@@ -20,7 +19,6 @@ from platform_regress.environment import (
     EnvironmentProvider, create_environment_provider, preflight_health_check,
     register_environment_provider,
 )
-from platform_regress.environment import registry as env_registry
 from platform_regress.suites import (
     SuitePlugin, SuiteRegistry, case_status, failed_targets, read_last_failed,
     rerun_failed, set_default_preflight_check, set_default_quiet_env_var,
@@ -497,3 +495,39 @@ class TestPsqlClient:
         assert not passed
         statuses = {d["key"]: d["status"] for d in details}
         assert statuses == {"pg_220": "PASS", "pg_240": "MISMATCH", "pg_999": "MISSING"}
+
+    def test_assert_table_rows_count_and_absent(self):
+        output = (
+            " node_name | state  | role\n"
+            "-----------+--------+------\n"
+            " pg_220    | active | write\n"
+            " pg_240    | parted | read\n"
+            "(2 rows)\n"
+        )
+        passed, summary, _ = assert_table_rows(
+            output, {"pg_220": {"state": "active"}}, row_count=2)
+        assert passed
+        passed, summary, _ = assert_table_rows(output, {}, row_count=3)
+        assert not passed and "ROW_COUNT" in summary or "行数" in summary
+        passed, summary, _ = assert_table_rows(output, {}, absent=("pg_240",))
+        assert not passed and "pg_240" in summary
+        passed, summary, _ = assert_table_rows(
+            output, {"pg_220": {"state": "active"}}, absent=("pg_999",))
+        assert passed
+
+    def test_assert_table_rows_composite_key(self):
+        output = (
+            " user_name | candidate_node | candidate_type\n"
+            "-----------+----------------+----------------\n"
+            " u1        | pg_1           | WRITE\n"
+            " u1        | pg_2           | READ\n"
+            " u2        | pg_2           | WRITE\n"
+            "(3 rows)\n"
+        )
+        passed, summary, details = assert_table_rows(
+            output,
+            {"u1|pg_1": {"candidate_type": "WRITE"},
+             "u2|pg_2": {"candidate_type": "WRITE"}},
+            key=("user_name", "candidate_node"), row_count=3,
+            absent=("u1|pg_3",))
+        assert passed, summary
