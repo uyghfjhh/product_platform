@@ -18,6 +18,7 @@ suite 运行时按需继承本类，只补充自己的用例级逻辑，例如
 import difflib
 import os
 import re
+from functools import partial
 import shlex
 import time
 from pathlib import Path
@@ -69,11 +70,14 @@ class FbasecmanCaseRuntime(ReportRuntime):
         self.active_conf = None
         self._crash_info = None
         # Every HA console mutation gets a before/after console snapshot.
+        # daemon 以用例 workdir 为 cwd：core dump 落进用例目录随归档清理，
+        # 不会污染 products/<product>/regression 源码树。
         self.process = FbasecmanProcess(
             self.env.config["fbasecman"]["fbasecman_bin"],
             self.env.config["local"]["postgres_dir"], self.listen_port,
             self.listen_port + 2, self.pid_file, self.workdir / "locks",
-            self.proxy_log, self.logs_dir, self.run_command, self.trace,
+            self.proxy_log, self.logs_dir,
+            partial(self.run_command, cwd=self.workdir), self.trace,
             port_is_free,
         )
 

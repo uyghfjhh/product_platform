@@ -34,3 +34,6 @@ regress.local.yaml
 
 .vscode/
 .idea/
+
+# daemon 崩溃产生的 core dump（cwd 已改为用例 workdir，此条仅兜底）
+core.*
