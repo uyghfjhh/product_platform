@@ -22,6 +22,8 @@ class ProductManifestError(ValueError):
 class LicenseDescriptor:
     product_code: str
     allowed_versions: tuple[str, ...]
+    default_version: str
+    additional_products: tuple[LicenseDescriptor, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -241,7 +243,28 @@ def load_manifest(package_root: Path) -> ProductManifest:
             raise ProductManifestError("license must be a mapping")
         product_code = _string(license_raw.get("product_code"), "license.product_code")
         allowed = _tuple_strings(license_raw.get("allowed_versions", versions), "license.allowed_versions")
-        license_descriptor = LicenseDescriptor(product_code, allowed)
+        if not allowed:
+            raise ProductManifestError("license.allowed_versions must not be empty")
+        default = _string(license_raw.get("default_version", allowed[-1]), "license.default_version")
+        if default not in allowed:
+            raise ProductManifestError("license.default_version must be in allowed_versions")
+        additional_raw = license_raw.get("additional_products", [])
+        if not isinstance(additional_raw, list) or any(not isinstance(item, dict) for item in additional_raw):
+            raise ProductManifestError("license.additional_products must be a list of mappings")
+        additional = []
+        for entry in additional_raw:
+            licensed_versions = _tuple_strings(entry.get("allowed_versions"), "license.additional_products.allowed_versions")
+            if not licensed_versions:
+                raise ProductManifestError("license.additional_products.allowed_versions must not be empty")
+            preferred = _string(entry.get("default_version", licensed_versions[-1]),
+                                "license.additional_products.default_version")
+            if preferred not in licensed_versions:
+                raise ProductManifestError("license.additional_products.default_version must be in allowed_versions")
+            additional.append(LicenseDescriptor(
+                _string(entry.get("product_code"), "license.additional_products.product_code"),
+                licensed_versions, preferred,
+            ))
+        license_descriptor = LicenseDescriptor(product_code, allowed, default, tuple(additional))
 
     source_raw = raw.get("source")
     source_root = None
@@ -303,15 +326,15 @@ def discover_products(root: Path) -> dict[str, ProductManifest]:
         if manifest.id in discovered:
             errors.append(f"duplicate product id: {manifest.id}")
             continue
-        if manifest.license is not None:
-            owner = license_codes.get(manifest.license.product_code)
+        for descriptor in ((manifest.license, *manifest.license.additional_products)
+                           if manifest.license is not None else ()):
+            owner = license_codes.get(descriptor.product_code)
             if owner is not None:
                 errors.append(
-                    f"duplicate license product code: {manifest.license.product_code} "
+                    f"duplicate license product code: {descriptor.product_code} "
                     f"({owner}, {manifest.id})"
                 )
-                continue
-            license_codes[manifest.license.product_code] = manifest.id
+            license_codes[descriptor.product_code] = manifest.id
         discovered[manifest.id] = manifest
     if errors:
         raise ProductManifestError("; ".join(errors))

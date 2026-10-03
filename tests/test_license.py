@@ -108,6 +108,36 @@ def test_python_license_verifies_against_own_key_material(tmp_path):
     assert any("测试签发" in line for line in footer)
 
 
+def test_legacy_products_are_signable_with_declared_versions(tmp_path):
+    from platform_app.license import options
+
+    settings = settings_for(tmp_path)
+    assert {item["name"]: item["version"] for item in options(settings)["products"]} == {
+        "fmmr": "2.0",
+        "fbase": "2.0",
+        "fbase_db_ent": "1.8.1",
+        "fbasecman": "1.9",
+        "fd_logical": "1.7",
+    }
+    legacy_key_fixture(tmp_path)
+    client = TestClient(create_app(settings, enqueuer=lambda task_id: None))
+    response = client.post("/api/v1/licenses/generate", json={
+        "license_version": "1.1", "start_at": "2026-09-23",
+        "products": [
+            {"name": name, "version": version, "expiration_at": "2027-09-23"}
+            for name, version in (
+                ("fmmr", "2.0"), ("fbase", "2.0"), ("fbase_db_ent", "1.8.1"),
+                ("fbasecman", "1.9"), ("fd_logical", "1.7"),
+            )
+        ],
+        "mac_addrs": ["02:42:8e:0f:0b:1b"], "password": "test-password",
+    })
+    assert response.status_code == 200, response.text
+    signature, raw, _ = _decode_license_body(response.content)
+    _public_key_for(settings.license_key_dir, "1.1").verify(signature, raw)
+    assert len(json.loads(raw)["products"]) == 5
+
+
 def test_license_input_rejects_invalid_date_and_mac(tmp_path):
     settings = settings_for(tmp_path)
     key_dir, password = legacy_key_fixture(tmp_path)

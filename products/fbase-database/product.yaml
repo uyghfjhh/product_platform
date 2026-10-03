@@ -49,3 +49,12 @@ license:
   product_code: fbase
   allowed_versions:
     - "1.8"
+    - "2.0"
+  default_version: "2.0"
+  additional_products:
+    - product_code: fmmr
+      allowed_versions: ["2.0"]
+    - product_code: fbase_db_ent
+      allowed_versions: ["1.8.1"]
+    - product_code: fd_logical
+      allowed_versions: ["1.7"]

@@ -31,7 +31,7 @@ export default function LicenseGenerateView() {
   useEffect(() => {
     void api<Options>('/licenses/options').then((data) => {
       setOptions(data);
-      form.setFieldValue('license_version', data.key_versions.at(-1));
+      form.setFieldValue('license_version', data.key_versions.includes('1.1') ? '1.1' : data.key_versions[0]);
     }).catch((cause) => message.error(cause.message));
   }, [form, message]);
 

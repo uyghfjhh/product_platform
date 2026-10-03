@@ -21,6 +21,7 @@ def test_discovers_product_manifest(tmp_path: Path):
     found = discover_products(tmp_path)
     assert found["demo"].capabilities == {"tests": "demo-tests"}
     assert found["demo"].license.product_code == "demo"
+    assert found["demo"].license.default_version == "1.0"
 
 
 def test_rejects_invalid_manifest(tmp_path: Path):
@@ -55,6 +56,15 @@ def test_discovers_checked_in_fbasecman_package():
     assert found["fbasecman"].license.product_code == "fbasecman"
     assert {item.id for item in found["fbasecman"].actions} >= {
         "database.check", "tests.fbasecman", "stability.fbasecman",
+    }
+
+
+def test_license_products_do_not_create_platform_products():
+    root = Path(__file__).parents[1] / "products"
+    found = discover_products(root)
+    assert not {"fmmr", "fbase_db_ent", "fd_logical"}.intersection(found)
+    assert {item.product_code for item in found["fbase-database"].license.additional_products} == {
+        "fmmr", "fbase_db_ent", "fd_logical",
     }
 
 

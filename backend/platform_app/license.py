@@ -84,10 +84,10 @@ def options(settings: Settings) -> dict:
         data = json.loads(config_file.read_text(encoding="utf-8"))
         vendor = data.get("vendor") or vendor
     products = [
-        {"name": item.license.product_code, "version": version}
+        {"name": descriptor.product_code, "version": descriptor.default_version}
         for item in discover_products(settings.products_root).values()
         if item.license is not None
-        for version in item.license.allowed_versions
+        for descriptor in (item.license, *item.license.additional_products)
     ]
     products.sort(key=lambda item: (item["name"], item["version"]))
     versions = []
@@ -296,9 +296,10 @@ def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
         raise RuntimeError("当前已有两项 License 生成操作，请稍后重试")
     try:
         allowed = {
-            item.license.product_code: set(item.license.allowed_versions)
+            descriptor.product_code: set(descriptor.allowed_versions)
             for item in discover_products(settings.products_root).values()
             if item.license is not None
+            for descriptor in (item.license, *item.license.additional_products)
         }
         if len({item.name for item in request.products}) != len(request.products):
             raise ValueError("同一 License 中产品不能重复")

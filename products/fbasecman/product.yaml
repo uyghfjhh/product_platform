@@ -48,3 +48,5 @@ license:
   product_code: fbasecman
   allowed_versions:
     - "1.7"
+    - "1.9"
+  default_version: "1.9"
