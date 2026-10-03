@@ -3,6 +3,7 @@
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 import uvicorn
 
@@ -29,10 +30,18 @@ def main() -> int:
     start.add_argument("--host", default="0.0.0.0")
     start.add_argument("--port", type=int, default=8080)
     commands.add_parser("check", help="检查本地存储和产品集成")
+    key_import = commands.add_parser("import-license-keys", help="将旧版签发密钥迁入平台本地数据目录")
+    key_import.add_argument("--source", required=True, type=Path)
     archive = commands.add_parser("archive", help="归档已结束任务，保留证据和幂等记录")
     archive.add_argument("--older-than-days", type=int, default=30)
     args = parser.parse_args()
     settings = load_settings()
+    if args.command == "import-license-keys":
+        from .license import import_legacy_keys
+
+        versions = import_legacy_keys(settings, args.source)
+        print("已导入 License 密钥版本: %s" % ", ".join(versions))
+        return 0
     store = FileStore(settings.data_dir, runtime_dir=settings.runtime_dir, logs_dir=settings.logs_dir)
 
     if args.command == "archive":

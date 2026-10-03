@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import stat
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -254,3 +255,18 @@ def test_versioned_public_keys_do_not_enable_signing(tmp_path):
         assert len(public) == 32
         assert not (public_keys / f"v{version}" / "private.pem").exists()
     assert options(settings)["key_versions"] == []
+
+
+def test_import_legacy_key_pair_without_overwriting(tmp_path):
+    from platform_app.license import _read_legacy_key, import_legacy_keys, options
+
+    source, password = legacy_key_fixture(tmp_path / "old")
+    settings = settings_for(tmp_path)
+    assert import_legacy_keys(settings, source) == ["1.1"]
+    assert options(settings)["key_versions"] == ["1.1"]
+    private = settings.license_key_dir / "v1.1" / "private.pem"
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+    assert _read_legacy_key(settings.license_key_dir, "1.1", password)
+    with pytest.raises(ValueError, match="已存在"):
+        import_legacy_keys(settings, source)
+    assert private.read_bytes() == (source / "v1.1" / "private.pem").read_bytes()

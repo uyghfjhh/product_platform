@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -103,6 +104,38 @@ def options(settings: Settings) -> dict:
             key=lambda text: int(text.split(".")[1]),
         )
     return {"vendor": vendor, "products": products, "key_versions": versions}
+
+
+def import_legacy_keys(settings: Settings, source: Path) -> list[str]:
+    source = Path(source).expanduser().resolve(strict=True)
+    target = settings.license_key_dir
+    if source == target.resolve():
+        raise ValueError("来源与目标密钥目录相同")
+    versions = sorted(
+        (item for item in source.iterdir()
+         if item.is_dir() and not item.is_symlink() and KEY_VERSION.fullmatch(item.name[1:])),
+        key=lambda item: int(item.name.split(".")[1]),
+    )
+    if not versions:
+        raise ValueError("来源目录没有可导入的密钥版本")
+    for directory in versions:
+        if (target / directory.name).exists():
+            raise ValueError("目标密钥版本已存在: %s" % directory.name)
+        for name in ("public.pem", "private.pem"):
+            key = directory / name
+            if key.is_symlink() or not key.is_file():
+                raise ValueError("密钥对不完整或包含符号链接: %s" % directory.name)
+        _key_metadata(source, directory.name[1:])
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for directory in versions:
+        destination = target / directory.name
+        destination.mkdir(mode=0o700)
+        for name in ("public.pem", "private.pem"):
+            with (directory / name).open("rb") as reader:
+                fd = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as writer:
+                    shutil.copyfileobj(reader, writer)
+    return [directory.name[1:] for directory in versions]
 
 
 def _read_legacy_key(key_dir: Path, version: str, password: str) -> Ed25519PrivateKey:
