@@ -36,6 +36,10 @@ output/
 .env
 .env.local
 
+**/private.pem
+**/license.dat
+**/license-request.json
+
 # OS Artifacts
 .DS_Store
 Thumbs.db

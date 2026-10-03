@@ -130,7 +130,7 @@ export default function LicenseGenerateView() {
             </Form.Item>
             <Form.Item name="purpose" label="用途"><Input placeholder="测试环境 / 正式环境" /></Form.Item>
             <Form.Item name="password" label="密钥口令" rules={[{ required: true }]}>
-              <Input.Password autoComplete="new-password" />
+              <Input.Password autoComplete="current-password" />
             </Form.Item>
             <Space>
               <Button type="primary" htmlType="submit" icon={<DownloadOutlined />}

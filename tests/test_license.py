@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -240,3 +241,16 @@ def test_uninstalled_product_cannot_be_signed(tmp_path, monkeypatch):
     rejected = client.post("/api/v1/licenses/generate", json=payload)
     assert rejected.status_code == 422
     assert "未安装" in rejected.json()["detail"]
+
+
+def test_versioned_public_keys_do_not_enable_signing(tmp_path):
+    from platform_app.license import key_metadata, options
+
+    public_keys = Path(__file__).resolve().parents[1] / "license" / "public_keys"
+    settings = replace(settings_for(tmp_path), license_key_dir=public_keys)
+    for version in ("1.1", "1.2", "1.3"):
+        public = bytes.fromhex(key_metadata(settings, version)["public_key"])
+        Ed25519PublicKey.from_public_bytes(public)
+        assert len(public) == 32
+        assert not (public_keys / f"v{version}" / "private.pem").exists()
+    assert options(settings)["key_versions"] == []
