@@ -80,7 +80,7 @@ export default function LicenseGenerateView() {
         <div className="form-surface">
           <Form<FormData> form={form} layout="vertical"
             onFinish={(values) => void generateLicense(values)}
-            initialValues={{ products: [{}], start_at: new Date().toISOString().slice(0, 10) }}>
+            initialValues={{ products: [{}], start_at: new Date().toISOString().slice(0, 10), purpose: '测试' }}>
             <div className="form-grid">
               <Form.Item label="密钥版本" name="license_version" rules={[{ required: true }]}>
                 <Select options={options.key_versions.map((value) => ({ label: value, value }))}
