@@ -81,7 +81,7 @@ export default function LicenseGenerateView() {
             initialValues={{
               license_version: options.key_versions.includes('1.1') ? '1.1' : options.key_versions[0],
               products: options.products.length
-                ? [{ name: options.products[0].name, version: options.products[0].version }]
+                ? options.products.map((item) => ({ name: item.name, version: item.version }))
                 : [{}],
               start_at: new Date().toISOString().slice(0, 10),
               purpose: '测试',
