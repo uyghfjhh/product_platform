@@ -28,6 +28,12 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
   };
 
   const isPass = step.status === 'PASS';
+  const summaryIsVerdict = /[✅❌]/.test(step.actualSummary || '');
+  // text 载荷与判定明细同源且为判点文本时，载荷框让位给断言判定块
+  const verdictReplacesPayload =
+    step.actualPayload?.type === 'text' &&
+    step.actualPayload.raw === step.actualSummary &&
+    summaryIsVerdict;
 
   return (
     <div className={`step-card-root ${isPass ? 'pass' : 'fail'}`}>
@@ -120,7 +126,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
               )}
 
               {/* 实际输出载荷 (Actual Output / State Table) */}
-              {step.actualPayload && (
+              {step.actualPayload && !verdictReplacesPayload && (
                 <div className="step-actual-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div className="step-section-label actual">
@@ -175,12 +181,13 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                 </div>
               )}
 
-              {/* 断言判定明细：逐字段 ✅/❌ 核对结果，表格载荷存在时同样渲染；
-                  仅 text 型载荷与 actualSummary 同源（不重复渲染） */}
+              {/* 断言判定明细：逐判点 ✅/❌ 核对结果。表格/diff 载荷下并列渲染；
+                  判点文本载荷则由本块替代渲染（verdictReplacesPayload）。 */}
               {step.actualSummary &&
                 !step.actualSummary.startsWith('returncode=') &&
-                step.actualPayload?.type !== 'text' &&
-                step.actualSummary !== step.actualPayload?.raw && (
+                (verdictReplacesPayload ||
+                  (step.actualPayload?.type !== 'text' &&
+                    step.actualSummary !== step.actualPayload?.raw)) && (
                 <div className="step-verdict-card">
                   <div className="step-section-label verdict">
                     <span>� 断言判定 (Assertion Verdict)</span>

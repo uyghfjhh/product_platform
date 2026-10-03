@@ -304,24 +304,27 @@ def _run_comprehensive_all_groups_and_commands(context):
     blank_ctx = rendered[
         rendered.index('\n\n    check "auto"'):][:40] \
         if '\n\n    check "auto"' in rendered else "<未找到>"
-    ops.check(
+    ops.check_all(
         "阶段 1：检查线上配置格式特征",
         "中文/英文注释、Tab、非对齐缩进、连续空行、CRLF、末尾无换行和字符串内 # 均保留",
-        "\n      ".join((
-            "中文注释: %s" % _line_with("中文"),
-            "英文注释: %s" % en_comment,
-            "Tab 行: %r" % _line_with("\t"),
-            "非对齐缩进: %r" % _line_with('  write_cluster "pg_cluster_1"'),
-            "连续空行: %r" % blank_ctx,
-            "CRLF 行数: %d" % rendered_bytes.count(b"\r\n"),
-            "末尾字节: %r" % rendered_bytes[-30:],
-            "字符串内 #: %s" % _line_with('"fbase#inside-string"'),
-        )),
-        all(marker in rendered for marker in (
-            "中文", "# 线上共享物理节点", "\t",
-            "  write_cluster \"pg_cluster_1\"",
-            "\n\n    check \"auto\"", '"fbase#inside-string"',
-        )) and b"\r\n" in rendered_bytes and not rendered_bytes.endswith(b"\n"),
+        [
+            ("中文注释保留", "中文" in rendered and "# 线上共享物理节点" in rendered,
+             "命中行: %s" % _line_with("中文")),
+            ("英文注释保留", en_comment != "<未找到>",
+             "命中行: %s" % en_comment),
+            ("Tab 字符保留", "\t" in rendered,
+             "命中行: %r" % _line_with("\t")),
+            ("非对齐缩进保留", '  write_cluster "pg_cluster_1"' in rendered,
+             "命中行: %r" % _line_with('  write_cluster "pg_cluster_1"')),
+            ("连续空行保留", '\n\n    check "auto"' in rendered,
+             "命中片段: %r" % blank_ctx),
+            ("CRLF 行尾保留", b"\r\n" in rendered_bytes,
+             "CRLF 行数: %d" % rendered_bytes.count(b"\r\n")),
+            ("末尾无换行", not rendered_bytes.endswith(b"\n"),
+             "末尾 30 字节: %r" % rendered_bytes[-30:]),
+            ("字符串内 # 保留", '"fbase#inside-string"' in rendered,
+             "命中行: %s" % _line_with('"fbase#inside-string"')),
+        ],
     )
 
     ops.assert_groups(
@@ -368,12 +371,11 @@ def _run_comprehensive_all_groups_and_commands(context):
     pool_text = conf.read_text(encoding="utf-8")
     pool_lines = {mode: _matching_line(pool_text, 'pool "%s"' % mode)
                   for mode in ("transaction", "session", "statement")}
-    ops.check("阶段 1：检查 pool 模式组合", "session/transaction/statement 均在配置中",
-             "transaction: %r\n      session: %r\n      statement: %r" % (
-                 pool_lines["transaction"], pool_lines["session"],
-                 pool_lines["statement"]),
-             all(token in pool_text
-                 for token in ('pool "transaction"', 'pool "session"', 'pool "statement"')))
+    ops.check_all("阶段 1：检查 pool 模式组合",
+                  "session/transaction/statement 均在配置中",
+                  [(mode, 'pool "%s"' % mode in pool_text,
+                    "命中行: %r" % pool_lines[mode])
+                   for mode in ("transaction", "session", "statement")])
     ops.assert_groups(
         "阶段 1：检查 MMR/REP 主组的多用户与 rw_split 方法集",
         {
@@ -700,29 +702,30 @@ def _run_comprehensive_all_groups_and_commands(context):
     )
     final_bytes = conf.read_bytes()
     final_text = final_bytes.decode("utf-8")
-    preserved = [
-        "中文注释行=%r" % next(
-            (ln for ln in final_text.splitlines() if "中文" in ln), "<缺失>"),
-        "Tab 行=%r" % next(
-            (ln for ln in final_text.splitlines() if "\t" in ln), "<缺失>"),
-        "非对齐缩进=%r" % next(
-            (ln for ln in final_text.splitlines()
-             if '  write_cluster "pg_cluster_1"' in ln), "<缺失>"),
-        "字符串内 #=%r" % next(
-            (ln for ln in final_text.splitlines()
-             if '"fbase#inside-string"' in ln), "<缺失>"),
-        "CRLF 行数=%d" % final_bytes.count(b"\r\n"),
-        "末尾字节=%r" % final_bytes[-30:],
-    ]
-    ops.check(
+
+    def _final_line(needle):
+        return next(
+            (ln for ln in final_text.splitlines() if needle in ln), "<缺失>")
+
+    ops.check_all(
         "阶段 10：检查高可用命令后格式内容仍保留",
         "中文注释、Tab、非对齐缩进、空行、CRLF 与字符串内 # 未被配置写回破坏",
-        "\n      ".join(preserved),
-        all(marker in final_text for marker in (
-            "中文", "# 线上共享物理节点", "\t",
-            "  write_cluster \"pg_cluster_1\"",
-            "\n\n    check \"auto\"", '"fbase#inside-string"',
-        )) and b"\r\n" in final_bytes and not final_bytes.endswith(b"\n"),
+        [
+            ("中文注释未被破坏", "中文" in final_text and "# 线上共享物理节点" in final_text,
+             "命中行=%r" % _final_line("中文")),
+            ("Tab 未被破坏", "\t" in final_text,
+             "命中行=%r" % _final_line("\t")),
+            ("非对齐缩进未被破坏", '  write_cluster "pg_cluster_1"' in final_text,
+             "命中行=%r" % _final_line('  write_cluster "pg_cluster_1"')),
+            ("连续空行未被破坏", '\n\n    check "auto"' in final_text,
+             "check 块前存在连续空行" if '\n\n    check "auto"' in final_text else "空行序列丢失"),
+            ("字符串内 # 未被破坏", '"fbase#inside-string"' in final_text,
+             "命中行=%r" % _final_line('"fbase#inside-string"')),
+            ("CRLF 未被破坏", b"\r\n" in final_bytes,
+             "CRLF 行数=%d" % final_bytes.count(b"\r\n")),
+            ("末尾仍无换行", not final_bytes.endswith(b"\n"),
+             "末尾 30 字节=%r" % final_bytes[-30:]),
+        ],
     )
     ops.diff(before, conf)
 

@@ -189,5 +189,36 @@ class BackupPrimitivesTest(unittest.TestCase):
             self.assertEqual(set(), backup_files(root / "none"))
 
 
+class CheckAllTest(unittest.TestCase):
+    def test_all_pass_records_verdict_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = make_runtime(Path(directory))
+            runtime.check_all("格式特征", "全部保留", [
+                ("中文注释", True, "命中行: # 中文"),
+                ("CRLF", True, "行数: 2"),
+            ])
+            step = runtime.steps[-1]
+            self.assertEqual("PASS", step["result"])
+            self.assertIn("✅ 中文注释: 命中行: # 中文", step["actual"])
+            self.assertIn("✅ CRLF: 行数: 2", step["actual"])
+
+    def test_any_failure_fails_and_names_failed_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = make_runtime(Path(directory))
+            with self.assertRaises(Exception) as caught:
+                runtime.check_all("格式特征", "全部保留", [
+                    ("中文注释", True, "命中行: # 中文"),
+                    ("CRLF", False, "行数: 0"),
+                    ("Tab", False, "<缺失>"),
+                ])
+            step = runtime.steps[-1]
+            self.assertEqual("FAIL", step["result"])
+            self.assertIn("❌ CRLF: 行数: 0", step["actual"])
+            self.assertIn("❌ Tab: <缺失>", step["actual"])
+            self.assertIn("CRLF", str(caught.exception))
+            self.assertIn("Tab", str(caught.exception))
+            self.assertNotIn("中文注释: ", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

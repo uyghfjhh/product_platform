@@ -122,6 +122,22 @@ class ReportRuntime:
         if not passed:
             raise self.failure_class("%s: expected %s, actual %s" % (title, expected, actual))
 
+    def check_all(self, title, expected, items):
+        """多判点断言：items 为 [(判点名, passed, 证据文本), ...]，
+        每判点在「实际」里落成一行 ✅/❌ + 证据；任一不过整体 FAIL，
+        失败消息列出未通过判点名。"""
+        lines, failed = [], []
+        for name, passed, evidence in items:
+            ok = bool(passed)
+            if not ok:
+                failed.append(str(name))
+            lines.append("%s %s: %s" % ("✅" if ok else "❌", name, evidence))
+        self.record_step(title, "", expected, "\n".join(lines),
+                         "PASS" if not failed else "FAIL")
+        if failed:
+            raise self.failure_class(
+                "%s: 未通过判点: %s" % (title, "、".join(failed)))
+
     def _context_value(self, key, default=""):
         """从环境上下文取字符串值；非字符串（如嵌套 dict）回落默认值。"""
         value = self.context.get(key, default)
