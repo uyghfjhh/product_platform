@@ -29,11 +29,9 @@ export default function LicenseGenerateView() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    void api<Options>('/licenses/options').then((data) => {
-      setOptions(data);
-      form.setFieldValue('license_version', data.key_versions.includes('1.1') ? '1.1' : data.key_versions[0]);
-    }).catch((cause) => message.error(cause.message));
-  }, [form, message]);
+    void api<Options>('/licenses/options').then(setOptions)
+      .catch((cause) => message.error(cause.message));
+  }, [message]);
 
   async function generateLicense(values: FormData) {
     setLoading(true);
@@ -80,7 +78,14 @@ export default function LicenseGenerateView() {
         <div className="form-surface">
           <Form<FormData> form={form} layout="vertical"
             onFinish={(values) => void generateLicense(values)}
-            initialValues={{ products: [{}], start_at: new Date().toISOString().slice(0, 10), purpose: '测试' }}>
+            initialValues={{
+              license_version: options.key_versions.includes('1.1') ? '1.1' : options.key_versions[0],
+              products: options.products.length
+                ? [{ name: options.products[0].name, version: options.products[0].version }]
+                : [{}],
+              start_at: new Date().toISOString().slice(0, 10),
+              purpose: '测试',
+            }}>
             <div className="form-grid">
               <Form.Item label="密钥版本" name="license_version" rules={[{ required: true }]}>
                 <Select options={options.key_versions.map((value) => ({ label: value, value }))}
