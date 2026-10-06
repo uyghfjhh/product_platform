@@ -6,6 +6,7 @@ ENV/
 *$py.class
 __pycache__/
 *.egg-info/
+/build/
 
 # Tests & Coverage
 .pytest_cache/
