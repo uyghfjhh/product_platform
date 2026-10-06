@@ -40,6 +40,15 @@
 .wb-config > .ant-tabs { padding: 0 22px; }
 .wb-config > .ant-alert { margin: 22px; }
 .wb-config > .ant-btn { margin: 0 13px 17px; }
+.wb-default-summary { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; margin: 4px 0 14px; border-radius: 8px; background: var(--bg-surface-elevated); }
+.wb-default-summary strong { font-size: 12px; }
+.wb-default-summary span { color: var(--text-secondary); font-size: 11px; }
+.wb-profile-presets { margin-bottom: 18px; }
+.wb-profile-presets .ant-btn { font-size: 12px; }
+.wb-default-facts { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+.wb-default-facts .ant-tag { margin: 0; font-size: 11px; }
+.wb-advanced { border-top: 1px solid var(--border-subtle); }
+.wb-advanced .ant-collapse-header { font-size: 12px; }
 .wb-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; row-gap: 21px; margin: 7px 0 24px; }
 .wb-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .wb-field > label { font-size: 12px; color: var(--text-secondary); }

@@ -92,6 +92,9 @@ def command(settings, environment, action, parameters):
     driver = action.split('.')[1]
     if options.environment_fingerprint and options.environment_fingerprint != environment_fingerprint(environment):
         raise ValueError('审阅后环境发生变化，请重新生成负载计划')
+    if driver == 'jdbc' and not options.jdbc_jar:
+        from .defaults import default_jdbc_jar
+        options.jdbc_jar = default_jdbc_jar(settings, environment)
     pgbench = resolve_driver(environment, driver, options)
     options.script = options.script or PRESETS[options.preset]
     identity = parameters.get("_workload_task_id")

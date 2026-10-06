@@ -86,6 +86,8 @@ def test_review_is_idempotent_and_cancel_stops_next_workload(workbench):
     'DROP TABLE test;', 'SELECT 1; COMMIT;', '\\shell touch /tmp/nope',
     'SELECT 1 INTO new_table;', 'WITH x AS (DELETE FROM test RETURNING *) SELECT * FROM x;',
     'SELECT * FROM test FOR UPDATE;',
+    'SELECT pg_catalog.pg_promote();', 'SELECT pg_reload_conf();',
+    "SELECT set_config('transaction_read_only', 'off', false);",
 ])
 def test_custom_scripts_reject_writes_transaction_control_and_pgbench_shell(script):
     with pytest.raises(ValidationError):
@@ -143,7 +145,8 @@ def test_http_catalog_review_and_pipeline_routes_cannot_bypass_review(workbench)
     assert client.get('/api/v1/pipelines').json() == []
 
 
-def test_pgbench_runner_uses_actual_script_parameters_and_reports_missing_thresholds(tmp_path, monkeypatch):
+@pytest.mark.parametrize('sample_total', [1, 701])
+def test_pgbench_runner_uses_actual_script_parameters_and_reports_missing_thresholds(tmp_path, monkeypatch, sample_total):
     import json
     from platform_app.workloads import runner
     output = tmp_path / 'output'
@@ -159,8 +162,9 @@ def test_pgbench_runner_uses_actual_script_parameters_and_reports_missing_thresh
     captured = []
 
     class Process:
-        stdout = ['progress: 1.0 s, 30.0 tps, lat 1.5 ms\n', 'tps = 30.0\n',
-                  'latency average = 1.5 ms\n', 'number of failed transactions: 0\n']
+        stdout = [f'progress: {index}.0 s, 30.0 tps, lat 1.5 ms\n' for index in range(1, sample_total + 1)] + [
+            'tps = 30.0\n', 'latency average = 1.5 ms\n', 'number of failed transactions: 0\n',
+        ]
 
         def poll(self):
             return 0
@@ -179,11 +183,60 @@ def test_pgbench_runner_uses_actual_script_parameters_and_reports_missing_thresh
     assert result['performance_verdict'] == 'NOT_CONFIGURED'
     assert result['correctness_verdict'] == 'NOT_CONFIGURED'
     assert all(check['passed'] for check in result['checks'])
+    metrics = json.loads((output / 'metrics.json').read_text())
+    assert metrics['sample_count'] == sample_total
+    assert len(metrics['samples']) == min(sample_total, 600)
+    assert metrics['samples'][0]['elapsed'] == max(1, sample_total - 599)
 
 
 def test_pgbench_metadata_hidden_in_sql_string_is_rejected():
     with pytest.raises(ValidationError):
         WorkloadInput(script='SELECT $$text\n\\shell touch /tmp/nope\n$$;')
+
+
+def test_catalog_defaults_include_configured_jdbc_driver(workbench, tmp_path, monkeypatch):
+    jar = tmp_path / 'postgresql-fixture.jar'
+    jar.write_bytes(b'fixture')
+    monkeypatch.setenv('PRODUCT_PLATFORM_JDBC_JAR', str(jar))
+    catalog = workbench.catalog('lab')
+    jdbc = next(entry for entry in catalog['workloads'] if entry['id'] == 'jdbc.connectivity')
+    assert jdbc['defaults']['jdbc_jar'] == str(jar)
+    assert {profile['id'] for profile in catalog['profiles']} == {'quick', 'standard', 'soak'}
+    plan = workbench.preview(PlanInput(environment_id='lab', workloads=[{'id': 'jdbc.connectivity'}]))
+    assert plan['ready']
+    assert plan['steps'][0]['parameters']['script'] == 'SELECT 1;'
+
+
+def test_direct_jdbc_operation_uses_default_driver(workbench, tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from platform_app.workloads import command
+    jar = tmp_path / 'postgresql-fixture.jar'
+    jar.write_bytes(b'fixture')
+    monkeypatch.setenv('PRODUCT_PLATFORM_JDBC_JAR', str(jar))
+    spec = command(workbench.settings, workbench.environment('lab'), 'workload.jdbc', {
+        '_workload_task_id': '00000000-0000-0000-0000-000000000000',
+    })
+    assert json.loads(Path(spec.command[-1]).read_text())['options']['jdbc_jar'] == str(jar)
+
+
+def test_default_driver_discovery_uses_numeric_versions(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from platform_app.workloads.defaults import default_jdbc_jar
+    monkeypatch.delenv('PRODUCT_PLATFORM_JDBC_JAR', raising=False)
+    monkeypatch.setattr('platform_app.workloads.defaults.discover_products', lambda root: {})
+    settings = SimpleNamespace(data_dir=tmp_path / 'data', products_root=tmp_path,
+                               product_regress_root=lambda identity: tmp_path / identity)
+    library = tmp_path / 'lab' / 'lib_jdbc'
+    library.mkdir(parents=True)
+    for name in ('postgresql-42.9.jar', 'postgresql-42.10.jar'):
+        (library / name).write_bytes(b'fixture')
+    assert default_jdbc_jar(settings, {'product_id': 'lab'}) == str(library / 'postgresql-42.10.jar')
+
+
+def test_sql_byte_limit_applies_to_multibyte_text():
+    with pytest.raises(ValidationError, match='UTF-8'):
+        WorkloadInput(script="SELECT '" + '界' * 22000 + "';")
 
 
 def test_jdbc_client_compiles_without_connecting_to_database(tmp_path):

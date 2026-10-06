@@ -68,6 +68,8 @@ def test_pgbench_executes_custom_query_in_owned_readonly_cluster(tmp_path, monke
                 assert 'BEGIN READ ONLY;' in (output / 'workload.sql').read_text()
             else:
                 assert result['summary']['errors'] == 0
+                assert result['summary']['elapsed'] > 0
+                assert abs(result['summary']['tps'] * result['summary']['elapsed'] - result['summary']['transactions']) < 1
     finally:
         if started:
             subprocess.run([pg_ctl, '-D', str(data), '-m', 'fast', '-w', 'stop'], check=True, capture_output=True)

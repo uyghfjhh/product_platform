@@ -28,6 +28,7 @@ def main(path):
     duration = options["duration_seconds"]
     summary = {}
     samples = []
+    sample_count = 0
     if driver == "pgbench":
         script = output / "workload.sql"
         sql = options.get('script') or PRESETS[options['preset']]
@@ -107,6 +108,7 @@ def main(path):
                 row = json.loads(line)
                 if row["type"] == "sample":
                     samples.append(row)
+                    sample_count += 1
                 else:
                     summary = row
             elif driver == "pgbench":
@@ -121,6 +123,7 @@ def main(path):
                             "latency_ms": float(match[3]),
                         }
                     )
+                    sample_count += 1
                 match = re.search(r"^tps = ([\d.]+)", line)
                 if match:
                     summary["tps"] = float(match[1])
@@ -130,8 +133,10 @@ def main(path):
                 match = re.search(r'^number of failed transactions:\s*(\d+)', line)
                 if match:
                     summary['errors'] = int(match[1])
+            if len(samples) > 600:
+                samples = samples[-600:]
             temporary = output / "metrics.part"
-            temporary.write_text(json.dumps({"samples": samples, "summary": summary}))
+            temporary.write_text(json.dumps({'samples': samples, 'summary': summary, 'sample_count': sample_count}))
             temporary.replace(output / "metrics.json")
         code = process.wait(timeout=15)
     finally:

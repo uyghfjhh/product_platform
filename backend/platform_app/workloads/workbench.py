@@ -10,6 +10,7 @@ from ..actions import actions_for_environment
 from ..providers import provider_extensions
 from . import PRESETS, WorkloadInput, resolve_driver
 from .sql import environment_fingerprint
+from .defaults import PROFILES, default_jdbc_jar
 
 
 class Selection(BaseModel):
@@ -52,6 +53,7 @@ class Workbench:
         environment = self.environment(identity)
         actions = {item['id'] for item in actions_for_environment(environment, self.settings)}
         workloads = []
+        jdbc_jar = default_jdbc_jar(self.settings, environment) if 'workload.jdbc' in actions else ''
         for name, title, description, driver, preset, reconnect in (
             ('pgbench.connectivity', '连接与轻查询', '验证连接及轻查询持续执行', 'pgbench', 'connectivity', False),
             ('pgbench.catalog', '系统目录查询', '持续查询数据库系统目录', 'pgbench', 'catalog', False),
@@ -60,6 +62,8 @@ class Workbench:
         ):
             defaults = WorkloadInput(preset=preset, connect_per_transaction=reconnect).model_dump(exclude={'environment_fingerprint'})
             defaults['script'] = PRESETS[preset]
+            if driver == 'jdbc':
+                defaults['jdbc_jar'] = jdbc_jar
             available = 'workload.' + driver in actions
             workloads.append({
                 'id': name, 'title': title, 'description': description, 'driver': driver,
@@ -79,7 +83,7 @@ class Workbench:
                 'id', 'title', 'product_id', 'host', 'port', 'database_name', 'database_user',
             )},
             'environment_fingerprint': environment_fingerprint(environment),
-            'workloads': workloads, 'modes': ['sequential'],
+            'workloads': workloads, 'modes': ['sequential'], 'profiles': list(PROFILES),
             'limitations': ['第一阶段支持顺序执行；并发场景尚未接入。',
                             '自定义脚本仅支持 SELECT，执行于只读事务；不支持 pgbench 元命令。'],
         }

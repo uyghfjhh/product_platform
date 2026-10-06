@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Empty, Input, InputNumber, Modal, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Empty, Input, InputNumber, Modal, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { ExperimentOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 
 import { api, generateUUID, post, statusColor, type Environment, type Task } from '../platform/api';
@@ -17,7 +17,9 @@ type Entry = {
   default_selected: boolean; editable_script: boolean; source: string;
 };
 type Draft = Entry & { key: string; selected: boolean; parameters: Parameters };
-type Catalog = { environment: Environment; workloads: Entry[]; limitations: string[] };
+type Catalog = { environment: Environment; workloads: Entry[]; limitations: string[];
+  profiles?: { id: string; title: string; duration_seconds: number; clients: number }[];
+};
 type Plan = {
   id: string; ready: boolean; issues: string[]; smoke: boolean; expires_at: string;
   environment: Environment; duration_seconds: number; peak_clients: number;
@@ -27,7 +29,7 @@ type Plan = {
 type Run = { id: string; status: string; reason?: string; tasks: string[]; task_details: Task[]; definition: Plan };
 type Sample = { elapsed: number; tps: number; latency_ms: number };
 type Metrics = {
-  status: string; available: boolean; samples: Sample[];
+  status: string; available: boolean; samples: Sample[]; sample_count?: number;
   summary: { tps?: number; latency_ms?: number; errors?: number };
   result?: { reason: string; performance_verdict: string; correctness_verdict: string;
     checks: { name: string; expected: unknown; actual: unknown; passed: boolean }[] };
@@ -150,10 +152,11 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
   }
   function numberField(key: 'clients' | 'jobs' | 'duration_seconds' | 'target_tps' | 'statement_timeout_seconds' | 'minimum_tps' | 'max_average_latency_ms', label: string, min: number, max: number) {
     if (!current) return null;
-    return <div className="wb-field"><label>{label}</label><InputNumber aria-label={label} min={min} max={max} value={current.parameters[key]} disabled={busy}
+    return <div className="wb-field"><label>{label}</label><InputNumber aria-label={label} min={min} max={max} value={current.parameters[key]} disabled={busy} precision={key.endsWith('_tps') || key.endsWith('_ms') ? undefined : 0}
       onChange={(value) => {
-        const patch = { [key]: value == null ? (key === 'jobs' ? null : min) : Number(value) };
-        if (key === 'clients' && current.parameters.jobs && Number(value) < current.parameters.jobs) patch.jobs = Number(value);
+        const numeric = value == null ? min : Number(value);
+        const patch = { [key]: key === 'jobs' && value == null ? null : numeric };
+        if (key === 'clients' && current.parameters.jobs && numeric < current.parameters.jobs) patch.jobs = numeric;
         update(patch);
       }} /></div>;
   }
@@ -180,12 +183,23 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
             {current.key.startsWith('custom-') && <div className="wb-custom-name"><Input aria-label="自定义负载名称" value={current.title} maxLength={120} onChange={(event) => setDrafts((entries) => entries.map((entry) => entry.key === active ? { ...entry, title: event.target.value } : entry))} /><Button danger disabled={busy} onClick={() => { setDrafts((entries) => entries.filter((entry) => entry.key !== active)); setActive(drafts[0]?.key || ''); }}>移除</Button></div>}
             <Tabs items={[
               { key: 'parameters', label: '负载参数', children: <>
-                <div className="wb-fields">{numberField('duration_seconds', '时长（秒）', 1, 86400)}{numberField('clients', '并发客户端', 1, 128)}
-                  {current.driver === 'pgbench' && <>{numberField('jobs', '工作线程（空值自动）', 1, current.parameters.clients)}{numberField('target_tps', '目标 TPS（0 表示不限速）', 0, 1000000)}</>}
-                  {numberField('statement_timeout_seconds', '单条查询超时（秒）', 1, 60)}</div>
-                {current.driver === 'pgbench' ? <div className="wb-toggle-field"><div><strong>每事务重新连接</strong><span>开启后测试短连接周转，否则复用客户端连接。</span></div><Switch aria-label="每事务重新连接" checked={current.parameters.connect_per_transaction} disabled={busy} onChange={(value) => update({ connect_per_transaction: value })} /></div>
-                  : <div className="wb-field"><label>控制机 JDBC 驱动 jar 绝对路径</label><Input aria-label="JDBC 驱动路径" value={current.parameters.jdbc_jar} disabled={busy} onChange={(event) => update({ jdbc_jar: event.target.value })} placeholder="选择本机已有驱动文件，不上传凭据" /></div>}
-                <div className="wb-quiet-note">本阶段使用只读事务，不初始化业务表，不修改连接池或数据库配置。</div>
+                <div className="wb-default-summary"><strong>常用参数和 SQL 已填好，通常无需修改</strong><span>需要调整负载强度时，可选一个常用预设。</span></div>
+                <Space wrap className="wb-profile-presets">{catalog?.profiles?.map((profile) => <Button key={profile.id} disabled={busy}
+                  type={current.parameters.duration_seconds === profile.duration_seconds && current.parameters.clients === profile.clients ? 'primary' : 'default'}
+                  onClick={() => update({ duration_seconds: profile.duration_seconds, clients: profile.clients, jobs: null })}>{profile.title}</Button>)}</Space>
+                <div className="wb-fields">{numberField('duration_seconds', '时长（秒）', 1, 86400)}{numberField('clients', '并发客户端', 1, 128)}</div>
+                <div className="wb-default-facts"><Tag>{current.driver === 'jdbc' ? '线程与客户端一致' : current.parameters.jobs == null ? '线程自动匹配' : `线程 ${current.parameters.jobs}`}</Tag><Tag>查询超时 {current.parameters.statement_timeout_seconds} 秒</Tag>
+                  {current.driver === 'pgbench' && <Tag>{current.parameters.connect_per_transaction ? '每事务重连' : '复用连接'}</Tag>}
+                  {current.driver === 'jdbc' && <Tag>{current.parameters.jdbc_jar ? '驱动路径已填入' : '需要 JDBC 驱动'}</Tag>}</div>
+                {current.driver === 'jdbc' && !current.parameters.jdbc_jar && <Alert type="warning" showIcon message="未发现本机 JDBC 驱动，请在高级配置中补充路径" />}
+                <Collapse key={current.key} ghost className="wb-advanced" defaultActiveKey={current.driver === 'jdbc' && !current.parameters.jdbc_jar ? ['advanced'] : []}
+                  items={[{ key: 'advanced', label: current.driver === 'jdbc' && !current.parameters.jdbc_jar ? '高级配置（需补充驱动）' : '高级配置（已提供默认值）', children: <>
+                    <div className="wb-fields">{current.driver === 'pgbench' && <>{numberField('jobs', '工作线程（空值自动）', 1, current.parameters.clients)}{numberField('target_tps', '目标 TPS（0 表示不限速）', 0, 1000000)}</>}
+                      {numberField('statement_timeout_seconds', '单条查询超时（秒）', 1, 60)}</div>
+                    {current.driver === 'pgbench' ? <div className="wb-toggle-field"><div><strong>每事务重新连接</strong><span>已按负载模板选择，通常无需修改。</span></div><Switch aria-label="每事务重新连接" checked={current.parameters.connect_per_transaction} disabled={busy} onChange={(value) => update({ connect_per_transaction: value })} /></div>
+                      : <div className="wb-field"><label>控制机 JDBC 驱动 jar 绝对路径</label><Input aria-label="JDBC 驱动路径" value={current.parameters.jdbc_jar} disabled={busy} onChange={(event) => update({ jdbc_jar: event.target.value })} placeholder="自动识别本机驱动，也可手动覆盖" /></div>}
+                  </> }]} />
+                <div className="wb-quiet-note">预设只调整时长、并发和自动线程，不覆盖 SQL 或验收规则。查询使用只读事务，建议使用专用只读账号。</div>
               </> },
               { key: 'sql', label: 'SQL 脚本', children: <>
                 <div className="wb-script-toolbar"><Tag color={current.parameters.script === current.defaults.script ? 'default' : 'processing'}>{current.parameters.script === current.defaults.script ? '默认脚本' : '本次自定义'}</Tag><Space><Button size="small" disabled={busy} onClick={() => update({ script: current.defaults.script })}>恢复默认 SQL</Button><Button size="small" onClick={() => setCompare(true)}>对照默认</Button></Space></div>
@@ -216,6 +230,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
       { title: '证据', render: (_, row) => <Space><Button size="small" disabled={!row.identity} onClick={() => setInspectedTask(row.identity)}>采样与判点</Button><Button size="small" disabled={!row.identity} onClick={() => openTask(row.identity)}>任务与原始输出</Button></Space> },
     ]} />
     {taskId && <div className="wb-observation"><div className="wb-curves"><Curve samples={observed?.samples || []} field="tps" title="TPS 实际采样" /><Curve samples={observed?.samples || []} field="latency_ms" title="平均延迟 ms 实际采样" /></div>
+      {observed && (observed.sample_count ?? observed.samples.length) > observed.samples.length && <div className="wb-quiet-note">曲线显示最近 {observed.samples.length} / {observed.sample_count} 个采样；完整历史见「任务与原始输出」。</div>}
       {observed?.result ? <><Typography.Paragraph>{observed.result.reason}</Typography.Paragraph><Table size="small" pagination={false} rowKey="name" dataSource={observed.result.checks} columns={[{ title: '判点', dataIndex: 'name' }, { title: '期望', dataIndex: 'expected', render: text }, { title: '实际', dataIndex: 'actual', render: text }, { title: '判定', dataIndex: 'passed', render: (passed: boolean) => <Tag color={passed ? 'success' : 'error'}>{passed ? 'PASS' : 'FAIL'}</Tag> }]} /><div className="wb-quiet-note">业务正确性断言：{verdict(observed.result.correctness_verdict)}。曲线为客户端采样，不包含未采集的分位延迟。</div></> : <div className="wb-quiet-note">尚未产生最终判点；可打开任务查看实时输出。</div>}
     </div>}
   </section> : <div className="workload-empty"><Empty description="尚未提交负载方案，启动后在这里观察每项任务" /></div>;

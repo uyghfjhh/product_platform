@@ -6,6 +6,8 @@ from pglast.parser import parse_sql_json
 
 
 def validate_script(script):
+    if len(script.encode('utf-8')) > 64000:
+        raise ValueError('SQL 的 UTF-8 大小不能超过 64000 字节')
     if any(line.lstrip().startswith('\\') for line in script.splitlines()):
         raise ValueError('自定义 SQL 不允许 pgbench 元命令')
     try:
@@ -20,6 +22,19 @@ def validate_script(script):
 
     def inspect(value):
         if isinstance(value, dict):
+            function = value.get('FuncCall')
+            if function:
+                name = function['funcname'][-1].get('String', {}).get('sval', '').lower()
+                if name in {
+                    'pg_promote', 'pg_reload_conf', 'pg_terminate_backend', 'pg_cancel_backend',
+                    'pg_wal_replay_pause', 'pg_wal_replay_resume', 'pg_switch_wal',
+                    'pg_create_restore_point', 'pg_backup_start', 'pg_backup_stop',
+                    'pg_start_backup', 'pg_stop_backup', 'pg_drop_replication_slot',
+                    'pg_create_physical_replication_slot', 'pg_create_logical_replication_slot',
+                    'pg_replication_slot_advance', 'pg_logical_emit_message', 'set_config',
+                    'lo_import', 'lo_export', 'lo_unlink', 'dblink_exec',
+                }:
+                    raise ValueError('只读负载不允许管理或外部变更函数：' + name)
             if set(value) & {'InsertStmt', 'UpdateStmt', 'DeleteStmt', 'MergeStmt', 'IntoClause', 'LockingClause', 'intoClause', 'lockingClause'}:
                 raise ValueError('查询不能包含写入、SELECT INTO 或行锁')
             for item in value.values():
