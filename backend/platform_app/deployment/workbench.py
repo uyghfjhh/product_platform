@@ -71,7 +71,7 @@ def compile_spec(settings, spec, environment_id):
         raise ValueError("主机资源地址不能重复")
     if spec.hosts and spec.host not in addresses:
         raise ValueError("主表单主机地址必须在已声明的主机资源中")
-    if spec.mode == "import":
+    if spec.mode in {"import", "adopt"}:
         try:
             config = yaml.safe_load(spec.source_yaml)
         except yaml.YAMLError as exc:
@@ -272,8 +272,33 @@ def diff_operations(current, desired):
     diff = diff_configs(current, desired)
     operations = []
     executable = True
+    from .change_execution import configurable, movable, removable
+    from .endpoint_metadata import endpoint_contexts
+    from .logical_changes import logical_editable
+    from .member_changes import member_delta, new_member_streams, retired_member_streams
+    from .primary_migration import primary_cluster
+
+    primary_moves = {
+        row['name'] for row in diff['changed']
+        if primary_cluster(current, desired, row['name'])
+    }
+    member_streams = new_member_streams(current, desired)
+    member_nodes = {node for group in member_streams.values() for node in group['nodes']}
+    retired_streams = retired_member_streams(current, desired)
+    retired_nodes = {node for group in retired_streams.values() for node in group['nodes']}
+    if primary_moves and (len(diff['changed']) != 1 or diff['added'] or diff['removed'] or diff['parameters'] or diff['topology']):
+        executable = False
+        operations.append({
+            'kind': 'primary_migration_scope', 'executable': False,
+            'operation': '主节点迁移须独立审阅，不能混合扩缩容、参数或其他节点变更',
+        })
     for name in diff["added"]:
-        if _added_node_executable(current, desired, name):
+        if name in member_nodes:
+            operations.append({
+                'kind': 'create_member_instance', 'node': name, 'executable': True,
+                'operation': '初始化新增复制成员的独立主备实例，仅允许新目录；随后加入复制组',
+            })
+        elif _added_node_executable(current, desired, name):
             operations.append(
                 {
                     "kind": "add_standby",
@@ -293,34 +318,56 @@ def diff_operations(current, desired):
                 }
             )
     for name in diff["removed"]:
-        executable = False
+        can_remove = removable(current, desired, name) or name in retired_nodes
+        executable = executable and can_remove
         operations.append(
             {
                 "kind": "remove_node",
                 "node": name,
-                "executable": False,
-                "operation": "缩容移除节点需先清理其复制槽，暂不支持自动执行",
+                "executable": can_remove,
+                "operation": ("完成复制成员退出／分片排空后停止退役实例，移除活动配置，保留数据目录"
+                              if name in retired_nodes else "停止退役备库并释放其声明的物理复制槽，保留数据目录" if can_remove else "主节点或拓扑成员不能作为物理备库缩容"),
             }
         )
     for row in diff["changed"]:
-        executable = False
+        is_primary = row['name'] in primary_moves
+        can_move = movable(current, desired, row['name']) or is_primary
+        executable = executable and can_move
         fields = "、".join(sorted(row["fields"]))
+        primary_description, contexts = '', []
+        if is_primary:
+            old, new = current['instances'][row['name']], desired['instances'][row['name']]
+            same_location = (current['hosts'][old['host']]['address'], old['data_dir']) == (
+                desired['hosts'][new['host']]['address'], new['data_dir'])
+            primary_description = (f'主库端口变更（{fields}）：正常停止后重启，保留原目录和复制槽，重连备库；写入有暂停'
+                                   if same_location else f'主库迁移（{fields}）：先复制追平并检查逻辑槽/WAL，回放旧主库关闭栅栏后提升并重连备库；写入有暂停，原目录保留')
+            contexts = endpoint_contexts(current, primary_cluster(current, desired, row['name'])) or []
+            if contexts:
+                primary_description += '；随后同步关联复制端点并验收'
         operations.append(
             {
                 "kind": "change_node",
                 "node": row["name"],
-                "executable": False,
-                "operation": f"结构字段变更（{fields}）需要重建节点，暂不支持自动执行",
+                "executable": can_move,
+                "operation": (primary_description
+                              if is_primary else f"备库变更（{fields}），新备库追平后停止原实例并保留原数据" if can_move else f"结构字段变更（{fields}）需先调整角色；跨目录备库迁移需要独立新槽"),
                 "detail": row["fields"],
             }
         )
+        if contexts:
+            operations.append({
+                'kind': 'replication_endpoint', 'node': row['name'], 'executable': True,
+                'operation': '更新关联 MMR 成员 DSN／Citus 节点地址／逻辑订阅连接；保留节点标识、分片与原连接凭据',
+                'detail': [{'kind': context['kind'], 'name': context['name'], 'role': context.get('role', 'member')} for context in contexts],
+            })
     if diff["parameters"]:
-        executable = False
+        can_configure = configurable(diff["parameters"])
+        executable = executable and can_configure
         operations.append(
             {
                 "kind": "parameters",
-                "executable": False,
-                "operation": "postgresql 参数差异 %d 项需重启/热加载，暂不支持自动应用"
+                "executable": can_configure,
+                "operation": "postgresql 参数差异 %d 项，按参数上下文热加载或分节点重启，并检查结果"
                 % len(diff["parameters"]),
                 "detail": diff["parameters"],
             }
@@ -342,11 +389,16 @@ def diff_operations(current, desired):
     ):
         section = diff[key]
         if any((section["added"], section["removed"], section["changed"])):
-            executable = False
+            changed_nodes = set(diff['added']) | primary_moves | {row['name'] for row in diff['changed'] if movable(current,desired,row['name'])}
+            field = 'host' if key == 'hosts' else 'installation'
+            added_used = all(any(desired['instances'][name][field]==entry for name in changed_nodes) for entry in section['added'])
+            removed_unused = all(all(node[field]!=entry for node in desired['instances'].values()) for entry in section['removed'])
+            resource_change_allowed = not section['changed'] and added_used and removed_unused
+            executable = executable and resource_change_allowed
             operations.append(
                 {
                     "kind": kind,
-                    "executable": False,
+                    "executable": resource_change_allowed,
                     "operation": (
                         "%s差异：新增 %s、移除 %s、修改 %s，地址/目录/凭据变化不支持自动执行"
                         % (
@@ -377,15 +429,44 @@ def diff_operations(current, desired):
             after = dict(desired["streaming_clusters"][name])
             b_standbys = before.pop("standbys") or []
             a_standbys = after.pop("standbys") or []
-            # 仅追加备库条目且新增成员全部属于本批新增实例，由幂等 create 覆盖。
-            if before == after and a_standbys[: len(b_standbys)] == b_standbys and all(
-                row.get("instance") in diff["added"]
-                for row in a_standbys[len(b_standbys):]
-            ):
+            b_members = {row['instance']: row for row in b_standbys}
+            a_members = {row['instance']: row for row in a_standbys}
+            if (before == after
+                    and all(a_members[n] == b_members[n] or (movable(current,desired,n) and (set(a_members[n])-{'slot'}) == (set(b_members[n])-{'slot'}) and all(a_members[n][key]==b_members[n][key] for key in a_members[n] if key!='slot')) for n in a_members.keys() & b_members.keys())
+                    and all(n in diff['added'] for n in a_members.keys() - b_members.keys())
+                    and all(n in diff['removed'] and removable(current, desired, n)
+                            for n in b_members.keys() - a_members.keys())):
                 covered.add(name)
     for section, change in diff["topology"].items():
         change = dict(change)
+        if section in {'mmr_clusters', 'citus_clusters', 'logical_replications'}:
+            supported = []
+            for name in change['changed']:
+                delta = member_delta(current, desired, section, name) if section != 'logical_replications' else None
+                if (delta is not None or (section == 'logical_replications' and logical_editable(current, desired, name))):
+                    supported.append(name)
+            if section == 'logical_replications':
+                supported += [name for name in change['added'] + change['removed'] if logical_editable(current, desired, name)]
+            if supported:
+                independent = (set(diff['added']) <= member_nodes and set(diff['removed']) <= retired_nodes
+                               and not (diff['changed'] or diff['parameters']))
+                executable = executable and independent
+                operations.append({
+                    'kind': 'replication_members', 'executable': independent,
+                    'operation': ({
+                        'mmr_clusters': 'MMR 成员加入／正常退出，核对组标识、拒绝覆盖新增成员业务表，保留退役数据库',
+                        'citus_clusters': 'Citus 注册新增 Worker；排空分片后移除退役 Worker，保留数据库',
+                        'logical_replications': '逻辑复制链路增删／重建，核对订阅和复制槽；初始复制拒绝非空目标表，保留业务数据',
+                    }[section] + ('；成员变更不能与其他节点迁移或参数变更混合' if not independent else '')),
+                    'detail': {'section': section, 'names': supported},
+                })
+                for key in ('added', 'removed', 'changed'):
+                    change[key] = [name for name in change[key] if name not in supported]
+                if not any(change.values()):
+                    continue
         if section == "streaming_clusters":
+            change['added'] = [name for name in change['added'] if name not in member_streams]
+            change['removed'] = [name for name in change['removed'] if name not in retired_streams]
             change["changed"] = [
                 name for name in change["changed"] if name not in covered
             ]
@@ -412,13 +493,23 @@ def inspect_plan(plan):
     checks = []
     groups = {}
     added = set((plan.get("diff") or {}).get("added") or [])
+    baseline_file = Path(plan['config_path']).with_name('baseline.yaml')
+    baseline = yaml.safe_load(baseline_file.read_text()) if baseline_file.is_file() else {}
+    moved = {row['name'] for row in (plan.get('diff') or {}).get('changed', [])}
     ssh_by_address = {
         host["address"]: host.get("ssh")
         for host in (facts.get("hosts") or {}).values()
     }
     for node in facts["nodes"]:
-        if added:
+        if added or moved:
             node = {**node, "existing": node["name"] not in added}
+        if node['name'] in moved:
+            original = baseline['instances'][node['name']]
+            host = baseline['hosts'][original['host']]['address']
+            fresh = host != node['host'] or original['data_dir'] != node['data_dir']
+            node = {**node, 'existing':not fresh, 'port_changed':not fresh and original['port'] != node['port']}
+            if fresh and host == node['host'] and original['port'] == node['port']:
+                node['port_owner_dir'] = original['data_dir']
         groups.setdefault((node["host"], node["installation"]), []).append(node)
     for (host, installation), nodes in groups.items():
         try:
@@ -580,7 +671,7 @@ class Workbench:
         facts = validate_config(self.settings, path, target)
         declared = (
             {host["address"] for host in facts.get("hosts", {}).values()}
-            if spec.mode == "import"
+            if spec.mode in {"import", "adopt"}
             else {spec.host} | {host.address for host in spec.hosts}
         )
         if any(node["host"] not in declared for node in facts["nodes"]):
@@ -593,13 +684,13 @@ class Workbench:
             (directory / name).write_text(text)
         # Imports preserve compatible auxiliary files rather than discarding test mappings.
         previous = self.store.environments.get_environment(key)
-        if spec.mode == "import" and previous and previous.get("deployment_config"):
+        if spec.mode in {"import", "adopt"} and previous and previous.get("deployment_config"):
             previous_dir = Path(previous["deployment_config"]).parent
             for name in ("regress.override.yaml", "regress.yaml"):
                 old = previous_dir / name
                 if old.is_file():
                     (directory / name).write_text(old.read_text())
-        if spec.mode == "import":
+        if spec.mode in {"import", "adopt"}:
             import_files = provider_extensions(self.settings, spec.product_id).import_files
             if import_files:
                 for name, text in import_files(
@@ -627,7 +718,7 @@ class Workbench:
         # 导入草稿的 YAML 与当前部署配置出现语义差异时，这是集群修改计划，
         # 不再是纯接管登记。逐项差异映射为可执行/不可执行操作。
         current_config = None
-        if spec.mode == "import" and previous and previous.get("deployment_config"):
+        if spec.mode in {"import", "adopt"} and previous and previous.get("deployment_config"):
             try:
                 current_config = yaml.safe_load(
                     Path(previous["deployment_config"]).read_text()
@@ -640,13 +731,16 @@ class Workbench:
             plan["diff"] = diff
             plan["executable"] = executable
             plan["operations"] = operations
+            baseline_path = directory / "baseline.yaml"
+            baseline_path.write_text(yaml.safe_dump(current_config, allow_unicode=True, sort_keys=False))
+            plan["files"][baseline_path.name] = digest(baseline_path.read_text())
         plan["checks"] = inspect_plan(plan)
         plan["ready"] = bool(plan["checks"]) and all(
             check["ok"] for check in plan["checks"]
         )
         if plan.get("mode") == "diff":
             plan["action"] = (
-                "deployment.create" if plan["executable"] else None
+                "deployment.change" if plan["executable"] else None
             )
         else:
             plan["action"] = (
@@ -670,7 +764,7 @@ class Workbench:
         plan["limitations"] = [
             "使用已有数据库安装；远程主机通过声明的 SSH 凭据或当前用户 SSH 配置访问",
             (
-                "差异计划仅自动执行追加流复制备库，其余差异如实列出但不执行"
+                "支持物理备库扩缩容、参数、独立主库迁移及复制成员变更；新增 MMR/Citus 成员可创建独立主备实例，退役时停止实例并移除活动配置"
                 if plan.get("mode") == "diff"
                 else "这是新建／接管计划，不是现有集群修改的全量差异计划"
             ),
@@ -700,11 +794,11 @@ class Workbench:
     def environment(self, plan):
         primary = plan["facts"]["nodes"][0]
         spec = plan["spec"]
-        return {
+        value = {
             "id": plan["environment_id"],
             "product_id": spec["product_id"],
             "title": spec["title"],
-            "host": spec["host"],
+            "host": primary["host"],
             "port": primary["port"],
             "database_name": "postgres",
             "database_user": "postgres",
@@ -712,6 +806,9 @@ class Workbench:
             "deployment_target": plan["target"],
             "desired_deployment_plan_id": plan["id"],
         }
+        if plan.get('mode') == 'diff':
+            value['resource_baseline_config'] = str(Path(plan['config_path']).with_name('baseline.yaml'))
+        return value
 
     def verify(self, key, *, inspect=True):
         plan = self.plan(key)
@@ -784,4 +881,4 @@ def worker_environment(settings, store, environment, snapshot):
     checks = inspect_plan(plan)
     if not all(check["ok"] for check in checks):
         raise ValueError("执行前检查失败：节点端口、数据目录或安装发生变化")
-    return service.environment(plan)
+    return {**service.environment(plan), "_deployment_plan_id": plan['id']}

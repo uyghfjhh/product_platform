@@ -78,66 +78,78 @@
 /* Node Hardware Card on Canvas */
 .topo-node {
   position: absolute;
-  width: 220px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  width: 280px;
+  height: 68px;
+  box-sizing: border-box;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-top-width: 2px;
   border-radius: var(--radius-md);
-  padding: 0.75rem 0.85rem;
+  padding: 0.5rem 0.75rem;
   color: #e2e8f0;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(56, 189, 248, 0.1);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.5), 0 0 10px rgba(56, 189, 248, 0.08);
+  backdrop-filter: blur(10px);
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
   z-index: 5;
 }
 
-.topo-node.compact {
-  width: 195px;
-  padding: 0.45rem 0.65rem;
-  background: rgba(15, 23, 42, 0.92);
+/* Status Accent Top Borders */
+.topo-node.accent-primary {
+  border-top-color: #10b981;
 }
 
-.topo-node.compact .topo-node-header {
-  margin-bottom: 0.2rem;
+.topo-node.accent-standby {
+  border-top-color: #38bdf8;
 }
 
-.topo-node.compact .topo-node-title {
-  font-size: 0.76rem;
-}
-
-.topo-node.compact .topo-node-badge {
-  font-size: 0.62rem;
-  padding: 0.05rem 0.3rem;
-}
-
-.topo-node.compact .topo-node-body {
-  font-size: 0.67rem;
-}
-
-.topo-node.compact .topo-node-field {
-  margin-top: 0.1rem;
+.topo-node.accent-down {
+  border-top-color: #ef4444;
 }
 
 .topo-node:hover {
   transform: translateY(-2px);
-  box-shadow: 0 15px 30px -5px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.25);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.65), 0 0 18px rgba(56, 189, 248, 0.25);
   border-color: #38bdf8;
+}
+
+.topo-node.accent-primary:hover {
+  border-color: #10b981;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.65), 0 0 18px rgba(16, 185, 129, 0.25);
+}
+
+.topo-node.accent-down:hover {
+  border-color: #ef4444;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.65), 0 0 18px rgba(239, 68, 68, 0.25);
 }
 
 .topo-node-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.4rem;
+  gap: 0.4rem;
+  min-height: 20px;
 }
 
 .topo-node-title {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  color: #fff;
+  color: #f8fafc;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.topo-node-title .node-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono), system-ui;
 }
 
 .topo-node-pulse {
@@ -145,6 +157,7 @@
   height: 8px;
   border-radius: 50%;
   display: inline-block;
+  flex-shrink: 0;
 }
 
 .topo-node-pulse.active {
@@ -163,14 +176,151 @@
   50% { transform: scale(1.3); opacity: 0.7; }
 }
 
-.topo-node-badge {
-  font-size: 0.68rem;
+.topo-node-role-badge {
+  font-size: 0.64rem;
   font-weight: 600;
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.topo-node-role-badge.role-primary {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.topo-node-role-badge.role-standby {
   background: rgba(56, 189, 248, 0.15);
   color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.topo-node-role-badge.down {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.topo-node-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+/* Subline: Endpoint (Full IP:Port) + Metadata (PID + Status) */
+.topo-node-subline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  min-height: 18px;
+}
+
+.topo-node-endpoint {
+  font-family: var(--font-mono, monospace);
+  color: #7dd3fc;
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.topo-node-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+/* PostgreSQL 根守护进程 (postmaster/pgmaster) PID 徽标 */
+.topo-node-pid {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(15, 23, 42, 0.75);
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+  flex-shrink: 0;
+}
+
+.topo-node-pid.no-pid {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(30, 41, 59, 0.4);
+}
+
+.topo-node.accent-primary .topo-node-pid.has-pid {
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(6, 78, 59, 0.35);
+}
+
+.topo-node.accent-down .topo-node-pid {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(69, 10, 10, 0.3);
+}
+
+.topo-node-plugins {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.plugin-pill {
+  font-size: 0.58rem;
+  font-weight: 700;
+  padding: 0.05rem 0.32rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.plugin-pill.plugin-mmr {
+  background: rgba(168, 85, 247, 0.22);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+}
+
+.plugin-pill.plugin-mac {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+.plugin-pill.plugin-citus {
+  background: rgba(236, 72, 153, 0.22);
+  color: #f472b6;
+  border: 1px solid rgba(236, 72, 153, 0.45);
+}
+
+.topo-node-status-text {
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.topo-node-status-text.active {
+  color: #34d399;
+}
+
+.topo-node-status-text.down {
+  color: #f87171;
+}
+
+.topo-node-status-text.unknown {
+  color: #94a3b8;
 }
 
 /* Offline / Cleaned Node Styling */
@@ -399,6 +549,14 @@
     stroke-dashoffset: -24;
   }
 }
+
+.topo-edge-line.edge-highlight {
+  stroke-width: 3.5px !important;
+  stroke: #38bdf8 !important;
+  filter: drop-shadow(0 0 8px #38bdf8) !important;
+  animation: topo-dash 0.6s linear infinite !important;
+  opacity: 1 !important;
+}
 .topo-node-badges {
   display: flex;
   align-items: center;
@@ -542,15 +700,7 @@
   transform: translateY(-1px);
 }
 
-.node-quick-actions-popover {
-
-/* Match the model's card dimensions and keep badges inside the header. */
+/* Match the model's card dimensions and keep clean alignment. */
 .reference-deploy-canvas .topo-node { box-sizing: border-box; }
-.reference-deploy-canvas .topo-node-header { flex-direction: column; align-items: stretch; gap: 6px; }
 .reference-deploy-canvas .topo-node-title { min-width: 0; }
 .reference-deploy-canvas .node-label-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reference-deploy-canvas .topo-node-badges { justify-content: flex-start; flex-wrap: wrap; }
-.reference-deploy-canvas .topo-node-badge { white-space: nowrap; }
-.reference-deploy-canvas .topo-node-field { gap: 8px; }
-.reference-deploy-canvas .topo-node-field .field-key { flex-shrink: 0; }
-.reference-deploy-canvas .topo-node-field .field-val { min-width: 0; overflow-wrap: anywhere; }

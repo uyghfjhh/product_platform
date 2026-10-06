@@ -3,6 +3,7 @@ import { createStudioBFFClient } from '@prisma/studio-core/data/bff';
 import { createPostgresAdapter } from '@prisma/studio-core/data/postgres-core';
 import { Studio } from '@prisma/studio-core/ui';
 import '@prisma/studio-core/ui/index.css';
+import { generateUUID } from '../platform/api';
 
 // Use Studio's public theme API. CSS variables follow the platform palette
 // immediately, including overlays, without maintaining a second theme setting.
@@ -41,12 +42,24 @@ const palette = `
 const theme = `:root { ${palette} } .dark { ${palette} }`;
 
 export default function StudioPanel({ environmentId, nodeId }: { environmentId: string; nodeId?: string }) {
+  const target = nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : '';
+  const path = `/environments/${encodeURIComponent(environmentId)}/studio${target}`;
   const adapter = useMemo(() => {
-    const target = nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : '';
+    const url = `/api/v1${path}`;
     const client = createStudioBFFClient({
-      url: `/api/v1/environments/${encodeURIComponent(environmentId)}/studio${target}`,
+      url,
+      queryInsights: true,
+      fetch: async (input, init) => {
+        const id = generateUUID();
+        const headers = new Headers(init?.headers);
+        headers.set('X-Studio-Request-Id', id);
+        const cancel = () => { void fetch(`${url}/cancel/${id}`, { method: 'POST', keepalive: true }).catch(() => undefined); };
+        init?.signal?.addEventListener('abort', cancel, { once: true });
+        try { return await fetch(input, { ...init, headers }); }
+        finally { init?.signal?.removeEventListener('abort', cancel); }
+      },
     });
     return createPostgresAdapter({ executor: client });
-  }, [environmentId, nodeId]);
+  }, [path]);
   return <Studio adapter={adapter} theme={theme} />;
 }

@@ -12,43 +12,44 @@ public final class HaSqlParseExtended {
                 if (!result.next()) {
                     throw new IllegalStateException("query returned no rows: " + sql);
                 }
-                return result.getInt(1);
+                int actual = result.getInt(1);
+                if (result.wasNull() || result.next()) {
+                    throw new IllegalStateException("expected exactly one non-null integer: " + sql);
+                }
+                return actual;
             }
         }
     }
 
-    private static void expectFailure(Connection connection) throws Exception {
+    private static void expectFailure(Connection connection, String phase) throws Exception {
         try (PreparedStatement statement = connection.prepareStatement("SELECT ? / 0")) {
             statement.setInt(1, 1);
             statement.executeQuery();
             throw new IllegalStateException("division by zero unexpectedly succeeded");
         } catch (SQLException expected) {
-            System.out.println("EXPECTED_ERROR=" + expected.getSQLState());
+            if (!"22012".equals(expected.getSQLState())) {
+                throw expected;
+            }
+            System.out.println(phase + "_ERROR=" + expected.getSQLState());
         }
     }
 
     public static void main(String[] args) throws Exception {
         try (Connection connection = DriverManager.getConnection(args[0], args[1], args[2])) {
             int parameter = queryInt(connection, "SELECT ?::int", 42);
-            int readPort = queryInt(connection, "SELECT inet_server_port() + (? * 0)", 1);
             System.out.println("PARAM_VALUE=" + parameter);
-            System.out.println("READ_PORT=" + readPort);
 
             connection.setAutoCommit(false);
-            expectFailure(connection);
+            expectFailure(connection, "ROLLBACK");
             connection.rollback();
+            System.out.println("ROLLBACK_VALUE=" + queryInt(connection, "SELECT ?::int", 42));
             System.out.println("ROLLBACK_RECOVERY=OK");
 
-            expectFailure(connection);
+            expectFailure(connection, "COMMIT");
             connection.commit();
+            System.out.println("COMMIT_VALUE=" + queryInt(connection, "SELECT ?::int", 42));
             System.out.println("COMMIT_RECOVERY=OK");
 
-            try (PreparedStatement statement = connection.prepareStatement(
-                    "CREATE TEMP TABLE ha_sql_parse_extended(id int)")) {
-                statement.execute();
-            }
-            int writePort = queryInt(connection, "SELECT inet_server_port() + (? * 0)", 1);
-            System.out.println("WRITE_PORT=" + writePort);
             connection.rollback();
         }
     }

@@ -39,10 +39,19 @@ class OperationService:
         self.settings, self.store, self.enqueuer = settings, store, enqueuer
 
     def submit(self, item: OperationRequest):
+        from .resources import product_lock
+        environment=self.store.environments.get_environment(item.environment_id)
+        if environment is None:raise OperationError(404,'环境不存在')
+        with product_lock(self.settings,environment['product_id']):
+            return self._submit(item)
+
+    def _submit(self, item: OperationRequest):
         settings, store = self.settings, self.store
-        if any(key.startswith("_deployment_") for key in item.parameters):
+        if any(key.startswith(("_deployment_", "_workload_")) for key in item.parameters):
             raise OperationError(422, "不能直接设置部署任务内部参数")
         snapshot = None
+        if item.action == "deployment.change" and not item.deployment_plan_id:
+            raise OperationError(422, "集群变更必须提交已审阅部署计划")
         if item.deployment_plan_id:
             from .deployment.workbench import Workbench
             try:
@@ -68,6 +77,10 @@ class OperationService:
         action = action_for_environment(settings, environment, item.action)
         if action is None:
             raise OperationError(422, message="当前环境不支持该操作")
+        if action.capability == 'workload':
+            from .workloads import WorkloadInput
+            try:WorkloadInput.model_validate(item.parameters)
+            except ValueError as exc:raise OperationError(422,'工作负载参数无效') from exc
         try:
             manifest = discover_products(settings.products_root).get(environment["product_id"])
             declared = next(

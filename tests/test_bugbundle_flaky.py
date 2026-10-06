@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from platform_app.actions import ACTIONS, DEPLOYMENT_ACTIONS
 from platform_app.api import create_app
 from platform_app.config import Settings
-from platform_app.filestore import FileStore
 
 
 def settings_for(tmp_path: Path) -> Settings:

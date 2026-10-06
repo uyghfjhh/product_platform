@@ -58,7 +58,6 @@ Web / CLI / CI ──► Platform API ──► Task Worker
 
 ```text
 data/
-├── platform/                 # 队列、资源锁、操作日志、Web 日志
 ├── environments/             # 环境登记与期望／已验收状态
 ├── profiles/                 # 产品回归配置和夹具上下文
 ├── deployment-drafts/        # 草稿与 revision
@@ -66,6 +65,8 @@ data/
 ├── deployment-requests/      # 已审阅申请与恢复状态
 ├── tasks/ + archived-tasks/  # 当前／归档任务及事件投影
 └── results/ + diagnoses/     # 判定与诊断事实
+runtime/                     # 队列、PID 和资源锁
+logs/                        # Web 与任务执行日志
 output/                      # 可重跑的报告与回归证据
 ```
 
@@ -428,18 +429,17 @@ PASS / FAIL / BLOCKED / SKIPPED / ERROR / CANCELLED
 原始日志、命令输出、配置快照、观测、报告和附件记录采集来源、时间、文件身份和内容摘要。当前结果使用临时目录、完整性检查和原子替换，不能出现“新报告 + 旧结果”。
 
 ```text
-data/latest/<product>/<environment>/<target>/<profile>/
-├── result.json
-├── execution.json
-├── events.jsonl
-├── report.html
-├── report.txt
-├── topology.json
-├── config/
-└── logs/
+data/results/<environment>/    # 当前结构化判定与对应产物引用
+data/tasks/<task-id>/          # 任务与事件事实
+data/diagnoses/<environment>/  # 绑定结果摘要的诊断
+output/<product>/<environment>/runs/<execution-id>/
+├── run.json
+├── cases/<target>/            # 结果、步骤、日志及报告
+├── suite-result.json
+└── report.html + junit.xml
 ```
 
-目录路径不包含执行 ID；`execution.json` 保存本次执行身份和版本摘要。诊断绑定证据摘要，结果替换后旧诊断标记过期。
+当前结果记录覆盖当前视图，引用带执行 ID 的独立产物目录；run.json 保存本次执行身份。诊断绑定证据摘要，结果替换后旧诊断标记过期。
 
 ## 8. 数据模型
 
@@ -486,7 +486,7 @@ API 以 `/api/v1` 为稳定前缀，按领域拆分：
 
 动作由 `ActionSpec` 描述输入 schema、资源、是否修改环境、超时、取消和重入策略。HTTP handler 不拼接产品命令，不读写产品源码目录。
 
-前端使用 React + TypeScript + Ant Design、TanStack Query、SSE、真实路由和 OpenAPI 生成类型。公共平台壳、平台页面和产品页面分层；产品专属组件位于产品前端包，不进入公共 `components`。导航、测试入口和能力菜单来自产品 manifest，不写死产品名称。
+前端使用 React + TypeScript + Ant Design、SSE、带页面／环境／实例／任务上下文的 URL 导航和生成的核心响应类型。核心响应契约来自 api/contracts.py，构建时生成 TypeScript；请求范围隔离与缓存由页面 hooks 管理。公共平台壳、平台页面和产品页面分层；产品专属组件位于产品前端包，不进入公共 `components`。导航、测试入口和能力菜单来自产品 manifest，不写死产品名称。
 
 工作台以产品和环境为稳定上下文，侧栏按实际能力显示导航。首屏是可操作的当前工作区：环境健康、待处理任务、最近失败、部署和测试入口。部署页以拓扑与计划为主体，测试页以用例、步骤、判定和证据为主体，License 页支持一次选择多个产品。详情页有可分享 URL；刷新、返回和切换环境时保留筛选与选中对象。布局优先服务密集扫描和重复操作，移动端保留完整任务、日志与结果访问路径。
 
@@ -611,3 +611,6 @@ SDK CLI --output-dir 指定产品／环境产物根，每次生成 runs/<执行I
 FileStore 是组合根，持有 environments／tasks／bindings／deployments／results／diagnoses。领域仓储使用同一个 StorageBackend；跨域约束在同一事务锁内读取，状态和事件提交不拆开。调用方直接选择对应域，避免平铺转发与动态 __getattr__。
 
 前端产品注册和 API 契约属于构建产物，predev／prebuild 自动生成，不提交生成文件。画布通过声明式 data-action 和已转义 data-node-id 交给 React 委托处理，无内联脚本或全局桥。
+
+
+当前功能、真机验收范围和明确限制统一见 [current-functional-status.md](current-functional-status.md)。

@@ -233,7 +233,7 @@ def test_sql_lint_clean_and_error(monkeypatch):
 def test_unknown_procedure_errors(monkeypatch):
     _fake(monkeypatch, lambda sql, params: ([], []))
     result = studio.studio_dispatch(ENV, {"procedure": "query-insights"})
-    assert result[0]["name"] == "ValueError"
+    assert result[0] is None and "queries" in result[1]
     result = studio.studio_dispatch(ENV, {"procedure": "nope"})
     assert result[0]["name"] == "ValueError"
 

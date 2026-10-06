@@ -1,4 +1,3 @@
-from pathlib import Path
 from platform_regress.sdk import CaseContext
 from platform_regress.execution.forensics import CoreSnapshot, CORE_PATTERN
 

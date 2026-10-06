@@ -572,7 +572,7 @@ class HighAvailabilityRuntime(FbasecmanCaseRuntime):
 
         exec_list = []
         if command:
-            exec_list.append({"label": "实际执行", "text": str(command)})
+            exec_list.append({"label": "执行内容", "text": str(command)})
 
         inter_list = []
         if intermediate:

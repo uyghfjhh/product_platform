@@ -5,18 +5,20 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 import shlex
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..commands import render_command
 from ..engine import CaseContext
 
 
 SUPPORTED_SQL_ASSERTIONS = frozenset({
     "rows_equal", "rows_with_output_contains", "query_equals", "scalar_equals",
-    "output_contains_text", "output_contains", "sql_error", "sql_fails",
+    "scalar_integer", "output_contains_text", "output_contains", "sql_error", "sql_fails",
     "command_succeeds",
 })
 
@@ -63,10 +65,12 @@ class StepExecutionResult:
     output: str = ""
     display_output: str = ""
     command: Any = None
+    display_command: str | None = None
     columns: list = field(default_factory=list)
     rows: list = field(default_factory=list)
     sqlstate: str | None = None
     error_message: str | None = None
+    evidence: str | None = None
 
 
 def _render_aligned(columns: list, rows: list) -> str:
@@ -176,6 +180,25 @@ def evaluate_assertion(assertion: dict[str, Any],
         reason = ("" if passed else
                   "预期返回值=%s；实际%s" % (assertion["value"], actual))
         return passed, actual, reason
+    if kind == "scalar_integer":
+        raw = (result.rows[0][0]
+               if len(result.rows) == 1 and len(result.rows[0]) == 1 else None)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = None
+        minimum = assertion.get("minimum")
+        maximum = assertion.get("maximum")
+        passed = (result.returncode == 0 and value is not None
+                  and (minimum is None or value >= minimum)
+                  and (maximum is None or value <= maximum))
+        actual = "返回整数=%s，退出码=%s" % (
+            value if value is not None else "<非整数或非单值>", result.returncode)
+        bounds = "%s..%s" % (
+            minimum if minimum is not None else "-∞",
+            maximum if maximum is not None else "+∞")
+        reason = "" if passed else "预期单行单列整数且范围=%s；实际%s" % (bounds, actual)
+        return passed, actual, reason
     if kind == "sql_error":
         sqlstate = result.sqlstate or "unknown"
         message = result.error_message or "未捕获 ERROR"
@@ -260,11 +283,49 @@ def _shell_command(argv: list[str], cwd: str | None,
     return " ".join(parts)
 
 
+def _passed_analysis(assertion: dict[str, Any]) -> str:
+    kind = assertion.get("type") or "step"
+    if kind == "command_succeeds":
+        return "command_succeeds 通过：命令退出码为 0"
+    if kind in {"output_contains", "output_contains_text"}:
+        return "%s 通过：退出码为 0，输出包含全部声明值 %s" % (
+            kind, json.dumps(assertion.get("values") or [], ensure_ascii=False))
+    if kind == "rows_equal":
+        return "rows_equal 通过：实际行集合与期望行集合完全一致"
+    if kind == "scalar_integer":
+        return "scalar_integer 通过：结果为单行单列整数且处于声明范围"
+    if kind in {"sql_error", "sql_fails", "command_fails"}:
+        return "%s 通过：实际失败状态和错误文本均符合声明" % kind
+    return "断言 %s 通过；实际结果满足声明期望" % kind
+
+
 def _record_step(context: CaseContext, key: str, title: str, passed: bool,
                  actual: str, output: str, reason: str,
-                 node: str | None = None) -> None:
+                 node: str | None = None, *, expected: Any = None,
+                 assertion: dict[str, Any] | None = None,
+                 execution: StepExecutionResult | None = None) -> None:
     """Record a step verdict and raise the legacy failure signal."""
-    details = {"actual": actual, "output": output, "reason": reason}
+    assertion = assertion or {}
+    analysis = reason or _passed_analysis(assertion)
+    details = {
+        "intent":context.values.get("_step_intent"),
+        "expected": expected,
+        "actual": actual,
+        "output": output,
+        "assertion": assertion,
+        "analysis": analysis,
+    }
+    if execution is not None and (execution.display_command or execution.command):
+        if execution.display_command:
+            details["command"] = execution.display_command
+        else:
+            command = execution.command
+            details["command"] = (
+                render_command([str(value) for value in command])
+                if isinstance(command, (list, tuple)) else str(command)
+            )
+    if execution is not None and execution.evidence:
+        details["evidence"] = execution.evidence
     if node is not None:
         details["node"] = node
     context.step(key, title, status="PASS" if passed else "FAIL", details=details)

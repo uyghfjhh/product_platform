@@ -1,0 +1,12 @@
+.monitoring-topology .react-flow__controls button {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+}
+.monitoring-topology .react-flow__controls button svg {
+  fill: currentColor;
+}
+.monitoring-topology .react-flow__attribution {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}

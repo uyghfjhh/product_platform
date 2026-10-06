@@ -66,7 +66,7 @@ export default function TestsPage({
   const adapter = useMemo(() => testAdapter(product, subProduct), [product?.id, subProduct]);
   const { cases, results, sourceStatuses, flakyMap, loading, error, refreshResults } =
     useTestData(adapter.productId, environment?.id, adapter, tasks);
-  const { runTarget, runSuite, terminalTaskId } = useTestExecution(environment, adapter);
+  const { runTarget, runSuite, runSuiteFailed, cancelTask, terminalTaskId } = useTestExecution(environment, adapter);
   useEffect(() => {
     setExpandedSuites(new Set(cases.map((item) => item.suite)));
   }, [cases]);
@@ -88,8 +88,40 @@ export default function TestsPage({
 
   const getCaseDuration = (target: string): string => {
     const s = sourceStatuses[target];
-    if (s && s.duration && s.duration !== '-') return s.duration;
+    if (s && s.duration && s.duration !== '-') {
+      const val = parseFloat(s.duration);
+      if (!isNaN(val)) {
+        if (val < 60) return `${val.toFixed(2)}s`;
+        const mins = Math.floor(val / 60);
+        const secs = (val % 60).toFixed(1);
+        return `${mins}m ${secs}s`;
+      }
+      return s.duration;
+    }
     return '-';
+  };
+
+  const getCaseExecTime = (target: string): { label: string; full: string } | null => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const format = (d: Date) => {
+      const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const full = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}:${pad(d.getSeconds())}`;
+      if (d.getFullYear() === new Date().getFullYear()) {
+        return { label: `${d.getMonth() + 1}月${d.getDate()}日 ${time}`, full };
+      }
+      return { label: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`, full };
+    };
+    const r = resultByTarget.get(target);
+    if (r?.updated_at) {
+      const d = new Date(r.updated_at);
+      if (!isNaN(d.getTime())) return format(d);
+    }
+    const s = sourceStatuses[target];
+    if (s?.modified_at) {
+      const d = new Date(s.modified_at * 1000);
+      if (!isNaN(d.getTime())) return format(d);
+    }
+    return null;
   };
 
   const canViewReport = (target: string): boolean => {
@@ -462,8 +494,9 @@ export default function TestsPage({
         {/* 4. 套件树与用例列表 (Tree & Accordion Cards) */}
         <CaseSuiteList adapter={adapter} cases={cases} loading={loading} groupedSuites={groupedSuites}
           expandedSuites={expandedSuites} environment={environment} tasks={tasks} toggleSuite={toggleSuite}
-          runSuite={runSuite} runTarget={runTarget} getCaseStatus={getCaseStatus}
-          getCaseDuration={getCaseDuration} canViewReport={canViewReport}
+          runSuite={runSuite} runSuiteFailed={runSuiteFailed} runTarget={runTarget} cancelTask={cancelTask}
+          getCaseStatus={getCaseStatus}
+          getCaseDuration={getCaseDuration} getCaseExecTime={getCaseExecTime} canViewReport={canViewReport}
           resultByTarget={resultByTarget} flakyMap={flakyMap} setReportTarget={setReportTarget}
           setEvidenceTarget={setEvidenceTarget} setDiagnosisTarget={setDiagnosisTarget} />
       </div>
@@ -488,7 +521,7 @@ export default function TestsPage({
                 点击【查看完整报告】深入分析失败原因与日志，或点击【单独重跑】进行针对性复测
               </div>
             </div>
-            {adapter.supportsLegacyReports && (
+            {(adapter.supportsLegacyReports || environment) && (
               <button
                 className="filter-banner-btn danger"
                 style={{ padding: '0.45rem 0.95rem', fontSize: '0.82rem', marginLeft: 16 }}
@@ -597,6 +630,7 @@ export default function TestsPage({
       {ReportDrawer && <ReportDrawer
         target={reportTarget}
         environmentId={environment?.id}
+        caseInfo={cases.find((item) => item.target === reportTarget)}
         onClose={() => setReportTarget(null)}
       />}
       <EvidenceDrawer environmentId={environment?.id} target={evidenceTarget}

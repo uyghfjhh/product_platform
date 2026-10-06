@@ -8,6 +8,8 @@
 """
 
 import json
+import time as timing
+from contextlib import contextmanager
 from datetime import date, datetime, time
 from decimal import Decimal
 
@@ -20,6 +22,22 @@ except ImportError:
 
 _STATEMENT_TIMEOUT_MS = 15000
 _MAX_PARAMS = 256
+
+
+@contextmanager
+def _studio_connection(environment, request_id, autocommit=True):
+    from .studio_runtime import track
+    with _connect(environment, autocommit=autocommit) as connection:
+        with track(environment, request_id, connection):
+            yield connection
+
+
+def _measured_query(environment, cursor, query):
+    from .studio_runtime import record
+    started = timing.monotonic()
+    result = _run_query(cursor, query)
+    record(environment, query.get('sql') or '', (timing.monotonic()-started)*1000, len(result))
+    return result
 
 
 def _translate_parameters(sql):
@@ -191,7 +209,7 @@ def _lint_sql(environment, schema, sql):
         return {"diagnostics": [diagnostic]}
 
 
-def studio_dispatch(environment, body):
+def studio_dispatch(environment, body, request_id=None):
     """执行 BFF procedure；返回 Either 元组（list 两项）。"""
     if psycopg is None:
         return [{"name": "RuntimeError", "message": "未检测到 psycopg 依赖库"}, None]
@@ -203,21 +221,21 @@ def studio_dispatch(environment, body):
             query = body.get("query")
             if not isinstance(query, dict):
                 raise ValueError("缺少 query 对象")
-            with _connect(environment) as connection:
+            with _studio_connection(environment, request_id) as connection:
                 with connection.cursor() as cursor:
                     _apply_schema(cursor, body.get("schema"))
-                    return [None, _run_query(cursor, query)]
+                    return [None, _measured_query(environment, cursor, query)]
         if procedure == "sequence":
             sequence = body.get("sequence") or []
             if len(sequence) != 2:
                 raise ValueError("sequence 需要恰好两个查询")
-            with _connect(environment) as connection:
+            with _studio_connection(environment, request_id) as connection:
                 with connection.cursor() as cursor:
                     _apply_schema(cursor, body.get("schema"))
                     results = []
                     for query in sequence:
                         try:
-                            results.append([None, _run_query(cursor, query)])
+                            results.append([None, _measured_query(environment, cursor, query)])
                         except Exception as exc:
                             results.append([_serialize_error(exc)])
                     return results
@@ -225,10 +243,10 @@ def studio_dispatch(environment, body):
             queries = body.get("queries") or []
             if not queries:
                 raise ValueError("transaction 需要至少一个查询")
-            with _connect(environment, autocommit=False) as connection:
+            with _studio_connection(environment, request_id, autocommit=False) as connection:
                 try:
                     with connection.cursor() as cursor:
-                        results = [_run_query(cursor, query) for query in queries]
+                        results = [_measured_query(environment, cursor, query) for query in queries]
                     connection.commit()
                     return [None, results]
                 except Exception:
@@ -237,7 +255,25 @@ def studio_dispatch(environment, body):
         if procedure == "sql-lint":
             return [None, _lint_sql(environment, body.get("schema"), body.get("sql") or "")]
         if procedure == "query-insights":
-            raise ValueError("query-insights 未实现")
+            from .studio_runtime import snapshot
+            return [None, snapshot(environment, body.get('limit',50))]
+        if procedure == 'inspect':
+            from .studio_operations import QUERIES
+            if body.get('view') not in QUERIES:
+                raise ValueError('未知数据库运维视图')
+            with _studio_connection(environment, request_id, autocommit=False) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute('SET TRANSACTION READ ONLY')
+                    return [None,_run_query(cursor,{'sql':QUERIES[body['view']]})]
+        if procedure == 'cancel-session':
+            if body.get('acknowledge_change') is not True:
+                raise ValueError('请确认取消目标会话的当前查询')
+            pid = int(body['pid'])
+            if pid<=0 or not isinstance(body.get('backend_start'),str):
+                raise ValueError('缺少有效会话身份')
+            with _studio_connection(environment, request_id) as connection:
+                with connection.cursor() as cursor:
+                    return [None,_run_query(cursor,{'sql':"SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity WHERE pid=$1 AND backend_start=$2::timestamptz AND datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()",'parameters':[pid,body['backend_start']]})]
         raise ValueError("未知的 procedure：" + str(procedure))
     except Exception as exc:
         return [_serialize_error(exc)]

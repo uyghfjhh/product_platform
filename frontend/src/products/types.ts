@@ -4,11 +4,16 @@ import type { Environment } from '../platform/api';
 import type { ComponentType } from 'react';
 import type { TopologyData, TopologyNode } from '../platform/topology';
 
-type ReportProps = { target: string | null; environmentId?: string; onClose: () => void };
-type TerminalProps = { taskId: string | null; onInspect: (taskId: string) => void; onFinished: () => void };
+type ReportProps = {
+  target: string | null;
+  environmentId?: string;
+  onClose: () => void;
+  caseInfo?: { title?: string | null; summary?: string | null; name?: string | null; core_id?: string | null };
+};
+type TerminalProps = { taskId: string | null; onInspect: (taskId: string) => void; onFinished: () => void; onClose?: () => void };
 type CanvasProps = {
   topology: TopologyData;
-  observed: Record<string, { running: boolean | null; message: string }> | null;
+  observed: Record<string, { running: boolean | null; message?: string; pid?: number | null }> | null;
   onSelectNode: (node: TopologyNode) => void;
   onOpenSql: (node: TopologyNode) => void;
   onDeploy: () => void;

@@ -1020,6 +1020,9 @@ def _mmr_global_sequence_probe(context, definition, options):
     quoted_name = _identifier(name)
     quoted_schema = schema if schema == "public" else _identifier(schema)
     regclass_name = "%s.%s" % (schema, name)
+    # fdd.check_sequences_exist applies NAMEDATALEN to the qualified name.
+    if len(regclass_name.encode("utf-8")) >= 64:
+        raise ConfigError("多活全局序列限定名必须小于 64 字节: %s" % regclass_name)
     nodes = []
     for selector in selectors:
         node = context.resolve_node(selector)

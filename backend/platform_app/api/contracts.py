@@ -107,3 +107,4 @@ class Action(BaseModel):
     title: str
     capability: str
     changes_environment: bool
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)

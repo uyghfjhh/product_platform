@@ -23,6 +23,7 @@ class EnvironmentsStore:
             if status == "APPLIED":
                 env["applied_deployment_plan_id"] = plan_id
                 env["applied_deployment_config"] = env.get("deployment_config")
+                env.pop('resource_baseline_config', None)
             self.backend._atomic_write(self._env_path(environment_id),
                                yaml.safe_dump(env, allow_unicode=True, sort_keys=True))
 
@@ -65,7 +66,8 @@ class EnvironmentsStore:
                     raise ConflictError("环境有活动任务，不能修改登记")
                 validator(self.owner, payload)
             env.update({key: payload.get(key) for key in columns})
-            for key in ("desired_deployment_plan_id", "deployment_status"):
+            for key in ("desired_deployment_plan_id", "deployment_status",
+                        "resource_baseline_config"):
                 if key in payload:
                     env[key] = payload[key]
             self.backend._atomic_write(

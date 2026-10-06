@@ -65,14 +65,14 @@ class MmrRuntimePrerequisites:
         require_nodes(context, ("mmr1", "mmr2"))
 
     @staticmethod
-    def check(context, key, title, node, query, expected):
+    def check(context, key, title, node, query, expected, expected_description=None):
         actual = context.sql(node, query).rows
         if actual != expected:
             context.step(key, title, status="FAIL", details={
-                "expected": expected, "actual": actual, "node": node,
+                "expected":expected_description or expected,"actual":actual,"node":node,"command":query,"intent":"verify","analysis":"返回行数或字段值与期望不符","assertion":{"type":"rows_equal","rows":expected},
             })
             raise AssertionError(f"{title}: 预期 {expected}，实际 {actual}")
-        context.step(key, title, details={"node": node, "rows": len(actual)})
+        context.step(key, title, details={"node":node,"expected":expected_description or expected,"actual":actual,"command":query,"intent":"verify","analysis":"返回行数及全部字段值均与期望一致","assertion":{"type":"rows_equal","rows":expected}})
 
     def run(self, context):
         extension_sql = (
@@ -152,35 +152,38 @@ FROM fdd.show_node_info(true, false)
         rows = context.sql(node, query).rows
         values = {value for row in rows for value in row}
         if not rows or "ACTIVE" not in values or "OK" not in values:
-            context.step(key, title, status="FAIL", details={"node": node, "actual": rows})
+            context.step(key, title, status="FAIL", details={"node":node,"expected":"至少返回一行，结果包含 ACTIVE 与 OK；后续汇总步骤精确检查全部字段","actual":rows,"command":query,"intent":"verify"})
             raise AssertionError(f"{title}: 未看到 ACTIVE 和 OK 状态")
-        context.step(key, title, details={"node": node, "rows": len(rows)})
+        context.step(key, title, details={"node":node,"expected":"至少返回一行，结果包含 ACTIVE 与 OK；后续汇总步骤精确检查全部字段","actual":rows,"command":query,"intent":"verify"})
 
     def run(self, context):
         for node in ("mmr1", "mmr2", "mmr3"):
             self.show_rows(
-                context, node + "-local", "检查本地多活节点状态", node,
+                context, node + "-local", f"读取 {node} 本地校验的状态与异常字段", node,
                 "SELECT nodeid,nodename,nodestate,real_nodestate,is_abnormal,detail "
                 "FROM fdd.show_node_info(false, false)",
             )
             MmrRuntimePrerequisites.check(
-                context, node + "-local-summary", "核对本地节点状态", node,
+                context, node + "-local-summary", f"确认 {node} 仅返回一个 ACTIVE/ACTIVE/OK/OK 成员", node,
                 self.LOCAL_SUMMARY_SQL, (("1", "true", "true", "true", "true"),),
+                expected_description="只返回本成员的1条记录；登记状态与检测状态都为ACTIVE，异常标记与详情都为OK",
             )
         self.show_rows(
-            context, "all-nodes", "检查全集群节点状态", "mmr1",
+            context, "all-nodes", "从 mmr1 读取三个成员的全集群校验结果", "mmr1",
             "SELECT nodeid,nodename,nodestate,real_nodestate,is_abnormal,detail "
             "FROM fdd.show_node_info(true, false) ORDER BY nodeid",
         )
         MmrRuntimePrerequisites.check(
-            context, "all-summary", "核对全集群三成员状态", "mmr1",
+            context, "all-summary", "确认全集群返回三个 ACTIVE/ACTIVE/OK/OK 成员", "mmr1",
             self.ALL_SUMMARY_SQL, (("3", "true", "true", "true", "true"),),
+            expected_description="返回且仅返回3个成员；每个成员的登记状态与检测状态都为ACTIVE，异常标记与详情都为OK",
         )
         MmrRuntimePrerequisites.check(
             context, "differences", "确认全集群无异常差异", "mmr1",
             "SELECT nodeid,nodename,is_abnormal,detail "
             "FROM fdd.show_node_info(true, true) ORDER BY nodeid",
             (),
+            expected_description="仅显示异常时返回0行，表示本轮校验没有异常差异",
         )
         return True
 
@@ -204,23 +207,36 @@ class MacMetadataAccessRestrictions:
             raise Blocked(f"等保前置条件无法读取: {exc}") from exc
         if rows != (("true", "true", "true", "on"),):
             raise Blocked(f"等保前置条件不满足: {rows}")
-        context.step("preflight", "确认等保扩展、三权分立配置和可写主节点")
+        context.step("preflight", "确认等保扩展、三权分立配置和可写主节点", details={
+            "intent": "verify", "expected": "主节点可写，fbase_mac 已安装并预加载，fdb.separate_user=on",
+            "actual": rows, "assertion": {"type": "rows_equal", "rows": [["true", "true", "true", "on"]]},
+        })
 
     @staticmethod
     def expect_denied(context, key, title, query, expected, sqlstate=None):
+        details = {
+            "intent": "verify", "command": query, "node": "primary",
+            "expected": "SQL 被拒绝，错误包含 %s%s" % (
+                expected, "，SQLSTATE=" + sqlstate if sqlstate else ""),
+            "assertion": {"type": "sql_error", "message_contains": expected,
+                          "sqlstate": sqlstate},
+        }
         try:
             context.sql("primary", query)
         except psycopg.Error as exc:
             actual_state = getattr(exc, "sqlstate", None)
             if expected in str(exc).lower() and (sqlstate is None or actual_state == sqlstate):
-                context.step(key, title, details={"sqlstate": actual_state, "error": str(exc)})
+                context.step(key, title, details={**details, "sqlstate": actual_state, "error": str(exc),
+                                                          "actual": "SQLSTATE=%s；%s" % (actual_state, exc),
+                                                          "analysis": "SQL 按预期被拒绝，错误内容及声明的 SQLSTATE 均匹配"})
                 return
             context.step(key, title, status="FAIL", details={
+                **details, "actual": "SQLSTATE=%s；%s" % (actual_state, exc), "analysis": "错误内容或 SQLSTATE 与声明不符",
                 "expected_error": expected, "expected_sqlstate": sqlstate,
                 "actual_error": str(exc), "actual_sqlstate": actual_state,
             })
             raise AssertionError(f"{title}: 错误与旧用例预期不符") from exc
-        context.step(key, title, status="FAIL", details={"expected_error": expected, "actual": "SQL 成功"})
+        context.step(key, title, status="FAIL", details={**details, "expected_error": expected, "actual": "SQL 成功（应被拒绝）", "analysis": "操作意外成功，没有满足权限拒绝条件"})
         raise AssertionError(f"{title}: SQL 意外成功")
 
     def run(self, context):
@@ -480,10 +496,10 @@ class ExportedCommandCase:
         self._core_before = {}
 
     def _isolated_mmr(self):
-        """Legacy _uses_isolated_mmr_topology: only this fixture relaxes the
-        shared-cluster health gates."""
-        return any(isinstance(fixture, dict) and
-                   fixture.get("type") == "isolated_mmr_node_creation"
+        """Disposable MMR fixtures own their topology and skip shared-cluster gates."""
+        return any(isinstance(fixture, dict) and fixture.get("type") in {
+                       "isolated_mmr_node_creation", "isolated_mmr_daemon",
+                   }
                    for fixture in self.definition.get("fixtures") or [])
 
     def setup_session(self, context):
@@ -770,3 +786,22 @@ CASE_METADATA.extend({
     "enabled": case.get("default_enabled", True),
     "tags": [case.get("group", "")],
 } for target, case in sorted(EXPORTED_COMMAND_CASES.items()))
+
+
+# Purpose and pass conditions are product declarations, archived before execution.
+from platform_regress.reporting.description import declared_description
+for _target, _case in CASES.items():
+    _definition=getattr(_case,'definition',None)
+    if isinstance(_definition,dict):
+        _case.report_description=declared_description(_definition)
+    else:
+        _declared=_DEFINITIONS.get(_target,{})
+        _case.report_description={'target':_target,'purpose':_declared.get('purpose'),'prerequisites':_declared.get('prerequisites',[]),
+                                  'scope_note':'原生实现以当次执行步骤和期望为准，不把目录中的未执行步骤当作已验证。'}
+for _item in CASE_METADATA:
+    _declared=_DEFINITIONS.get(_item['target'],{})
+    if _declared.get('purpose'):
+        _item['summary']=_declared['purpose']
+
+# This native case runs the same nine checks as its reviewed declaration.
+CASES[MmrClusterVerificationBasic.TARGET].report_description=declared_description(_DEFINITIONS[MmrClusterVerificationBasic.TARGET])

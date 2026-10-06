@@ -174,6 +174,26 @@ ALL_CASE_TARGETS = frozenset(case["target"] for case in exported_cases())
 
 
 class FbaseProvider:
+    def monitoring_snapshot(self, environment, nodes):
+        path = Path(__file__).with_name("monitoring.py")
+        spec = importlib.util.spec_from_file_location("_fbase_monitoring", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.snapshot(environment, nodes)
+
+    def monitoring_members(self, current):
+        return importlib.import_module("products.fbase-database.monitoring").member_consensus(current)
+
+    def monitoring_links(self, current, configured, previous=None):
+        return importlib.import_module("products.fbase-database.monitoring").reconcile(current, configured, previous)
+
+    def monitoring_mmr_metrics(self, current):
+        return importlib.import_module("products.fbase-database.monitoring").derive_mmr(current)
+
+    def monitoring_metrics(self, current, previous):
+        module = importlib.import_module("products.fbase-database.monitoring")
+        return module.derive(current, previous)
+
     """FBase target validation, test command, and database observations."""
 
     def deployment_templates(self, settings):
@@ -186,8 +206,13 @@ class FbaseProvider:
         return importlib.import_module("products.fbase-database.deployment.templates").import_files(settings, facts, target, environment_id)
 
     def validate_target(self, settings, target):
+        if target in {"all", "failed"}:
+            return True
         targets = {case["target"] for case in exported_cases()}
-        return target == "all" or target in targets or any(item.startswith(target + ".") for item in targets)
+        if target.endswith(".failed"):
+            prefix = target[:-7]
+            return prefix in targets or any(item.startswith(prefix + ".") for item in targets)
+        return target in targets or any(item.startswith(target + ".") for item in targets)
 
     def discover(self, settings):
         native = {entry["target"]: entry for entry in migrated_cases()}
@@ -326,6 +351,21 @@ class FbaseProvider:
                 "--product-dir", str(Path(__file__).resolve().parent),
                 "--output-dir", str(output),
                 "--context-json", json.dumps(context, ensure_ascii=False), *target_args,
+            ], settings.data_dir)
+        if target.endswith(".failed") or target == "failed":
+            suite = cluster if target == "failed" else target[:-7]
+            if cluster != suite.split(".", 1)[0] and suite not in {"failed", "all"}:
+                raise ValueError("用例目标与所选集群不一致")
+            context = self._test_context(settings, environment, cluster,
+                                         with_topology=True, extended=True)
+            context["state_root"] = str(
+                settings.artifact_dir("fbase-database", environment["id"]))
+            output = settings.artifact_dir("fbase-database", environment["id"])
+            return CommandSpec([
+                sys.executable, "-m", "platform_regress.cli",
+                "--product-dir", str(Path(__file__).resolve().parent),
+                "--output-dir", str(output), "--context-json",
+                json.dumps(context, ensure_ascii=False), "--suite", suite, "failed",
             ], settings.data_dir)
         if target == "all" or any(item.startswith(target + ".")
                                   for item in ALL_CASE_TARGETS):

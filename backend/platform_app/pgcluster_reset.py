@@ -18,36 +18,25 @@ from pathlib import Path
 import yaml
 
 
-def _deployment_roots(config: Path) -> list[str]:
-    """Path prefixes that identify processes belonging to this deployment."""
+def _deployment_roots(config: Path, names=None) -> list[str]:
+    """Only selected local PGDATA directories identify reset-owned processes."""
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+    from platform_app.resources import canonical_host
     try:
-        data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError):
+        data=yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    except (OSError,ValueError):
         return []
-    paths = []
-
-    def collect(node):
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ("data_dir", "home", "work_dir", "base_dir") \
-                        and isinstance(value, str) and value.startswith("/"):
-                    paths.append(value)
-                else:
-                    collect(value)
-        elif isinstance(node, list):
-            for item in node:
-                collect(item)
-
-    collect(data)
-    roots = set()
-    for value in paths:
-        path = Path(value)
-        roots.add(str(path.parent if path.name == "data" else path))
-    # Collapse nested roots to their common deployment directory.
-    collapsed = sorted(roots)
-    return [root for root in collapsed
-            if not any(other != root and root.startswith(other + "/")
-                       for other in collapsed)] or collapsed[:1]
+    hosts=data.get('hosts') or {}
+    roots=[]
+    for name,node in (data.get('instances') or {}).items():
+        if names is not None and name not in names:continue
+        host=(hosts.get(node.get('host')) or {}).get('address','')
+        directory=node.get('data_dir')
+        if host and canonical_host(host)=='local' and isinstance(directory,str) and directory.startswith('/'):
+            path=Path(directory).resolve()
+            if path!=Path('/') and (path/'PG_VERSION').is_file():
+                roots.append(str(path))
+    return sorted(set(roots))
 
 
 def _stray_processes(roots: list[str]) -> list[int]:
@@ -70,7 +59,13 @@ def _stray_processes(roots: list[str]) -> list[int]:
             argv = (entry / "cmdline").read_bytes().split(b"\x00")
         except OSError:
             continue
-        matched = False
+        executable=Path(argv[0].decode("utf-8",errors="replace").split(":",1)[0]).name if argv and argv[0] else ''
+        if executable not in {'postgres','postmaster'}:continue
+        try:
+            cwd=str((entry/'cwd').resolve())
+        except OSError:
+            cwd=''
+        matched=cwd in normalized
         for arg in argv:
             text = arg.decode("utf-8", errors="replace")
             candidates = [text]
@@ -78,7 +73,7 @@ def _stray_processes(roots: list[str]) -> list[int]:
                 candidates.append(text[2:])
             if "=" in text:
                 candidates.append(text.split("=", 1)[1])
-            if any(candidate == root or candidate.startswith(root + "/")
+            if any(candidate == root
                    for candidate in candidates for root in normalized):
                 matched = True
                 break
@@ -92,16 +87,33 @@ def main() -> int:
     parser.add_argument("pgcluster", type=Path)
     parser.add_argument("config", type=Path)
     parser.add_argument("target")
+    parser.add_argument("--control-root", type=Path)
+    parser.add_argument("--environment")
     args = parser.parse_args()
 
     def run(action: str) -> int:
         print("[pgcluster] %s %s" % (action, args.target), flush=True)
         return subprocess.run([
-            sys.executable, str(args.pgcluster), "-f", str(args.config),
+            sys.executable, str(Path(__file__).with_name("pgcluster_entry.py")), str(args.pgcluster),
+            *(["--control-root", str(args.control_root), "--environment", args.environment] if args.control_root and args.environment else []),
+            "-f", str(args.config),
             action, args.target,
         ], cwd=args.pgcluster.parent, check=False).returncode
 
-    roots = _deployment_roots(args.config)
+    sys.path.insert(0,str(args.pgcluster.parent))
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+    from pgclusterlib.config import load
+    from pgclusterlib.executor import LOCAL_HOSTS
+    from pgclusterlib.runtime import Runtime
+
+    from platform_app.resources import local_addresses
+    LOCAL_HOSTS.update(local_addresses())
+    config=load(args.config);config.validate(args.target)
+    runtime=Runtime(config)
+    if args.control_root and args.environment:
+        from platform_app.deployment.ownership import enroll
+        enroll(args.control_root,args.environment,config,args.target,runtime)
+    roots = _deployment_roots(args.config,runtime.target_instances(args.target))
     strays = _stray_processes(roots) if roots else []
     if strays:
         print("[reset] 清理 %d 个残留进程: %s" % (len(strays), strays), flush=True)

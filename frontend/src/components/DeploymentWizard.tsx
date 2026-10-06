@@ -17,9 +17,10 @@ type Check = { title: string; host: string; ok: boolean; detail: unknown };
 type Plan = { id: string; ready: boolean; checks: Check[]; target: string; files: Record<string, string>;
   action: string | null; mode?: string; executable?: boolean;
   attempts?: Array<{ task_id: string; status: string; created_at: string }>;
+  completed?: boolean; checkpoint?: { completed: string[]; in_progress?: string; status?: string };
   limitations: string[]; operations: Array<Node & { node: string; operation: string; kind?: string; executable?: boolean }> };
 type Installation = { home: string; version: string; complete: boolean; sources: string[]; error?: string };
-type FormValues = Omit<Spec, 'parameters' | 'nodes'> & { template_key: string; parameters_text: string; probe_data_dir?: string };
+type FormValues = Omit<Spec, 'parameters' | 'nodes'> & { template_key: string; parameters_text: string; probe_data_dir?: string; adoption_dirs?: string };
 
 export default function DeploymentWizard({ open, environment, onClose, onSaved, openTask }: {
   open: boolean; environment?: Environment; onClose: () => void;
@@ -31,6 +32,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [savedPlans, setSavedPlans] = useState<Array<{ id: string; action: string; ready: boolean; draft_revision: number }>>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [hosts, setHosts] = useState<HostResource[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -41,6 +43,14 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const [preview, setPreview] = useState('');
   const [importTargets, setImportTargets] = useState<Array<{ value: string; label: string }>>([]);
   const mode = Form.useWatch('mode', form);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setSavedPlans([]);
+    if (open && draft) void api<typeof savedPlans>(`/deployment/drafts/${draft.id}/plans`, { signal: controller.signal })
+      .then((rows) => { if (!controller.signal.aborted) setSavedPlans(rows); }).catch(() => undefined);
+    return () => controller.abort();
+  }, [open, draft?.id]);
 
   function loadDraft(value: Draft) {
     setDraft(value); setNodes(value.spec.nodes); setHosts(value.spec.hosts || []); setPlan(null); setStep(0); setConfirmed(false); setPreview(''); setImportTargets(value.spec.target ? [{ value: value.spec.target, label: value.spec.target }] : []);
@@ -86,11 +96,11 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw new Error('高级参数需要 JSON 对象');
     const spec: Spec = { title: values.title, product_id, template_id: values.mode === 'free' ? 'free' : template_id,
       mode: values.mode, cluster_name: 'cluster',
-      host: values.host, hosts: values.mode === 'import' ? [] : hosts.filter((item) => item.name && item.address),
+      host: values.host, hosts: ['import', 'adopt'].includes(values.mode) ? [] : hosts.filter((item) => item.name && item.address),
       home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
       base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir, role }) => ({
         name,
-        host: hosts.length ? (host || '') : (values.mode === 'import' ? host : ''),
+        host: ['import', 'adopt'].includes(values.mode) ? '' : (hosts.length ? (host || '') : ''),
         port, data_dir, role: role || 'standby',
       })),
       source_yaml: values.source_yaml || '', target: values.target || '' };
@@ -110,9 +120,29 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     if (!found.installations.length) message.info('未发现安装，请填写目标主机的安装目录后重新探测');
   }
 
+  async function discoverExisting() {
+    const values = form.getFieldsValue(true);
+    const dataDirs = (values.adoption_dirs || '').split('\n').map((value: string) => value.trim()).filter(Boolean);
+    if (!dataDirs.length) throw new Error('请填写已有实例的数据目录，每行一个');
+    const host = hosts.find((item) => item.address === values.host);
+    const result = await api<{ source_yaml: string; targets: Array<{ value: string; label: string }>; warnings: string[] }>(
+      '/deployment/discover-existing', { method: 'POST', body: JSON.stringify({
+        host: values.host, home: values.home || '', data_dirs: dataDirs,
+        ssh: host ? { ...(host.ssh_user ? { user: host.ssh_user } : {}),
+          ...(host.ssh_port ? { port: host.ssh_port } : {}),
+          ...(host.ssh_identity_file ? { identity_file: host.ssh_identity_file } : {}),
+          connect_timeout: host.ssh_connect_timeout } : {},
+      }) });
+    form.setFieldsValue({ source_yaml: result.source_yaml, target: result.targets.length === 1 ? result.targets[0].value : '' });
+    setImportTargets(result.targets); setNodes([]); setPlan(null);
+    if (result.warnings.length) message.warning(result.warnings.join('；'));
+    else message.success('已识别实例与复制关系，请审阅接管配置');
+  }
+
   async function next() {
     if (step === 0) { await save(); setStep(1); }
     else if (step === 1) {
+      if (mode === 'adopt' && !form.getFieldValue('source_yaml')) throw new Error('请先探测已有实例');
       const saved = await save();
       if (saved.spec.mode !== 'free') {
         const layout = await api<{ nodes: Node[]; target: string }>(`/deployment/drafts/${saved.id}/layout`, { method: 'POST' });
@@ -121,7 +151,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
           ...node,
           host: hosts.length
             ? (hosts.find((item) => item.address === node.host)?.name || '')
-            : (saved.spec.mode === 'import' ? node.host : ''),
+            : (['import', 'adopt'].includes(saved.spec.mode) ? node.host : ''),
         })));
       }
       setStep(2);
@@ -155,8 +185,15 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
     <Form form={form} layout="vertical" disabled={busy} onValuesChange={(changes) => {
       if ('data_root' in changes || 'base_port' in changes || 'template_key' in changes) setNodes([]);
+      if (mode === 'adopt' && ['host', 'home', 'adoption_dirs'].some((key) => key in changes)) {
+        form.setFieldsValue({ source_yaml: '', target: '' }); setImportTargets([]); setPlan(null);
+      }
     }}>
       <div style={{ display: step === 0 ? 'block' : 'none' }}>
+        {draft && savedPlans.length > 0 && <Form.Item label="继续已审阅计划">
+          <Select aria-label="继续已审阅计划" placeholder="选择原计划查看执行与恢复检查点" options={savedPlans.map((row) => ({ value: row.id, label: `${row.id.slice(0, 12)} · 草稿版本 ${row.draft_revision} · ${row.ready ? '检查通过' : '检查未通过'}` }))}
+            onChange={(id) => void perform(async () => { setPlan(await api<Plan>(`/deployment/plans/${id}`)); setConfirmed(false); setStep(3); })} />
+        </Form.Item>}
         {!environment && <Form.Item label="继续已有草稿">
           <Select aria-label="继续已有草稿" placeholder="选择草稿，或直接填写新方案" allowClear value={draft?.id} options={drafts.map((item) => ({ value: item.id, label: item.spec.title }))}
             onChange={(id) => { const selected = drafts.find((item) => item.id === id); if (selected) loadDraft(selected); else { setDraft(null); setNodes([]); } }} />
@@ -164,7 +201,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         <Form.Item label="方案名称" name="title"><Input placeholder="例如：等保开发环境" /></Form.Item>
         <Form.Item label="部署模板" name="template_key"><Select disabled={Boolean(environment)} options={templates.map((item) => ({ value: `${item.product_id}:${item.id}`, label: `${item.product_title} · ${item.title}` }))}
           onChange={(key) => { const selected = templates.find((item) => `${item.product_id}:${item.id}` === key); form.setFieldValue('base_port', selected?.base_port); setNodes([]); }} /></Form.Item>
-        <Form.Item label="配置来源" name="mode"><Radio.Group options={[{ value: 'new', label: '新建实例' }, { value: 'adopt', label: '接管已有实例' }, { value: 'import', label: '导入部署 YAML' }, { value: 'free', label: '自由拓扑' }]} onChange={() => setNodes([])} /></Form.Item>
+        <Form.Item label="配置来源" name="mode"><Radio.Group options={[{ value: 'new', label: '新建实例' }, { value: 'adopt', label: '接管已有实例' }, { value: 'import', label: '导入部署 YAML' }, { value: 'free', label: '自由拓扑' }]} onChange={() => { setNodes([]); setPlan(null); form.setFieldsValue({ source_yaml: '', target: '' }); setImportTargets([]); }} /></Form.Item>
         <Alert type="info" message={draft ? `稳定环境 ID：${draft.id}` : '环境 ID 会自动生成；名称修改不会改变测试、任务和报告的关联。'} />
       </div>
       <div style={{ display: step === 1 ? 'block' : 'none' }}>
@@ -183,7 +220,12 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
           ]} />
           <Button size="small" onClick={() => setHosts((prev) => [...prev, { name: `host${prev.length + 1}`, address: '', ssh_user: '', ssh_identity_file: '', ssh_connect_timeout: 10, home: '' }])}>添加主机</Button>
         </> }]} />}
-        {mode === 'import' ? <>
+        {mode === 'adopt' && <>
+          <Form.Item label="已有实例数据目录" name="adoption_dirs" extra="每行一个，包含集群的全部主备实例。探测不会启动、初始化或修改数据库。"><Input.TextArea rows={5} placeholder={'/opt/data/rep8\n/opt/data/rep9\n/opt/data/rep12\n/opt/data/rep13'} /></Form.Item>
+          <Form.Item label="数据库安装目录（可选）" name="home" extra="留空时从每个实例的历史启动参数识别。"><Input /></Form.Item>
+          <Button onClick={() => void perform(discoverExisting)} style={{ marginBottom: 12 }}>探测已有实例与复制关系</Button>
+        </>}
+        {mode === 'import' || mode === 'adopt' ? <>
           <Form.Item label="部署文件内容" name="source_yaml"><Input.TextArea rows={12} /></Form.Item>
           <Space wrap style={{ marginBottom: 12 }}>
             <input type="file" accept=".yaml,.yml" aria-label="导入部署文件" onChange={(event) => {
@@ -199,7 +241,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
             })}>解析部署目标</Button>
           </Space>
           <Form.Item label="集群目标" name="target"><Select options={importTargets} placeholder="解析文件后选择集群" /></Form.Item>
-          <Alert type="info" message="导入只接管已有数据库，不会初始化或清理数据；首批支持同一主机。" />
+          <Alert type="info" message="接管只登记并验收现有数据库。自动识别支持同一主机的主备及 MMR；跨主机集群可导入 YAML。" />
         </> : <>
           <Form.Item label="已有实例数据目录（可选）" name="probe_data_dir" extra="用于读取历史启动参数，帮助发现已停止实例使用的安装。"><Input placeholder="例如 /home/postgres/pgdata/mac1" /></Form.Item>
           <Space wrap style={{ marginBottom: 12 }}><Button onClick={() => void perform(discover)}>探测数据库安装</Button>
@@ -222,19 +264,19 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
             onChange={(next) => setNodes(next)}
           />
         ) : <>
-        <Alert type="info" message="固定回归模板保留节点名称与复制关系；可调整端口和数据目录。" style={{ marginBottom: 12 }} />
+        <Alert type="info" message={['import', 'adopt'].includes(mode) ? '实例与复制关系来自接管配置；如需修改请返回审阅 YAML。' : '固定回归模板保留节点名称与复制关系；可调整端口和数据目录。'} style={{ marginBottom: 12 }} />
         <Table rowKey="name" pagination={false} size="small" scroll={{ x: 700 }} dataSource={nodes} columns={[
           { title: '节点', dataIndex: 'name' },
           { title: '主机', render: (_, node, index) => hosts.length
-              ? <Select size="small" style={{ minWidth: 170 }} disabled={mode === 'import'} value={node.host || undefined} allowClear placeholder="默认主机"
+              ? <Select size="small" style={{ minWidth: 170 }} disabled={['import', 'adopt'].includes(mode)} value={node.host || undefined} allowClear placeholder="默认主机"
                   options={hosts.map((item) => ({ value: item.name, label: `${item.name} · ${item.address}` }))}
                   onChange={(name) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, host: name || '' } : item))} />
               : node.host },
-          { title: '端口', render: (_, node, index) => <InputNumber disabled={mode === 'import'} value={node.port} min={1024} max={65535} onChange={(port) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, port: port || 1024 } : item))} /> },
-          { title: '数据目录', render: (_, node, index) => <Input disabled={mode === 'import'} value={node.data_dir} onChange={(event) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, data_dir: event.target.value } : item))} /> },
+          { title: '端口', render: (_, node, index) => <InputNumber disabled={['import', 'adopt'].includes(mode)} value={node.port} min={1024} max={65535} onChange={(port) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, port: port || 1024 } : item))} /> },
+          { title: '数据目录', render: (_, node, index) => <Input disabled={['import', 'adopt'].includes(mode)} value={node.data_dir} onChange={(event) => setNodes((prev) => prev.map((item, i) => i === index ? { ...item, data_dir: event.target.value } : item))} /> },
         ]} />
         <Collapse style={{ marginTop: 16 }} items={[{ key: 'parameters', label: '高级数据库参数', children:
-          <Form.Item name="parameters_text" extra={'JSON 对象，例如 {"max_connections": 200}；结构参数由拓扑管理。'}><Input.TextArea rows={5} disabled={mode === 'import'} /></Form.Item> }]} />
+          <Form.Item name="parameters_text" extra={'JSON 对象，例如 {"max_connections": 200}；结构参数由拓扑管理。'}><Input.TextArea rows={5} disabled={['import', 'adopt'].includes(mode)} /></Form.Item> }]} />
         </>}
       </div>
     </Form>
@@ -248,13 +290,13 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       {plan.mode === 'diff' && (
         <Alert
           type={plan.executable ? 'warning' : 'error'}
-          message={plan.executable ? '集群差异计划：将向既有集群新增节点' : '差异包含暂不支持自动执行的操作，请调整方案'}
+          message={plan.executable ? '集群差异计划：将按审阅内容修改既有集群' : '差异包含暂不支持自动执行的操作，请调整方案'}
           style={{ marginBottom: 16 }}
         />
       )}
       <Typography.Title level={5}>操作预览 · {plan.target}</Typography.Title>
-      <Table rowKey="node" size="small" pagination={false} dataSource={plan.operations} scroll={{ x: 650 }} columns={[
-        ...(plan.mode === 'diff' ? [{ title: '类型', render: (_: unknown, op: { kind?: string }) => <Tag>{({ add_standby: '扩容', add_node: '新增', remove_node: '缩容', change_node: '变更', parameters: '参数', topology: '拓扑', host: '主机', installation: '安装', config: '配置', section: '配置段' } as Record<string, string>)[op.kind || ''] || '操作'}</Tag> }] : []),
+      <Table rowKey={(_, index) => String(index)} size="small" pagination={false} dataSource={plan.operations} scroll={{ x: 650 }} columns={[
+        ...(plan.mode === 'diff' ? [{ title: '类型', render: (_: unknown, op: { kind?: string }) => <Tag>{({ add_standby: '扩容', add_node: '新增', create_member_instance: '新成员实例', remove_node: '缩容', change_node: '变更', parameters: '参数', topology: '拓扑', replication_members: '复制成员', replication_endpoint: '复制端点', primary_migration_scope: '迁移范围', host: '主机', installation: '安装', config: '配置', section: '配置段' } as Record<string, string>)[op.kind || ''] || '操作'}</Tag> }] : []),
         { title: '节点', dataIndex: 'node' }, { title: '端口', dataIndex: 'port' }, { title: '数据目录', dataIndex: 'data_dir' }, { title: '将执行', dataIndex: 'operation' },
         ...(plan.mode === 'diff' ? [{ title: '可执行', render: (_: unknown, op: { executable?: boolean }) => <Tag color={op.executable ? 'success' : 'default'}>{op.executable ? '是' : '暂不支持'}</Tag> }] : []),
       ]} />
@@ -262,19 +304,22 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       <Space wrap><Button onClick={() => void perform(previewFiles)}>查看生成 YAML</Button>
         {Object.keys(plan.files).map((name) => <Button key={name} href={`/api/v1/deployment/plans/${plan.id}/files/${encodeURIComponent(name)}`}>下载 {name}</Button>)}</Space>
       {preview && <pre className="raw-report" style={{ maxHeight: 300, overflow: 'auto' }}>{preview}</pre>}
-      {plan.action === 'deployment.create' && <div style={{ marginTop: 16 }}><Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}>{plan.mode === 'diff' ? '确认按上述方案在既有集群上新增节点，并在完成后进行健康验收' : '确认按上述方案初始化新实例，并在完成后进行健康验收'}</Checkbox></div>}
+      {['deployment.create', 'deployment.change'].includes(plan.action || '') && <div style={{ marginTop: 16 }}><Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}>{plan.mode === 'diff' ? '确认按上述方案修改既有集群；重启和缩容会影响连接，完成后进行健康验收' : '确认按上述方案初始化新实例，并在完成后进行健康验收'}</Checkbox></div>}
       {Boolean(plan.attempts?.length) && (
         <Alert type="warning" style={{ marginTop: 12 }}
           message={`该计划已有 ${plan.attempts!.length} 次执行尝试；已受管节点会按断点幂等跳过`}
           description={<Space wrap>{plan.attempts!.map((attempt) => <Tag key={attempt.task_id} color={attempt.status === 'SUCCEEDED' ? 'success' : attempt.status === 'FAILED' ? 'error' : 'processing'}>{attempt.status}</Tag>)}</Space>} />
       )}
+      {plan.checkpoint && <Alert type={plan.completed ? 'success' : 'warning'} style={{ marginTop: 12 }}
+        message={plan.completed ? '该计划已验收完成' : `已完成 ${plan.checkpoint.completed.length} 个执行步骤，继续原计划会保留这些检查点`}
+        description={<Space wrap>{plan.checkpoint.completed.map((name) => <Tag key={name}>{name}</Tag>)}{plan.checkpoint.in_progress && <Tag color="warning">中断步骤：{plan.checkpoint.in_progress}</Tag>}</Space>} />}
     </>}
     <Space wrap style={{ marginTop: 24 }}>
       <Button disabled={busy || step === 0} onClick={() => { setStep((prev) => prev - 1); setPlan(null); setConfirmed(false); }}>上一步</Button>
       {step < 3 && <Button disabled={busy} onClick={() => void perform(async () => { await save(); message.success('草稿已保存'); })}>保存草稿</Button>}
       {step < 3 ? <Button type="primary" loading={busy} onClick={() => void perform(next)}>{step === 2 ? '检查并生成部署计划' : '下一步'}</Button> : <>
-        <Button disabled={!plan?.ready || plan?.executable === false || busy} onClick={() => void perform(() => apply(false))}>仅关联环境</Button>
-        <Button type="primary" loading={busy} disabled={!plan?.ready || plan?.executable === false || (plan?.action === 'deployment.create' && !confirmed)} onClick={() => void perform(() => apply(true))}>{plan?.action === 'deployment.create' ? '按计划部署并验收' : '接管并检查健康'}</Button>
+        <Button disabled={plan?.completed || !plan?.ready || plan?.executable === false || busy} onClick={() => void perform(() => apply(false))}>仅关联环境</Button>
+        <Button type="primary" loading={busy} disabled={plan?.completed || !plan?.ready || plan?.executable === false || (['deployment.create', 'deployment.change'].includes(plan?.action || '') && !confirmed)} onClick={() => void perform(() => apply(true))}>{plan?.action === 'deployment.change' ? '按计划变更并验收' : plan?.action === 'deployment.create' ? '按计划部署并验收' : '接管并检查健康'}</Button>
       </>}
     </Space>
   </Modal>;

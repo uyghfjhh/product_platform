@@ -187,8 +187,9 @@ class HaRuntime:
         passed = result.returncode != 0 and predicate(output)
         self.context.step(
             self._key(), title, status="PASS" if passed else "FAIL",
-            details={"expected": expected,
-                     "actual": "returncode=%s" % result.returncode,
+            details={"intent": "verify", "command": sql, "expected": expected,
+                     "actual": "退出码=%s；错误输出：\n%s" % (result.returncode, output),
+                     "analysis": "命令失败且错误内容满足期望" if passed else "命令未按声明错误条件被拒绝",
                      "output": output})
         if not passed:
             raise AssertionError("%s: returncode=%s" % (title, result.returncode))
@@ -218,8 +219,9 @@ class HaRuntime:
         passed = result.returncode != 0 and predicate(output)
         self.context.step(
             self._key(), title, status="PASS" if passed else "FAIL",
-            details={"expected": expected,
-                     "actual": "returncode=%s" % result.returncode,
+            details={"intent": "verify", "command": sql, "expected": expected,
+                     "actual": "退出码=%s；错误输出：\n%s" % (result.returncode, output),
+                     "analysis": "命令失败且错误内容满足期望" if passed else "命令未按声明错误条件被拒绝",
                      "output": output})
         if not passed:
             raise AssertionError("%s: returncode=%s" % (title, result.returncode))
@@ -287,7 +289,8 @@ class HaRuntime:
     def check(self, title, expected, actual, passed):
         self.context.step(
             self._key(), title, status="PASS" if passed else "FAIL",
-            details={"expected": expected, "actual": actual})
+            details={"intent": "verify", "expected": expected, "actual": actual,
+                     "analysis": "实际结果满足声明条件" if passed else "实际结果与声明条件不符"})
         if not passed:
             raise AssertionError("%s: %s" % (title, actual))
 
@@ -372,8 +375,8 @@ class HaRuntime:
             self.context.step(
                 self._key(), step_title,
                 status="PASS" if result.returncode == 0 else "FAIL",
-                details={"command": " ".join(str(a) for a in argv),
-                         "actual": "returncode=%s" % result.returncode,
+                details={"intent": "action", "expected": "命令退出码为 0", "command": " ".join(str(a) for a in argv),
+                         "actual": "退出码=%s" % result.returncode,
                          "output": (result.stdout or "")[-4000:]})
         if check and result.returncode != 0:
             raise AssertionError("command failed rc=%s" % result.returncode)
@@ -409,7 +412,7 @@ class HaRuntime:
         self.context.step(
             self._key(), title,
             status="PASS" if result.returncode == 0 else "FAIL",
-            details={"action": action, "pgdata": str(pgdata),
+            details={"intent": "action", "expected": "节点已停止，pg_ctl status 检查失败" if action == "stop" else "节点已启动，pg_ctl status 检查成功", "action": action, "pgdata": str(pgdata),
                      "actual": "returncode=%s" % result.returncode,
                      "output": (result.stdout or "")[-2000:]})
         if result.returncode != 0:

@@ -38,6 +38,39 @@ class TasksStore:
         )
         if created:
             self._index_task(task)
+        self._project_notification(task)
+
+    def _project_notification(self, task):
+        if task['status'] not in TERMINAL_STATUSES or task.get('notification_recorded'):
+            return
+        try:
+            self.backend.write_control_file(self.root/'notification-outbox'/(task['id']+'.json'), json.dumps({'task_id':task['id']}))
+        except OSError:
+            # The terminal task is the durable source. Startup/periodic
+            # projection recovery can repair this optional delivery index.
+            pass
+
+    def recover_notification_outbox(self):
+        with self.backend._locked():
+            for directory in ('tasks','archived-tasks'):
+                for path in (self.root/directory).glob('*/meta.json'):
+                    task=self.backend._read_json(path)
+                    if task:self._project_notification(task)
+
+    def pending_notifications(self):
+        for path in (self.root/'notification-outbox').glob('*.json'):
+            task=self.get_task(path.stem)
+            if task and task['status'] in TERMINAL_STATUSES:
+                yield task
+
+    def acknowledge_notification(self, task_id):
+        with self.backend._locked():
+            task=self.get_task(task_id)
+            if not task or task['status'] not in TERMINAL_STATUSES:
+                return
+            task['notification_recorded']=True
+            self._write_task(task)
+            (self.root/'notification-outbox'/(task_id+'.json')).unlink(missing_ok=True)
 
     def _index_task(self, task):
         index = self.root / "task-index.jsonl"
@@ -144,7 +177,7 @@ class TasksStore:
         # path just before the move. Retry the stable UUID in the archive.
         return row or self.backend._read_json(self.root / "archived-tasks" / task_id / "meta.json")
 
-    def list_tasks(self, limit: int = 40, *, before: str | None = None, include_archived=False):
+    def list_tasks(self, limit: int = 40, *, before: str | None = None, include_archived=False, environment_id=None):
         rows, seen = [], set()
         past_cursor = before is None
         for line in reverse_lines(self.root / "task-index.jsonl"):
@@ -163,7 +196,7 @@ class TasksStore:
             if not include_archived and (self.root / "archived-tasks" / task_id).exists():
                 continue
             row = self.get_task(task_id)
-            if row:
+            if row and (environment_id is None or row.get("environment_id") == environment_id):
                 rows.append(row)
                 if len(rows) >= limit:
                     break

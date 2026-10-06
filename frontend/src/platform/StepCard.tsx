@@ -15,12 +15,14 @@ import type { NormalizedStep } from './stepNormalizer';
 interface StepCardProps {
   step: NormalizedStep;
   defaultExpanded?: boolean;
+  evidenceBasePath?: string;
 }
 
-export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true }) => {
+export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true, evidenceBasePath }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [showRawTable, setShowRawTable] = useState(false);
   const [logExpanded, setLogExpanded] = useState(true);
+  const [techOpen, setTechOpen] = useState(false);
 
   const copyToClipboard = (text: string, label = '内容') => {
     void navigator.clipboard.writeText(text);
@@ -28,6 +30,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
   };
 
   const isPass = step.status === 'PASS';
+  const isFail = step.status === 'FAIL';
   const summaryIsVerdict = /[✅❌]/.test(step.actualSummary || '');
   // text 载荷与判定明细同源且为判点文本时，载荷框让位给断言判定块
   const verdictReplacesPayload =
@@ -36,13 +39,13 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
     summaryIsVerdict;
 
   return (
-    <div className={`step-card-root ${isPass ? 'pass' : 'fail'}`}>
+    <div className={`step-card-root ${isPass ? 'pass' : isFail ? 'fail' : 'pending'}`}>
       {/* 1. 顶部标题栏 */}
       <div className="step-header">
         <div className="step-header-left">
           <span className="step-order-badge">#{step.order}</span>
           <span className={`step-kind-badge ${step.kind}`}>
-            {step.kind === 'action' ? '操作步骤' : step.kind === 'verify' ? '状态验证' : '配置比对'}
+            {step.kind === 'action' ? '执行动作' : step.kind === 'verify' ? '状态验证' : '配置比对'}
           </span>
           <span className="step-title-text">{step.cleanTitle || step.title}</span>
         </div>
@@ -55,8 +58,8 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
             </span>
           )}
           <Tag
-            color={isPass ? 'success' : 'error'}
-            icon={isPass ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+            color={isPass ? 'success' : isFail ? 'error' : 'default'}
+            icon={isPass ? <CheckCircleOutlined /> : isFail ? <CloseCircleOutlined /> : undefined}
             style={{ margin: 0, fontWeight: 700 }}
           >
             {step.status}
@@ -206,6 +209,15 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
             </div>
           )}
 
+          {step.analysis && (
+            <div className="step-analysis-card single">
+              <div>
+                <div className="step-section-label verdict">结果分析</div>
+                <div className={isPass ? 'analysis-pass' : 'analysis-fail'}>{step.analysis}</div>
+              </div>
+            </div>
+          )}
+
           {/* 配置比对步骤专用：Diff 视图 (Diff Workbench) */}
           {step.kind === 'diff' && step.actualPayload && (
             <div className="step-diff-workbench">
@@ -279,20 +291,40 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
             </div>
           )}
 
-          {/* 3. 证据区域：工件引用 + 独立日志证据视窗 (Log Evidence / Artifacts) */}
+          {/* 3. 技术附件：原始工件与日志证据，默认折叠 */}
           {step.evidenceItems && step.evidenceItems.length > 0 && (
-            <div className="step-evidence-container">
+            <div className="step-tech-attachment">
+              <div
+                className="step-tech-attachment-header"
+                onClick={() => setTechOpen(!techOpen)}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <FileTextOutlined />
+                  <span>技术附件</span>
+                  <span style={{ opacity: 0.6, fontSize: 11 }}>原始工件 / 日志证据</span>
+                </span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={techOpen ? <UpOutlined /> : <DownOutlined />}
+                  style={{ color: '#94a3b8' }}
+                />
+              </div>
+              {techOpen && (
+                <div className="step-tech-attachment-body">
               {/* 工件引用药丸 */}
               {step.evidenceItems.filter((e) => e.type === 'artifact').length > 0 && (
                 <div className="step-evidence-pills">
                   {step.evidenceItems
                     .filter((e) => e.type === 'artifact')
-                    .map((item, idx) => (
-                      <span className="evidence-artifact-pill" key={idx} title="测试工件路径">
-                        <FileTextOutlined />
-                        <span>{item.value}</span>
-                      </span>
-                    ))}
+                    .map((item, idx) => {
+                      const content = <><FileTextOutlined /><span>{item.value}</span></>;
+                      if (!evidenceBasePath) return <span className="evidence-artifact-pill" key={idx} title="测试工件路径">{content}</span>;
+                      const reference = item.value.split('/').map(encodeURIComponent).join('/');
+                      return <a className="evidence-artifact-pill" key={idx}
+                        href={`/api/v1${evidenceBasePath}/${reference}`} target="_blank" rel="noreferrer"
+                        title="打开原始证据">{content}</a>;
+                    })}
                 </div>
               )}
 
@@ -349,6 +381,8 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                         .join('\n\n')}
                     </pre>
                   )}
+                </div>
+              )}
                 </div>
               )}
             </div>

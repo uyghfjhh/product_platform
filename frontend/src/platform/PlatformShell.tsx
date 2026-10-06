@@ -14,7 +14,10 @@ import SettingsModal from '../components/SettingsModal';
 import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
 import { testMode } from '../products/testRegistry';
 
+const OperationsPage = lazy(() => import('../views/OperationsPage'));
+const WorkloadsPage = lazy(() => import('../views/WorkloadsPage'));
 const DeploymentPage = lazy(() => import('../views/DeploymentPage'));
+const MonitoringPage = lazy(() => import('../views/MonitoringPage'));
 const DatabasePage = lazy(() => import('../views/DatabasePage'));
 const TestsPage = lazy(() => import('../views/TestsPage'));
 const StabilityPage = lazy(() => import('../views/StabilityPage'));
@@ -23,7 +26,7 @@ const LicenseGenerateView = lazy(() => import('../views/license/LicenseGenerateV
 
 const { Sider, Content } = Layout;
 
-type Page = 'deployment' | 'database'
+type Page = 'deployment' | 'database' | 'monitoring' | 'operations' | 'workloads'
   | 'license:keys' | 'license:generate'
   | `tests:${string}` | `stability:${string}`;
 export type ThemeName = 'cman' | 'dark' | 'soft' | 'warm';
@@ -35,7 +38,7 @@ function selectedFromStorage(key: string, defaultValue: string) {
 }
 
 function isPage(value: string): value is Page {
-  return value === 'deployment' || value === 'database' || value.startsWith('license:')
+  return value === 'deployment' || value === 'database' || value === 'monitoring' || value === 'operations' || value === 'workloads' || value.startsWith('license:')
     || value.startsWith('tests:') || value.startsWith('stability:');
 }
 
@@ -58,18 +61,38 @@ export default function PlatformShell({ themeName, onThemeChange }: {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [bindings, setBindings] = useState<RegressionBinding[]>([]);
   const [page, setPage] = useState<Page>(() => {
-    const saved = selectedFromStorage('platform-page', 'deployment');
+    const saved = new URLSearchParams(window.location.search).get('page') || selectedFromStorage('platform-page', 'deployment');
     return isPage(saved) ? saved as Page : 'deployment';
   });
-  const [environmentId, setEnvironmentId] = useState(selectedFromStorage('platform-environment', ''));
-  const [databaseTarget, setDatabaseTarget] = useState<{ environmentId: string; nodeId: string } | null>(null);
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [environmentId, setEnvironmentId] = useState(() => new URLSearchParams(window.location.search).get('env') || selectedFromStorage('platform-environment', ''));
+  const [databaseTarget, setDatabaseTarget] = useState<{ environmentId: string; nodeId: string } | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('env') && params.get('node') ? { environmentId: params.get('env')!, nodeId: params.get('node')! } : null;
+  });
+  const [taskId, setTaskId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('task'));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get('task');
-    if (requested) setTaskId(requested);
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', page);
+    if (environmentId) url.searchParams.set('env', environmentId); else url.searchParams.delete('env');
+    if (taskId) url.searchParams.set('task', taskId); else url.searchParams.delete('task');
+    if (page === 'database' && databaseTarget?.environmentId === environmentId) url.searchParams.set('node', databaseTarget.nodeId);
+    else url.searchParams.delete('node');
+    if (url.href !== window.location.href) window.history.pushState(null, '', url);
+  }, [page, environmentId, taskId, databaseTarget]);
+
+  useEffect(() => {
+    const restore = () => {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get('page') || 'deployment';
+      setPage(isPage(requested) ? requested : 'deployment');
+      setEnvironmentId(params.get('env') || ''); setTaskId(params.get('task'));
+      setDatabaseTarget(params.get('env') && params.get('node') ? { environmentId: params.get('env')!, nodeId: params.get('node')! } : null);
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
   }, []);
 
   const reload = useCallback(async () => {
@@ -170,7 +193,10 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       icon: <ToolOutlined />,
       label: '数据库部署管理',
     },
+    { key: 'monitoring', icon: <DatabaseOutlined />, label: '数据库监控' },
     { key: 'database', icon: <DatabaseOutlined />, label: '数据库管理' },
+    { key: 'workloads', icon: <PlayCircleOutlined />, label: '数据库压测' },
+    { key: 'operations', icon: <SettingOutlined />, label: '平台运营' },
     {
       key: 'tests',
       icon: <PlayCircleOutlined />,
@@ -211,7 +237,10 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       reload,
       openTask: setTaskId,
     };
-    if (page === 'database') return <DatabasePage {...common} initialNodeId={databaseTarget?.environmentId === environment?.id ? databaseTarget?.nodeId : undefined} />;
+    if (page === 'monitoring') return <MonitoringPage onOpenTask={setTaskId} environment={environment} environments={environments.filter(e => products.some(p => p.id === e.product_id && p.capabilities.includes('database')))} onSelectEnvironment={setEnvironmentId} onOpenStudio={(nodeId) => { setDatabaseTarget(nodeId && environment ? { environmentId: environment.id, nodeId } : null); setPage('database'); }} />;
+    if (page === 'database') return <DatabasePage {...common} initialNodeId={databaseTarget?.environmentId === environment?.id ? databaseTarget?.nodeId : undefined} onSelectNode={(id) => setDatabaseTarget(id && environment ? { environmentId: environment.id, nodeId: id } : null)} onBackToDeployment={() => setPage('deployment')} />;
+    if (page === 'operations') return <OperationsPage products={products} environments={environments} openTask={setTaskId} />;
+    if (page === 'workloads') return <WorkloadsPage environment={environment} onSelectEnvironment={setEnvironmentId} environments={environments.filter((e) => products.some((p) => p.id === e.product_id && p.capabilities.includes('database')))} openTask={setTaskId} />;
     if (page === 'license:keys') return <LicenseKeysView />;
     if (page === 'license:generate') return <LicenseGenerateView />;
     if (page.startsWith('stability:')) {
@@ -250,7 +279,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       defaultOpenKeys={['tests', 'license', ...products.map((item) => `product:${item.id}`)]}
       items={menuItems}
       onClick={({ key }) => {
-        if (key === 'deployment' || key === 'database' || key.startsWith('license:')
+        if (key === 'deployment' || key === 'database' || key === 'monitoring' || key === 'operations' || key === 'workloads' || key.startsWith('license:')
             || key.startsWith('tests:') || key.startsWith('stability:')) {
           setPage(key as Page);
           // 测试页跳转到已绑定环境，保证页面上下文与执行上下文一致
@@ -288,7 +317,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       <Layout>
         <Button className="mobile-menu-button" icon={<MenuOutlined />}
           onClick={() => setMobileMenuOpen(true)} aria-label="打开导航" />
-        <Content className="platform-content">
+        <Content className={`platform-content${page === 'database' ? ' platform-content-database' : ''}`}>
           <div className="content-width">
             <PlatformErrorBoundary>
               <Suspense fallback={<div className="page-loading">加载中…</div>}>

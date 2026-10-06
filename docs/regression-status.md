@@ -107,10 +107,31 @@
    - 注：`rw_split_method` 非 none 的用例（sql_parse 等）`group_names` 须收缩为 `mmr_group`——fbasecman 校验 single/balance group 仅接受 `rw_split_method "none"`，与 legacy `_sql_parse_transform`/`_route_user_scope` 语义对齐。
 2. ~~**mmr 3 条 BLOCKED 复跑**~~（已完成）——`mmr.replication_set.synchronous_removal`/`mmr.default_publication.schema_filtering`/`mmr.cluster_verification.check_node_conf_table_exclusion` 平台 PASS vs 历史 BLOCKED（two_phase 前提不满足）；差异根因是用例演进为隔离 fixture 自建 two_phase=false 双节点（initdb/create_node/create_group 证据齐全），非平台失真。
 3. ~~**`mmr.node_management` 5 条 disabled 用例**~~（已完成）——`join_group`/`multi_database_active_join`/`online_join_all_retry` PASS；`multi_database_three_node_join`（步骤 35 超时 rc=124）与 `online_join_data_retry`（订阅映射冲突，历史已知缺陷 D-017）同因复现历史失败。
-4. **handover 6 条未实现用例**——维持现状：`default_enabled=False`（long_time 统计），不进入批跑；平台判定语义正确。
+4. **handover 长时间统计用例执行策略**——按用户确认维持 `default_enabled=False`，默认不执行，不作为本轮必须补齐的开发任务或发布阻塞项；未执行不计为 PASS。后续确有专项长测需求时再实现并单独运行。
 5. ~~**`failed`/`all` 全链路经 Web 任务入口验收**~~（已完成）——`failed` 精确重跑 last_failed 并入库（含平台树 `result.json` 收录修复）；`all` 经 provider `validate_target` 放行后由 `platform_regress.cli` 驱动，native+legacy 混合执行全程留证。
 
-### C. 环境事项
+### C. 业务断言与证据质量重构（2026-10-03 起）
+
+目标不是批量替换 `command_succeeds`，而是识别“标题声称验证业务行为、实际只检查传输成功”的步骤。准备／清理动作允许只检查退出码；安全边界、状态转换、复制结果和审计事实必须核对结构化业务结果。每个新执行步骤必须保存实际命令或 SQL、声明期望、实际输出、断言规则、判定依据和可下载原始证据；历史归档缺字段时只提示重新执行，不用当前源码伪造当次事实。
+
+1. **报告事实链路（已完成）**：命令证据保存脱敏 argv、工作目录、退出码、输出和耗时；`steps.json` 保存 command/expected/actual/assertion/analysis/node/output/evidence；报告优先展示业务步骤，不再把 fixture 传输事件混成大量“执行命令”；MAC/MMR 浏览器验收覆盖证据下载与四主题可读性。
+   - **报告正文收敛（2026-10-03 完成）**：`report.txt` 每步只保留 执行内容／预期／实际输出／结果分析／判定——原始输出即实际结果，工件路径与断言 JSON 不再进正文；`steps.json` 仍保留全部断言与证据引用供机器追溯；Web 端断言 JSON 与工件链接移入默认折叠的“技术附件”，四主题对比度与下载验收保持通过。
+   - **执行内容可读化（2026-10-03 完成）**：`执行内容` 不再渲染 `sh -ec '…'"'"'…'` 传输转义串——`sh -c/-ec/-lc`/`script -c` 解包为脚本原文，`psql -c` 直接显示 SQL，`ssh` 显示目标+脚本，`env` 前缀保留（密钥仍脱敏）；`display_sql` 注解脚本（并发事务类）优先作为显示命令。psql 显示形再收敛：`-X/-v/-P/--csv/-At` 等传输格式标志隐藏，只保留连接参数与 SQL（`psql -h … -p … -U … -d … -c` 换行接 SQL 原文）。长 shell 单行脚本按未加引号的 `;` 安全分行、`do/done/if/fi` 缩进成可读脚本块（引号、`$(…)`、`(...)` 内不切）。完整 argv 仍存于命令证据 JSON，渲染层对旧归档重渲染同样生效。
+   - **全量报告可读性审计（2026-10-03 完成）**：对 228 条 catalog、约 4567 个步骤静态渲染 `执行内容` 逐项检查——残留转义 0、残留包装 0、缺预期 0；2564 个 `display_sql` 字段与实际 `-c` SQL/副作用命令逐一核对一致；仅 `multi_database_three_node_join` 步骤 20 显示 24 行，为 4 库×3 节点校验 SQL 注解列表的固有长度，可接受。
+   - **逐步骤断言审计（2026-10-03 完成）**：按"验证类标题必须带实质校验、失败断言必须指定期望错误文本、轮询脚本退出码即断言"的规则逐条检查全部步骤；`command_fails` 均带 `message_contains`；`grep`/`test`/`[`/`!` 内嵌校验的 `command_succeeds` 退出码即业务判定。真实修正：231 处 `预期: 返回 0` 语义模糊——查询类改为"查询结果为 0"、动作类改为"命令执行成功（退出码为 0）"，逐条核对断言值后批量更新，无其他弱断言残留。
+2. **MMR 后台维护生命周期（已完成）**：`mmr.background.maintenance_lifecycle` 删除固定 `sleep 2`，对 `CREATE EXTENSION`、`create_node`、`part_node` 核对业务输出；maintenance daemon 启停改为 15 秒条件轮询，分离后连续 5 次采样确认没有重启；隔离真机结果 PASS、cleanup PASS。
+3. **MAC 审计第一批（已完成，2026-10-03）**：
+   - 新增平台通用 `scalar_integer` 断言：要求结果严格为一行一列整数，并支持 minimum/maximum；非整数、多行、多列、越界或非零退出码均失败。
+   - `mac.audit.log_access_restrictions`：SSO/SAO 的正向查询从“命令成功”提升为单行非负计数断言；负向权限检查继续要求明确错误文本。真机结果 PASS／cleanup PASS，SAO 实际计数 240。
+   - `mac.audit.rule_cancellation`：创建三条规则后精确核对 owner、规则类型、审计类型、用户、时机和对象，再执行跨用户取消／错误取消函数／正常取消，最终核对记录为 0。真机结果 PASS／cleanup PASS。
+   - `mac.audit.rule_setting_permissions`、`mac.audit.rule_modification` 已有创建后 `rows_equal` 元数据核验，本批不重复增加等价步骤。全量平台测试 543 passed、8 skipped，前端生产构建通过。
+4. **MAC/MMR 存量审查（已完成，2026-10-03）**：对 228 条 catalog 逐项按“命令内是否内嵌校验”复核。多数 `command_succeeds` 步骤合法——准备动作（ALTER SYSTEM、UDF 调用、pg_ctl）只判成功，验证步骤的 shell 命令内嵌 `test`/`grep`/有界轮询编码业务判定，退出码即断言。确认已结实的覆盖：账户锁定全链路（计数→锁定→正确密码仍拒→解锁→恢复）、密码日志掩码（grep 掩码断言 + 明文不存在）、TDE 密文页（第 12 字节标志位 + 无明文 payload + 透明读）、TLCP/SSL 双向认证（证书权限 + 加密连接 + 吊销证书失败）、MAC 策略（UDF 操作后跟 rows_equal 元数据核验）。
+   - 实际修复 1：`mac.gm.sm4_tde_lifecycle` 错误密钥启动从裸 `command_fails` 升级为核验启动日志含 `'TDE key does not match'` PANIC（`xlog.c` 中手工密钥校验失败信息，对照转测文档密码不一致即启动失败的规范）且 `pg_ctl status` 确认实例未运行。真机 PASS 4.487s。
+   - 实际修复 2：`mmr.cluster_verification.time_difference` 删除冗余 `sleep 10` 步骤——后续 `wait_sql` 已对订阅 worker 恢复做有界轮询。真机 PASS 10.282s。
+   - `display_sql` 中并发事务脚本内的 `pg_sleep` 属重叠时序构造，不是条件等待，保留。
+5. **验收门**：契约测试验证 catalog 中的关键断言形状；`pytest tests/`、前端 build、报告浏览器验收；涉及数据库行为的修改至少执行目标单用例隔离真机验证。PASS 只表示声明断言成立，不代替产品需求评审。
+
+### D. 环境事项
 
 - **优雅退出机制（2026-09-29 落地）**：取消时 cleanup 命令可执行（引擎 `suppress_cancellation`）；隔离资源台账 `data/resources/<产品>/<环境>/` 按 owner pid 死亡自动回收；`ipcs` cpid 死判定清扫孤儿 SysV shm（`reset` 前置 + 隔离 fixture 入口）；`_wait_ports_free` 超时先 SIGTERM 框架内监听者。SIGTERM/SIGKILL 两条路径均实测自愈。本机制消灭此前"套件中断→尸体 postmaster 占口→下轮连环失败"的因果链。
 - cman-lab MMR 环境已归位（复制家族全绿）；`qa_case.orders` 等套件自建表在套件生命周期内管理，不算环境基线。

@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from platform_app.providers import PgclusterDatabaseProvider
 from test_api import settings_for
@@ -52,3 +51,10 @@ def test_pgcluster_provider_rejects_missing_config(tmp_path):
         assert "部署配置不存在" in str(exc)
     else:
         raise AssertionError("missing deployment config must be rejected")
+
+
+def test_pgcluster_status_script_extracts_postmaster_pid():
+    from platform_app.pgcluster_topology import STATUS_SCRIPT
+    assert "postmaster.pid" in STATUS_SCRIPT
+    assert "info[\"pid\"]" in STATUS_SCRIPT
+    assert "head" in STATUS_SCRIPT

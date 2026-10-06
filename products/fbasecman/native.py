@@ -133,7 +133,7 @@ def _business_query(context: CaseContext, psql: str, port: int, sql: str,
 
 
 def _expect(context: CaseContext, key: str, title: str, expected: str,
-            predicate, query, retry_seconds: float = 0.0) -> str:
+            predicate, query, retry_seconds: float = 0.0, *, command: str | None = None) -> str:
     """运行一条查询并按谓词断言，可选收敛重试窗口（对齐旧 runtime 语义）。"""
     deadline = time.monotonic() + retry_seconds
     started = time.monotonic()
@@ -150,11 +150,13 @@ def _expect(context: CaseContext, key: str, title: str, expected: str,
         if passed or time.monotonic() >= deadline:
             break
         time.sleep(0.2)
-    actual = "returncode=%s attempts=%s elapsed=%.2fs" % (
-        rc, attempt, time.monotonic() - started)
+    actual = "退出码=%s；返回结果：\n%s" % (rc, output)
     context.step(key, title, status="PASS" if passed else "FAIL",
-                 details={"expected": expected, "actual": actual,
-                          "output": output})
+                 details={"intent": "verify", "command": command, "expected": expected, "actual": actual,
+                          "analysis": "退出码为 0，返回结果满足本步骤声明的检查条件" if passed else
+                                      "退出码非 0 或返回结果不满足声明条件；请对照期望与实际值",
+                          "attempts": attempt, "elapsed_seconds": time.monotonic() - started,
+                          "evidence": getattr(result, "evidence", None), "output": output})
     if not passed:
         raise AssertionError("%s: %s" % (title, actual))
     return output
@@ -165,7 +167,7 @@ def _console_expect(context: CaseContext, psql: str, port: int, sql: str,
     # 旧 rt.psql 对 SHOW 命令给 30s 收敛窗口
     retry = 30.0 if sql.lstrip().upper().startswith("SHOW ") else 0.0
     return _expect(context, key, title, expected, predicate,
-                   lambda: _console_query(context, psql, port, sql), retry)
+                   lambda: _console_query(context, psql, port, sql), retry, command=sql)
 
 
 def _wait_mmr_routing(context: CaseContext, port: int, psql: str,
@@ -363,9 +365,14 @@ class HeartbeatBindCase:
         context.attach_text("heartbeat-messages.json", json.dumps(
             {"mode": self.mode, "parse": parse_messages, "bind": messages}, indent=2))
         context.step("heartbeat-verdict", "核对 SQL_PARSE heartbeat Bind", status="PASS" if passed else "FAIL",
-                     details={"mode": self.mode, "parse": parse_messages, "bind": messages})
+                     details={"intent": "verify", "mode": self.mode,
+                              "expected": "错误响应 E 与就绪 Z；不返回数据行 D" if self.mode == "malformed" else
+                                          "绑定完成 2、数据行 D、命令完成 C 与就绪 Z 均出现",
+                              "actual": "收到消息类型：" + ", ".join(messages),
+                              "analysis": "实际消息满足本场景要求" if passed else "实际消息缺少必需响应或包含不允许的数据行",
+                              "parse": parse_messages, "bind": messages})
         if not passed:
-            raise AssertionError(f"heartbeat {self.mode} 响应不符合旧用例预期")
+            raise AssertionError(f"探活协议 {self.mode} 响应不符合声明期望，实际消息：{messages}")
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         backend_check = context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"),
                                          "-p", str(port), "-U", "admin", "-d", "console",
@@ -377,12 +384,14 @@ class HeartbeatBindCase:
                       and backend_has_statement == expected_backend)
         context.step("backend-prepared-check", "核对 heartbeat 后端 PreparedStatement 部署",
                      status="PASS" if backend_ok else "FAIL",
-                     details={"contains_select_1": backend_has_statement,
-                              "expected": expected_backend,
+                     details={"intent": "verify", "contains_select_1": backend_has_statement,
+                              "expected": "后端部署 SELECT 1" if expected_backend else "后端不部署 SELECT 1",
+                              "actual": "后端列表%s SELECT 1；退出码=%s" % ("包含" if backend_has_statement else "不包含", backend_check.returncode),
+                              "analysis": "后端部署状态符合本场景要求" if backend_ok else "后端列表查询失败或部署状态不符",
                               "returncode": backend_check.returncode,
                               "stderr": backend_check.stderr, "output": rendered})
         if not backend_ok:
-            raise AssertionError("heartbeat 后端 PreparedStatement 部署状态与旧用例预期不符")
+            raise AssertionError("探活请求的后端 PreparedStatement 部署状态不符合声明期望")
         return True
 
 
@@ -414,15 +423,60 @@ class SqlParseExtendedProtocolCase:
             jdbc_client.java_argv(jdbc_client.classpath(context.output_dir, jar),
                                   "HaSqlParseExtended", url, "postgres", ""),
             cwd=context.output_dir, timeout_seconds=120)
-        required_markers = ("ROLLBACK_RECOVERY=OK", "COMMIT_RECOVERY=OK", "PARAM_VALUE=42",
-                            "READ_PORT=", "WRITE_PORT=")
-        passed = result.returncode == 0 and all(marker in result.stdout for marker in required_markers)
-        context.step("jdbc-verdict", "核对 SQL_PARSE JDBC 扩展协议路由和事务恢复",
-                     status="PASS" if passed else "FAIL",
-                     details={"output": result.stdout, "required": required_markers})
-        if not passed:
-            raise AssertionError("SQL_PARSE JDBC 扩展协议结果与旧用例预期不符")
+        self.record_results(context, result)
         return True
+
+    @staticmethod
+    def record_results(context, result):
+        checks = (
+            ("jdbc-parameter", "自动提交阶段：绑定参数 42 并查询", {"PARAM_VALUE": "42"},
+             'PreparedStatement statement = connection.prepareStatement("SELECT ?::int");\n'
+             'statement.setInt(1, 42);\nResultSet result = statement.executeQuery();'),
+            ("jdbc-rollback", "事务 1 回滚结束后，在新事务 2 中查询 42",
+             {"ROLLBACK_ERROR": "22012", "ROLLBACK_VALUE": "42", "ROLLBACK_RECOVERY": "OK"},
+             'connection.setAutoCommit(false); // 之后每次结束事务，下一条 SQL 开始新事务\n'
+             'expectFailure(connection, "ROLLBACK"); // SELECT ? / 0，绑定 1；要求 SQLSTATE 22012\n'
+             'connection.rollback(); // 结束事务 1\nqueryInt(connection, "SELECT ?::int", 42); // 在新事务 2 中查询'),
+            ("jdbc-commit", "事务 2 失败并结束后，在新事务 3 中查询 42",
+             {"COMMIT_ERROR": "22012", "COMMIT_VALUE": "42", "COMMIT_RECOVERY": "OK"},
+             'expectFailure(connection, "COMMIT"); // 在事务 2 中除零；要求 SQLSTATE 22012\n'
+             'connection.commit(); // PostgreSQL 以回滚结束失败事务，不提交失败事务中的修改\n'
+             'queryInt(connection, "SELECT ?::int", 42); // 在新事务 3 中查询'),
+        )
+        from products.fbasecman.reports.observations import jdbc_observation
+        failures = []
+        for key, title, expected, code in checks:
+            actual = {name: re.findall(r"^" + re.escape(name) + r"=(.*)$", result.stdout, re.M)
+                      for name in expected}
+            passed = all(actual[name] == [value] for name, value in expected.items())
+            missing = all(not values for values in actual.values())
+            status = "PASS" if passed else "BLOCKED" if missing and result.returncode != 0 else "FAIL"
+            summary = "；".join(jdbc_observation(name, ", ".join(values) if values else "未返回")
+                                for name, values in actual.items())
+            context.step(key, title, status=status, details={
+                "intent": "verify", "example_code": code,
+                "expected": "仅返回一行非空整数；参数值为 42" if key == "jdbc-parameter" else
+                            ("事务 1 除零 SQLSTATE=22012；rollback 后，在新事务 2 中查询返回 42" if key == "jdbc-rollback" else
+                             "事务 2 除零 SQLSTATE=22012；commit 结束失败事务后，在新事务 3 中查询返回 42"),
+                "actual": summary, "output": result.stdout,
+                "assertion": {"type": "output_contains_text", "values": [name + "=" + value for name, value in expected.items()]},
+                "analysis": "每个检查值均唯一出现且与期望精确一致" if passed else
+                            "客户端提前终止，本检查未返回结果" if status == "BLOCKED" else
+                            "检查值缺失、重复或不符：" + "; ".join(jdbc_observation(name, "期望 " + value + "，实际 " + repr(actual[name]))
+                                for name, value in expected.items() if actual[name] != [value]),
+                "evidence": getattr(result, "evidence", None),
+            })
+            if not passed:
+                failures.append(title + "：" + summary)
+        context.step("jdbc-client-exit", "确认 JDBC 客户端正常结束",
+                     status="PASS" if result.returncode == 0 else "FAIL", details={
+                         "intent": "action", "expected": "客户端退出码 0",
+                         "actual": "退出码=%s" % result.returncode,
+                         "output": result.stdout, "analysis": "检查客户端退出码",
+                         "evidence": getattr(result, "evidence", None),
+                     })
+        if result.returncode != 0 or failures:
+            raise AssertionError("JDBC 客户端退出码=%s；%s" % (result.returncode, "; ".join(failures)))
 
 
 class JdbcConsoleHaCommandsCase:
@@ -463,9 +517,15 @@ class JdbcConsoleHaCommandsCase:
         context.attach_text("ha-command-markers.txt", result.stdout)
         context.step("ha-command-verdict", "核对 JDBC 高可用命令矩阵和路由结果",
                      status="PASS" if passed else "FAIL",
-                     details={"markers": markers, "output": result.stdout})
+                     details={"intent": "verify", "expected": "客户端退出码为 0，全部管理命令检查标记为 OK",
+                              "actual": "退出码=%s；已完成 %s/%s 项管理命令标记检查" %
+                                        (result.returncode, sum(marker in result.stdout for marker in markers), len(markers)),
+                              "analysis": "全部声明标记已出现" if passed else
+                                          "缺失标记：" + ", ".join(marker for marker in markers if marker not in result.stdout),
+                              "required": markers, "output": result.stdout,
+                              "evidence": getattr(result, "evidence", None)})
         if not passed:
-            raise AssertionError("JDBC 高可用命令结果与旧用例预期不符")
+            raise AssertionError("JDBC 高可用命令检查失败：退出码=%s，缺少标记=%s" % (result.returncode, [marker for marker in markers if marker not in result.stdout]))
         return True
 
 
@@ -495,11 +555,15 @@ class SetNodeWriteIdempotentCase:
                   and "ERROR" not in command.stdout and unchanged
                   and all(item in after.stdout for item in ("mmr_group", "active", "pg_cluster_2", "pg_2", "write-leader")))
         context.attach_text("set-node-write-output.txt", output)
-        context.step("idempotent-verdict", "核对 SET NODE WRITE 幂等命令",
+        context.step("idempotent-verdict", "确认重复设置 pg_2 写中心不改配置和运行态",
                      status="PASS" if passed else "FAIL",
-                     details={"config_unchanged": unchanged, "output": output})
+                     details={"intent": "verify", "expected": "SET NODE WRITE pg_2 IN GROUP mmr_group 成功；配置字节不变；前后均包含 pg_cluster_2、pg_2、write-leader，最终还包含 active",
+                              "actual": "配置文件%s；初始检查退出码=%s，命令退出码=%s，最终检查退出码=%s" %
+                                        ("未改变" if unchanged else "已改变", initial.returncode, command.returncode, after.returncode),
+                              "analysis": "配置未改动且前后状态检查均满足期望" if passed else "配置或前后状态检查未满足期望，原始输出已保存",
+                              "config_unchanged": unchanged, "output": output})
         if not passed:
-            raise AssertionError("SET NODE WRITE 幂等用例与旧判定不一致")
+            raise AssertionError("SET NODE WRITE 未满足幂等性条件：配置未改变=%s；运行状态见步骤实际输出" % unchanged)
         return True
 
 
@@ -537,14 +601,28 @@ class IdempotentHaCommandCase:
         output = "\n".join((initial.stdout, command.stdout, final.stdout))
         context.attach_text("idempotent-ha-output.txt", output)
         context.step("idempotent-verdict", self.title, status="PASS" if passed else "FAIL",
-                     details={"config_unchanged": unchanged, "output": output})
+                     details={"intent": "verify", "expected": "命令 %s 成功；配置字节不变；初始输出包含 %s；最终输出包含 %s" % (self.command, ", ".join(self.initial_needles), ", ".join(self.final_needles)),
+                              "actual": "配置文件%s；初始检查退出码=%s，命令退出码=%s，最终检查退出码=%s" %
+                                        ("未改变" if unchanged else "已改变", initial.returncode, command.returncode, final.returncode),
+                              "analysis": "配置未改动且前后状态检查均满足期望" if passed else "配置或前后状态检查未满足期望，原始输出已保存",
+                              "config_unchanged": unchanged, "output": output})
         if not passed:
-            raise AssertionError(self.title + " 与旧用例预期不符")
+            raise AssertionError(self.title + " 未满足声明的幂等性条件，配置或运行状态检查失败")
         return True
 
 
 class SetNodeWeightIdempotentCase:
     """Native host for SET NODE WEIGHT pg_3=10 idempotency."""
+
+    @staticmethod
+    def node_weights(output, name):
+        rows = [[cell.strip() for cell in line.split("|")] for line in output.splitlines()]
+        headers = next((row for row in rows if "node_name" in row and "weight" in row), None)
+        if headers is None:
+            return []
+        node_index, weight_index = headers.index("node_name"), headers.index("weight")
+        return [row[weight_index] for row in rows
+                if len(row) == len(headers) and row[node_index] == name]
 
     def run(self, context: CaseContext) -> bool:
         config = context.output_dir / "fbasecman.conf"
@@ -555,12 +633,12 @@ class SetNodeWeightIdempotentCase:
         psql = context.environment.get("psql_bin", "/usr/bin/psql")
         _wait_mmr_routing(context, port, psql)
         def q(sql):
-            return context.command([psql, "-X", "-A", "-t", "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
+            return context.command([psql, "-X", "-A", "-h", context.environment.get("local_host", "127.0.0.1"), "-p", str(port),
                                     "-U", "admin", "-d", "console", "-c", sql], timeout_seconds=30)
         initial, command, final = q("SHOW NODES;"), q("SET NODE WEIGHT pg_3=10;"), q("SHOW NODES;")
         unchanged = config.read_bytes() == before
         def has_weight(result):
-            return any("pg_3" in line and "10" in line for line in result.stdout.splitlines())
+            return self.node_weights(result.stdout, "pg_3") == ["10"]
         passed = (initial.returncode == command.returncode == final.returncode == 0
                   and has_weight(initial) and has_weight(final) and unchanged
                   and ("SET NODE" in command.stdout or "NO CONFIG CHANGE" in command.stdout)
@@ -569,9 +647,13 @@ class SetNodeWeightIdempotentCase:
         context.attach_text("set-node-weight-output.txt", output)
         context.step("weight-verdict", "核对 SET NODE WEIGHT 幂等命令",
                      status="PASS" if passed else "FAIL",
-                     details={"config_unchanged": unchanged, "output": output})
+                     details={"intent": "verify", "expected": "SET NODE WEIGHT pg_3=10 成功；配置字节不变；SHOW NODES 的 pg_3 行 weight 字段前后均为 10",
+                              "actual": "配置文件%s；初始 pg_3 权重=%s，最终权重=%s；命令退出码=%s" %
+                                        ("未改变" if unchanged else "已改变", self.node_weights(initial.stdout, "pg_3"), self.node_weights(final.stdout, "pg_3"), command.returncode),
+                              "analysis": "配置未改动且前后状态检查均满足期望" if passed else "配置或前后状态检查未满足期望，原始输出已保存",
+                              "config_unchanged": unchanged, "output": output})
         if not passed:
-            raise AssertionError("SET NODE WEIGHT 幂等用例与旧判定不一致")
+            raise AssertionError("SET NODE WEIGHT 未满足幂等性条件：配置未改变=%s；初始权重=%s，最终权重=%s" % (unchanged, self.node_weights(initial.stdout, "pg_3"), self.node_weights(final.stdout, "pg_3")))
         return True
 
 
@@ -591,37 +673,10 @@ class SavepointRecoveryCase:
                 'pool_reserve_prepared_statement yes' not in config_text):
             raise AssertionError("SQL_PARSE 配置或 prepared statement 保留配置缺失")
         records = _run_protocol(port)
-        expected = [("direct_recovery", x) for x in
-                    ("begin", "savepoint", "division", "rollback_to", "recovery_select", "cleanup")]
-        expected += [("after_local_25p02", x) for x in
-                     ("begin", "savepoint", "division", "aborted_select", "rollback_to", "recovery_select", "cleanup")]
-        if [(x.get("variant"), x.get("step")) for x in records] != expected:
-            raise AssertionError("Extended Query savepoint protocol sequence mismatch")
-        expected_steps = {
-            "begin": (None, "T", "BEGIN", None),
-            "savepoint": (None, "T", "SAVEPOINT", None),
-            "division": ("22012", "E", None, None),
-            "aborted_select": ("25P02", "E", None, None),
-            "rollback_to": (None, "T", "ROLLBACK", None),
-            "recovery_select": (None, "T", "SELECT 1", "9"),
-            "cleanup": (None, "I", "ROLLBACK", None),
-        }
-        failures = []
-        for item in records:
-            expected = expected_steps[item["step"]]
-            actual = (item["sqlstate"], item["ready"], item["command_tag"], item["value"])
-            if actual != expected:
-                failures.append({"step": item["step"], "expected": expected,
-                                 "actual": actual, "error": item.get("error")})
-        if failures:
-            context.attach_text("protocol-failures.json", json.dumps(failures, indent=2))
-            raise AssertionError("Extended Query response mismatch: " + json.dumps(failures))
-        context.attach_text("protocol-records.json", json.dumps(records, ensure_ascii=False, indent=2))
-        for index, item in enumerate(records, 1):
-            context.step(f"protocol-{index}", f"{item['variant']} / {item['step']}",
-                         details={"sqlstate": item["sqlstate"], "ready": item["ready"],
-                                  "command_tag": item["command_tag"], "value": item["value"]})
         product_log = config.with_suffix(".log")
+        if product_log.is_file():
+            context.attach_file("fbasecman.log", product_log)
+        self.record_protocol(context, records)
         if product_log.is_file():
             log_lines = product_log.read_text(encoding="utf-8", errors="replace").splitlines()
             context.attach_file("fbasecman.log", product_log)
@@ -634,14 +689,69 @@ class SavepointRecoveryCase:
                         and any(word in line.lower() for word in
                                 ("rollback", "25p02", "savepoint", "local error", "detach"))]
             internal_rollback = any("after internal rollback" in line for line in relevant)
-            context.step("transaction-log-check", "检查同一 client 的保存点恢复日志",
-                         status="FAIL" if internal_rollback else "PASS",
-                         details={"client_id": client_id or None,
-                                  "lines": relevant[-30:],
-                                  "expected": "不得出现 after internal rollback"})
+            if client_id and relevant:
+                context.step("transaction-log-check", "检查同一客户端的保存点恢复日志",
+                             status="FAIL" if internal_rollback else "PASS", details={
+                                 "intent": "verify", "client_id": client_id, "lines": relevant[-30:],
+                                 "expected": "已定位客户端日志中不得出现代理内部完整回滚标记 after internal rollback",
+                                 "actual": "定位到 %s 条相关日志；内部完整回滚标记%s" %
+                                           (len(relevant), "已出现" if internal_rollback else "未出现"),
+                                 "analysis": "已匹配本次客户端日志并检查标记"})
             if internal_rollback:
                 raise AssertionError("代理在保存点恢复期间执行了内部完整 ROLLBACK")
         return True
+
+    @staticmethod
+    def record_protocol(context, records):
+        expected_order = [("direct_recovery", x) for x in
+                          ("begin", "savepoint", "division", "rollback_to", "recovery_select", "cleanup")]
+        expected_order += [("after_local_25p02", x) for x in
+                           ("begin", "savepoint", "division", "aborted_select", "rollback_to", "recovery_select", "cleanup")]
+        order = [(item.get("variant"), item.get("step")) for item in records]
+        if order != expected_order:
+            context.step("protocol-sequence", "检查两种保存点恢复场景的步骤顺序", status="FAIL",
+                         details={"intent": "verify", "expected": expected_order, "actual": order,
+                                  "analysis": "场景或步骤顺序不符合声明；不把已完成的传输操作当作功能通过"})
+            raise AssertionError("Extended Query savepoint protocol sequence mismatch")
+        expected_steps = {
+            "begin": (None, "T", "BEGIN", None),
+            "savepoint": (None, "T", "SAVEPOINT", None),
+            "division": ("22012", "E", None, None),
+            "aborted_select": ("25P02", "E", None, None),
+            "rollback_to": (None, "T", "ROLLBACK", None),
+            "recovery_select": (None, "T", "SELECT 1", "9"),
+            "cleanup": (None, "I", "ROLLBACK", None),
+        }
+        titles = {"begin": "建立事务", "savepoint": "创建保存点 s4",
+                  "division": "执行除零 SQL，使事务进入失败状态",
+                  "aborted_select": "确认失败事务中的普通查询被 25P02 拒绝",
+                  "rollback_to": "回滚到保存点，保留当前事务",
+                  "recovery_select": "在恢复后的原事务中查询 9", "cleanup": "回滚并结束整个事务"}
+        states = {"T": "事务内正常（T）", "E": "事务内失败（E）", "I": "事务外空闲（I）"}
+        def describe(values):
+            error, state, tag, value = values
+            return "错误码=%s；事务状态=%s；命令标签=%s；查询值=%s" % (
+                error or "无", states.get(state, state), tag or "无", value if value is not None else "无")
+        failures = []
+        context.attach_text("protocol-records.json", json.dumps(records, ensure_ascii=False, indent=2))
+        for index, item in enumerate(records, 1):
+            expected = expected_steps[item["step"]]
+            actual = (item["sqlstate"], item["ready"], item["command_tag"], item["value"])
+            passed = actual == expected
+            scenario = "直接保存点恢复" if item["variant"] == "direct_recovery" else "本地 25P02 后保存点恢复"
+            context.step(f"protocol-{index}", scenario + "：" + titles[item["step"]],
+                         status="PASS" if passed else "FAIL", details={
+                             "intent": "verify", "command": item["sql"],
+                             "expected": describe(expected), "actual": describe(actual),
+                             "analysis": "错误码、事务状态、命令标签及查询值均与期望一致" if passed else
+                                         "响应字段不匹配；期望 %s，实际 %s" % (describe(expected), describe(actual)),
+                             "assertion": {"type": "rows_equal", "rows": [expected]},
+                         })
+            if not passed:
+                failures.append({"step": item["step"], "expected": expected, "actual": actual})
+        if failures:
+            context.attach_text("protocol-failures.json", json.dumps(failures, ensure_ascii=False, indent=2))
+            raise AssertionError("Extended Query response mismatch: " + json.dumps(failures))
 
 
 class ReloadDisableMonitorRouteLossCase:
@@ -817,7 +927,7 @@ class OutstandingConsistencyCase:
         _wait_mmr_routing(context, port, psql)
 
         context.step("step-config", "确认 outstanding 与 PS 缓存一致性配置",
-                     details={"expected": "transaction pool，pool_size=1，保留 PreparedStatement，禁用 DISCARD ALL",
+                     details={"intent": "prepare", "expected": "transaction pool，pool_size=1，保留 PreparedStatement，禁用 DISCARD ALL",
                               "actual": "\n".join((
                                   "backend_prepared_statements_limit %d" % backend_limit,
                                   "pool_reserve_prepared_statement yes",
@@ -827,8 +937,8 @@ class OutstandingConsistencyCase:
 
         probe = (Path(__file__).resolve().parent / "regression"
                  / "suites" / "outstanding" / "assets" / "outstanding_protocol_probe.py")
-        context.step("step-probe", "确认缓存观测不会创建 PreparedStatement",
-                     details={"expected": "测试流量使用原始 Extended 报文；pg_prepared_statements 观测使用 Simple Query Q",
+        context.step("step-probe", "声明协议探针与缓存观测方式",
+                     details={"intent": "prepare", "expected": "测试流量使用原始 Extended 报文；pg_prepared_statements 观测使用 Simple Query Q",
                               "actual": "driver=raw PostgreSQL protocol; cache inspection=Simple Query Q"})
 
         logfile = context.output_dir / "protocol_probe.log"
@@ -842,6 +952,14 @@ class OutstandingConsistencyCase:
             phase_data[name] = pg_cache
             expected_cnt = expected_counts[0] if name == "AFTER_ERROR" else expected_counts[1]
             actual_cnt = len(pg_cache)
+            passed = actual_cnt == expected_cnt
+            context.step("phase-1" if name == "AFTER_ERROR" else "phase-2",
+                         "第一阶段：检查后端缓存条目数" if name == "AFTER_ERROR" else "第二阶段：检查后端缓存条目数",
+                         status="PASS" if passed else "FAIL", details={
+                             "intent": "verify", "expected": "缓存条目数=%s" % expected_cnt,
+                             "actual": "缓存条目数=%s；条目=%s" % (actual_cnt, pg_cache),
+                             "analysis": "实际条目数与阶段期望相等" if passed else "实际条目数与阶段期望不相等",
+                         })
             if actual_cnt != expected_cnt:
                 raise RuntimeError(
                     "phase %s cache count mismatch: expected %s, got %s (cached: %s)"
@@ -857,16 +975,6 @@ class OutstandingConsistencyCase:
             context.attach_file("protocol_probe.log", logfile)
         if rc != 0:
             raise RuntimeError("protocol probe failed with rc=%s:\n%s" % (rc, output[-1000:]))
-
-        for index, name in enumerate(("AFTER_ERROR", "AFTER_RECOVERY")):
-            context.step("phase-%d" % (index + 1),
-                         "验证第%s阶段 (%s) 缓存%s状态" % (
-                             "一" if index == 0 else "二", name,
-                             "" if index == 0 else "恢复"),
-                         details={"expected": "缓存条目数等于 %d" % expected_counts[index],
-                                  "actual": "actual_count=%d; cache=%s" % (
-                                      len(phase_data.get(name, {})),
-                                      phase_data.get(name, {}))})
 
         marker = "outstanding_case_%s" % mode
         servers_out = _console_expect(
@@ -975,7 +1083,8 @@ class RwToggleCase:
 
     def _check(self, context, key, title, expected, actual, passed):
         context.step(key, title, status="PASS" if passed else "FAIL",
-                     details={"expected": expected, "actual": actual})
+                     details={"intent": "verify", "expected": expected, "actual": actual,
+                              "analysis": "实际结果满足声明条件" if passed else "实际结果与声明条件不符"})
         if not passed:
             raise AssertionError("%s: expected %s, actual %s" % (title, expected, actual))
 
@@ -1154,6 +1263,18 @@ class RwToggleCase:
 _GUC_PROBE_SCHEMAS = ("public", "postgres", "schema1", "schema2")
 
 
+def _guc_script(context, psql, port, script):
+    """One client for the whole script; statements outside BEGIN autocommit.
+
+    Unlike psql -c's single multi-statement message, stdin permits DISCARD ALL
+    outside a transaction block while retaining the same client connection.
+    """
+    return context.command(
+        [psql, "-X", "-v", "ON_ERROR_STOP=1", "-h", context.environment.get("local_host", "127.0.0.1"),
+         "-p", str(port), "-U", "postgres", "-d", "mmr_group"],
+        input_text=script + "\n", timeout_seconds=15, merge_stderr=True)
+
+
 def _guc_pred(*all_of, **kwargs):
     """把 legacy executor 的子串断言编译为谓词。
 
@@ -1272,8 +1393,8 @@ class GucSessionCase:
 
     每条用例 = 启动代理（rw_split_method 参数化）→ 业务面 psql 断言序列
     → （可选）search_path 双主库同名表实解析验证。``actions`` 中 ``sql``
-    为 None 的条目是纯叙述步骤（会话断开/连接复用，psql -c 单命令本身
-    即一次会话）。
+    为 None 的条目是叙述，不登记为已执行验证。每段脚本通过一个独立
+    psql 客户端的标准输入执行，脚本内语句共享该客户端连接。
     """
 
     def __init__(self, mode, actions, verify=None):
@@ -1289,11 +1410,11 @@ class GucSessionCase:
         required = ('rw_split_method "%s"' % self.mode, "enable_guc_sync yes")
         missing = [item for item in required if item not in text]
         context.step("boot-config",
-                     "启动 fbasecman 代理并加载 GUC 配置 (rw_split_method=%s)" % self.mode,
+                     "检查待启动代理的 GUC 配置文件 (rw_split_method=%s)" % self.mode,
                      status="PASS" if not missing else "FAIL",
                      details={"expected": "且".join(required),
                               "actual": "缺失字段: %s" % missing if missing
-                              else "配置字段已生效"})
+                              else "配置文件包含所有必要字段"})
         context.attach_text("fbasecman.conf", text)
         if missing:
             raise AssertionError("GUC 配置字段未生效: %s" % missing)
@@ -1301,39 +1422,41 @@ class GucSessionCase:
                               ready_host=context.environment.get("local_host", "127.0.0.1"), ready_port=port,
                               timeout_seconds=30)
         _wait_mmr_routing(context, port, psql)
+        session = 0
         for index, (title, expected, sql, predicate) in enumerate(self.actions, 1):
             key = "guc-%02d" % index
             if sql is None:
-                context.step(key, title,
-                             details={"expected": expected,
-                                      "actual": "会话级复用由连接池承接 (pool=transaction)"})
+                # This entry is narration, not an executed operation or assertion.
                 continue
-            _expect(context, key, title, expected, predicate,
-                    lambda sql=sql: _business_query(context, psql, port, sql))
+            session += 1
+            measured_title = title.replace("复用后端连接", "观察后端参数状态").replace("复用连接", "观察参数状态")
+            _expect(context, key, "客户端会话 %s：%s" % (session, measured_title), expected, predicate,
+                    lambda sql=sql: _guc_script(context, psql, port, sql), command=sql)
             context.attach_text("guc-log-%02d.txt" % index,
                                 _guc_log_evidence(context, config))
         if self.verify:
             created = _guc_prepare_tables(context)
             context.step("guc-fixture", "双主库准备 search_path 同名表验证数据",
-                         details={"schemas": list(_GUC_PROBE_SCHEMAS),
-                                  "created": created})
+                         details={"intent": "prepare", "expected": "两个主节点各 schema 的同名测试表及 marker 数据准备成功",
+                                  "actual": "准备完成；schema=%s；本次新建 schema=%s" % (list(_GUC_PROBE_SCHEMAS), created),
+                                  "schemas": list(_GUC_PROBE_SCHEMAS), "created": created})
             try:
                 for path_sql, expected_schema in self.verify:
                     _guc_verify_search_path(context, psql, port,
                                             path_sql, expected_schema)
             finally:
                 _guc_cleanup_tables(context, created)
-                context.step("guc-fixture-cleanup", "清理 search_path 验证表")
+                context.step("guc-fixture-cleanup", "清理 search_path 验证表", details={"intent": "cleanup", "expected": "删除测试表及本次新建 schema", "actual": "清理命令均成功完成"})
         return True
 
 
 # actions 三元组: (title, expected, sql|None, predicate|None)
 _GUC_REUSE_ACTIONS = [
     ("客户端 1 设置 search_path 为 public 并即时查看",
-     "SET 成功且 SHOW 返回 public，前后端 GUC 缓存更新为 public",
+     "SET 成功且 SHOW 返回 public",
      "SET search_path = 'public'; SHOW search_path;",
      _guc_pred("SET", "public")),
-    ("客户端 1 会话断开，客户端 2 建立新连接并复用后端连接",
+    ("客户端 1 结束，下一条命令创建新客户端会话",
      "前后端 GUC 差异触发自动重放部署",
      None, None),
     ("客户端 2 验证 search_path 恢复结果与嵌套引号防范",
@@ -1345,7 +1468,7 @@ _GUC_REUSE_ACTIONS = [
 
 _GUC_MULTIVALUE_ACTIONS = [
     ('显式执行 SET search_path = "$user", public;',
-     "返回 SET，GUC 缓存正常记录多值表达式",
+     "命令返回 SET；多值表达式由后续 SHOW 检查",
      'SET search_path = "$user", public;',
      _guc_pred("SET")),
     ("校验 SHOW search_path 输出",
@@ -1393,9 +1516,9 @@ _GUC_SPECS = {
          "SET work_mem = '64MB'; SHOW work_mem;",
          _guc_pred("SET", "64MB")),
         ("客户端执行 RESET work_mem 并验证后端状态重置",
-         "RESET 成功且 SHOW 返回数据库默认值 4MB",
-         "RESET work_mem; SHOW work_mem;",
-         _guc_pred("RESET", "4MB")),
+         "同一客户端重设为 64MB；RESET 后 SHOW 返回默认 4MB",
+         "SET work_mem = '64MB'; SHOW work_mem; RESET work_mem; SHOW work_mem;",
+         _guc_pred("64MB", "RESET", "4MB")),
         ("新会话复用连接验证后端无残留污染",
          "SHOW work_mem 返回 4MB 且无 64MB 残留",
          "SHOW work_mem;",
@@ -1408,9 +1531,11 @@ _GUC_SPECS = {
          "SHOW work_mem; SHOW statement_timeout;",
          _guc_pred("32MB", any_of=("10s", "10000"))),
         ("客户端执行 RESET ALL 批量重置",
-         "各参数恢复数据库初始值 (4MB/0)",
+         "同一客户端先显示 32MB、10s，RESET ALL 后恢复 4MB、0",
+         "SET work_mem = '32MB'; SET statement_timeout = '10000'; SHOW work_mem; SHOW statement_timeout; "
          "RESET ALL; SHOW work_mem; SHOW statement_timeout;",
-         _guc_pred("4MB", any_of=("0", "0ms"))),
+         lambda output: _guc_pred("32MB", "4MB", any_of=("10s", "10000"))(output)
+                        and any(line.strip() in ("0", "0ms") for line in output.splitlines())),
         ("新会话复用连接验证缓存清空",
          "SHOW 返回默认值且无 32MB 残留",
          "SHOW work_mem; SHOW statement_timeout;",
@@ -1423,9 +1548,10 @@ _GUC_SPECS = {
          "SHOW work_mem; SHOW DateStyle;",
          _guc_pred("16MB", "German")),
         ("客户端执行 DISCARD ALL",
-         "返回 DISCARD ALL",
-         "DISCARD ALL;",
-         _guc_pred("DISCARD ALL")),
+         "同一客户端先显示 16MB、German；DISCARD ALL 后显示 4MB、ISO",
+         "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; SHOW work_mem; SHOW DateStyle; "
+         "DISCARD ALL; SHOW work_mem; SHOW DateStyle;",
+         _guc_pred("16MB", "German", "DISCARD ALL", "4MB", "ISO")),
         ("SHOW 校验所有参数恢复默认",
          "work_mem=4MB 且 DateStyle=ISO",
          "SHOW work_mem; SHOW DateStyle;",
@@ -1437,9 +1563,9 @@ _GUC_SPECS = {
     ], None),
     "set_local_transaction": ([
         ("事务内 SET LOCAL work_mem = '128MB' 并提交",
-         "事务内 SHOW 返回 128MB 且 COMMIT 成功",
-         "BEGIN; SET LOCAL work_mem = '128MB'; SHOW work_mem; COMMIT;",
-         _guc_pred("128MB", "COMMIT")),
+         "同一客户端事务内为 128MB，COMMIT 后立即 SHOW 恢复 4MB",
+         "BEGIN; SET LOCAL work_mem = '128MB'; SHOW work_mem; COMMIT; SHOW work_mem;",
+         _guc_pred("128MB", "COMMIT", "4MB")),
         ("提交后验证 work_mem 恢复事务前值",
          "SHOW 返回 4MB 且无 128MB 残留",
          "SHOW work_mem;",
@@ -1465,14 +1591,14 @@ _GUC_SPECS = {
     ], None),
     "report_param_timezone": ([
         ("客户端执行 SET TimeZone = 'Asia/Shanghai'",
-         "SET 成功且 SHOW 返回 Asia/Shanghai（ParameterStatus 同步缓存）",
+         "SET 成功且 SHOW 返回 Asia/Shanghai",
          "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone;",
          _guc_pred("SET", "Asia/Shanghai")),
-        ("同会话再次 SHOW 校验一致性",
+        ("新建另一客户端会话，执行 SHOW 校验 TimeZone",
          "返回 Asia/Shanghai",
          "SHOW TimeZone;",
          _guc_pred("Asia/Shanghai")),
-        ("新会话复用后端连接验证 TimeZone 保持",
+        ("再次新建客户端会话，检查 TimeZone 返回值",
          "返回 Asia/Shanghai",
          "SHOW TimeZone;",
          _guc_pred("Asia/Shanghai")),

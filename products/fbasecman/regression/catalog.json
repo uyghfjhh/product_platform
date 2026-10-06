@@ -7,11 +7,40 @@
       "suite_description": "fbasecman 高可用控制台和扩展协议回归",
       "target": "ha_commands.sql_parse_extended_protocol",
       "name": "sql_parse_extended_protocol",
-      "title": "sql_parse 使用 JDBC PreparedStatement 覆盖扩展协议与失败事务恢复",
+      "title": "SQL_PARSE 模式下 JDBC 参数绑定与失败事务恢复验证",
       "core_id": "",
-      "summary": "sql_parse 使用 JDBC PreparedStatement 覆盖扩展协议与失败事务恢复",
+      "summary": "验证同一个 JDBC 连接在 SQL_PARSE 模式下的参数绑定和失败事务恢复。整个用例跨越多个事务：自动提交时执行 SELECT ?::int 并绑定 42；关闭自动提交后，事务 1 除零并回滚；事务 2 重新查询 42，再除零并通过 commit 结束失败事务；事务 3 再次查询 42。验证的是连接在失败事务结束后可用于新事务，不是在原失败事务内继续查询。",
       "enabled": true,
-      "tags": ["sql_parse", "protocol"]
+      "tags": [
+        "sql_parse",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "整个用例复用同一个 JDBC Connection，不重新连接。",
+        "transactions": [
+          {
+            "stage": "自动提交阶段",
+            "operation": "执行 SELECT ?::int，绑定 42。",
+            "boundary": "默认 autoCommit=true，每条查询独立结束。"
+          },
+          {
+            "stage": "事务 1",
+            "operation": "setAutoCommit(false)；执行 SELECT ? / 0，绑定 1，收到 22012。",
+            "boundary": "rollback() 结束事务 1。"
+          },
+          {
+            "stage": "事务 2",
+            "operation": "回滚后新事务中查询 42；随后在同一事务 2 再次除零，收到 22012。",
+            "boundary": "commit() 结束失败事务 2，PostgreSQL 实际执行回滚。"
+          },
+          {
+            "stage": "事务 3",
+            "operation": "结束事务 2 后，在新事务 3 中执行 SELECT ?::int，绑定 42。",
+            "boundary": "最后 rollback() 结束事务 3。"
+          }
+        ],
+        "conclusion": "两次恢复查询都发生在新事务中；不验证失败事务可以继续执行，也不验证失败事务中的修改被提交。"
+      }
     },
     {
       "suite": "guc",
@@ -21,9 +50,25 @@
       "name": "search_path_reuse_sql_parse",
       "title": "SQL_PARSE 模式下连接复用时 search_path 部署与恢复测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下连接复用时 search_path 部署与恢复测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：客户端设置 search_path=public 后结束会话；新客户端 SHOW 应返回默认 \"$user\", public，且无重复嵌套引号；另用同名表标记检查 search_path 的实际解析结果。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = 'public'; SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -33,9 +78,25 @@
       "name": "search_path_reuse_hint",
       "title": "HINT 模式下连接复用时 search_path 部署与恢复测试",
       "core_id": "",
-      "summary": "HINT 模式下连接复用时 search_path 部署与恢复测试",
+      "summary": "在 HINT 模式下验证会话参数行为：客户端设置 search_path=public 后结束会话；新客户端 SHOW 应返回默认 \"$user\", public，且无重复嵌套引号；另用同名表标记检查 search_path 的实际解析结果。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = 'public'; SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -45,9 +106,30 @@
       "name": "search_path_multivalue_sql_parse",
       "title": "SQL_PARSE 模式下显式 SET search_path 多值与 SHOW 一致性验证",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下显式 SET search_path 多值与 SHOW 一致性验证",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：执行 SET search_path=\"$user\",public；后续客户端 SHOW 返回相同的多值表达式且不出现重复嵌套引号，并通过未限定表名查询核对实际 schema。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = \"$user\", public;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -57,9 +139,30 @@
       "name": "search_path_multivalue_hint",
       "title": "HINT 模式下显式 SET search_path 多值与 SHOW 一致性验证",
       "core_id": "",
-      "summary": "HINT 模式下显式 SET search_path 多值与 SHOW 一致性验证",
+      "summary": "在 HINT 模式下验证会话参数行为：执行 SET search_path=\"$user\",public；后续客户端 SHOW 返回相同的多值表达式且不出现重复嵌套引号，并通过未限定表名查询核对实际 schema。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = \"$user\", public;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -69,9 +172,25 @@
       "name": "search_path_empty_normalize",
       "title": "空 search_path 规范化与连接复用恢复测试",
       "core_id": "",
-      "summary": "空 search_path 规范化与连接复用恢复测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：同一条脚本中将 search_path 设置为空并 SHOW；新客户端应看到默认路径。空路径下未限定表名应不可解析，默认路径应命中预期 schema。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = ''; SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -81,9 +200,25 @@
       "name": "search_path_mixed_quotes_cleanup",
       "title": "多 schema 混合引号设置与会话复用清理测试",
       "core_id": "",
-      "summary": "多 schema 混合引号设置与会话复用清理测试",
+      "summary": "在 HINT 模式下验证会话参数行为：在一条脚本中设置带不同引号的 schema1、schema2、public 并 SHOW；新客户端应恢复默认路径、不残留 schema1；另检查未限定表名实际命中的 schema。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET search_path = 'schema1', \"schema2\", public; SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW search_path;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -93,9 +228,30 @@
       "name": "reset_param_sql_parse",
       "title": "SQL_PARSE 模式下单参数 RESET 与后端状态重置测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下单参数 RESET 与后端状态重置测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：先设置并显示 work_mem=64MB；在执行 RESET 的同一客户端中再次设置并显示 64MB，RESET 后应显示默认 4MB；最后新客户端不得残留 64MB。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '64MB'; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '64MB'; SHOW work_mem; RESET work_mem; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -105,9 +261,30 @@
       "name": "reset_param_hint",
       "title": "HINT 模式下单参数 RESET 与后端状态重置测试",
       "core_id": "",
-      "summary": "HINT 模式下单参数 RESET 与后端状态重置测试",
+      "summary": "在 HINT 模式下验证会话参数行为：先设置并显示 work_mem=64MB；在执行 RESET 的同一客户端中再次设置并显示 64MB，RESET 后应显示默认 4MB；最后新客户端不得残留 64MB。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '64MB'; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '64MB'; SHOW work_mem; RESET work_mem; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -117,9 +294,30 @@
       "name": "reset_all_sql_parse",
       "title": "SQL_PARSE 模式下 RESET ALL 批量重置与缓存清空测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下 RESET ALL 批量重置与缓存清空测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：在执行 RESET ALL 的同一客户端中，先设置并显示 work_mem=32MB、statement_timeout=10s；清理后应显示 4MB、0；最后新客户端仍应为默认值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '32MB'; SET statement_timeout = '10000'; SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '32MB'; SET statement_timeout = '10000'; SHOW work_mem; SHOW statement_timeout; RESET ALL; SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -129,9 +327,30 @@
       "name": "reset_all_hint",
       "title": "HINT 模式下 RESET ALL 批量重置与缓存清空测试",
       "core_id": "",
-      "summary": "HINT 模式下 RESET ALL 批量重置与缓存清空测试",
+      "summary": "在 HINT 模式下验证会话参数行为：在执行 RESET ALL 的同一客户端中，先设置并显示 work_mem=32MB、statement_timeout=10s；清理后应显示 4MB、0；最后新客户端仍应为默认值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '32MB'; SET statement_timeout = '10000'; SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '32MB'; SET statement_timeout = '10000'; SHOW work_mem; SHOW statement_timeout; RESET ALL; SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem; SHOW statement_timeout;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -141,9 +360,35 @@
       "name": "discard_all_sql_parse",
       "title": "SQL_PARSE 模式下 DISCARD ALL 彻底清理会话与 GUC 缓存测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下 DISCARD ALL 彻底清理会话与 GUC 缓存测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：在执行 DISCARD ALL 的同一客户端中，先设置并显示 work_mem=16MB、DateStyle=German；清理后应显示 4MB、ISO；最后新客户端不得残留旧值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; SHOW work_mem; SHOW DateStyle; DISCARD ALL; SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 4",
+            "operation": "SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -153,9 +398,35 @@
       "name": "discard_all_hint",
       "title": "HINT 模式下 DISCARD ALL 彻底清理会话与 GUC 缓存测试",
       "core_id": "",
-      "summary": "HINT 模式下 DISCARD ALL 彻底清理会话与 GUC 缓存测试",
+      "summary": "在 HINT 模式下验证会话参数行为：在执行 DISCARD ALL 的同一客户端中，先设置并显示 work_mem=16MB、DateStyle=German；清理后应显示 4MB、ISO；最后新客户端不得残留旧值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET work_mem = '16MB'; SET DateStyle = 'German, DMY'; SHOW work_mem; SHOW DateStyle; DISCARD ALL; SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 4",
+            "operation": "SHOW work_mem; SHOW DateStyle;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -165,9 +436,30 @@
       "name": "set_local_transaction_sql_parse",
       "title": "SQL_PARSE 模式下事务内 SET LOCAL 作用域与提交/回滚隔离测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下事务内 SET LOCAL 作用域与提交/回滚隔离测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：同一客户端执行 BEGIN、SET LOCAL work_mem=128MB、SHOW、COMMIT、SHOW：事务内应为 128MB，提交后立即恢复 4MB。另一脚本设置 256MB 后 ROLLBACK，同一客户端随后 SHOW 应为 4MB；新客户端也应为默认值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "BEGIN; SET LOCAL work_mem = '128MB'; SHOW work_mem; COMMIT; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "BEGIN; SET LOCAL work_mem = '256MB'; ROLLBACK; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -177,9 +469,30 @@
       "name": "set_local_transaction_hint",
       "title": "HINT 模式下事务内 SET LOCAL 作用域与提交/回滚隔离测试",
       "core_id": "",
-      "summary": "HINT 模式下事务内 SET LOCAL 作用域与提交/回滚隔离测试",
+      "summary": "在 HINT 模式下验证会话参数行为：同一客户端执行 BEGIN、SET LOCAL work_mem=128MB、SHOW、COMMIT、SHOW：事务内应为 128MB，提交后立即恢复 4MB。另一脚本设置 256MB 后 ROLLBACK，同一客户端随后 SHOW 应为 4MB；新客户端也应为默认值。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "BEGIN; SET LOCAL work_mem = '128MB'; SHOW work_mem; COMMIT; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "BEGIN; SET LOCAL work_mem = '256MB'; ROLLBACK; SHOW work_mem;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -189,9 +502,30 @@
       "name": "case_insensitive_quotes_sql_parse",
       "title": "SQL_PARSE 模式下 GUC 名称大小写不敏感与双引号标识符规范化测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下 GUC 名称大小写不敏感与双引号标识符规范化测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：分别以 \"TimeZone\"、timezone、TIMEZONE 三种名称执行 SET 和 SHOW，检查输出依次为 UTC、Asia/Shanghai、PRC，验证大小写及引号名称识别。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET \"TimeZone\" = 'UTC'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET timezone = 'Asia/Shanghai'; SHOW timezone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SET TIMEZONE = 'PRC'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -201,9 +535,30 @@
       "name": "case_insensitive_quotes_hint",
       "title": "HINT 模式下 GUC 名称大小写不敏感与双引号标识符规范化测试",
       "core_id": "",
-      "summary": "HINT 模式下 GUC 名称大小写不敏感与双引号标识符规范化测试",
+      "summary": "在 HINT 模式下验证会话参数行为：分别以 \"TimeZone\"、timezone、TIMEZONE 三种名称执行 SET 和 SHOW，检查输出依次为 UTC、Asia/Shanghai、PRC，验证大小写及引号名称识别。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET \"TimeZone\" = 'UTC'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SET timezone = 'Asia/Shanghai'; SHOW timezone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SET TIMEZONE = 'PRC'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -213,9 +568,30 @@
       "name": "report_param_timezone_sql_parse",
       "title": "SQL_PARSE 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
       "core_id": "",
-      "summary": "SQL_PARSE 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
+      "summary": "在 SQL_PARSE 模式下验证会话参数行为：一个客户端设置并显示 TimeZone=Asia/Shanghai；另外两次新客户端 SHOW 也按当前用例要求返回 Asia/Shanghai。此实现只检查 SHOW 输出，不直接验证 ParameterStatus 协议报文。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "guc",
@@ -225,9 +601,30 @@
       "name": "report_param_timezone_hint",
       "title": "HINT 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
       "core_id": "",
-      "summary": "HINT 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
+      "summary": "在 HINT 模式下验证会话参数行为：一个客户端设置并显示 TimeZone=Asia/Shanghai；另外两次新客户端 SHOW 也按当前用例要求返回 Asia/Shanghai。此实现只检查 SHOW 输出，不直接验证 ParameterStatus 协议报文。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每段脚本创建独立 psql 客户端会话；脚本内语句共享该客户端连接，不声称不同脚本共用同一后端 PID。",
+        "transactions": [
+          {
+            "stage": "客户端会话 1",
+            "operation": "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 2",
+            "operation": "SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          },
+          {
+            "stage": "客户端会话 3",
+            "operation": "SHOW TimeZone;",
+            "boundary": "一个 psql 客户端以标准输入顺序执行整段脚本；BEGIN / COMMIT / ROLLBACK 之外的语句自动提交，脚本结束后客户端断开。"
+          }
+        ],
+        "conclusion": "未核对后端 PID 是否相同，也未直接读取代理 GUC 缓存；不把连接池配置当作已经发生后端复用的证据。"
+      }
     },
     {
       "suite": "high_availability",
@@ -357,7 +754,7 @@
       "name": "jdbc_console_ha_commands",
       "title": "JDBC Simple Query 控制台连接覆盖全部高可用管理命令并恢复配置",
       "core_id": "",
-      "summary": "JDBC Simple Query 控制台连接覆盖全部高可用管理命令并恢复配置",
+      "summary": "使用 JDBC Simple Query 连接管理控制台，依次执行节点隔离/恢复、权重调整、写中心/提升中心切换、集群隔离/恢复与 REFRESH CLUSTER。客户端核对命令结果、路由查询及配置快照，并恢复初始配置；这不是 JDBC 参数绑定或同一业务事务测试。",
       "enabled": true,
       "tags": []
     },
@@ -381,7 +778,7 @@
       "name": "set_node_write_idempotent",
       "title": "SET NODE WRITE 已是当前写中心时不修改配置并保持运行态",
       "core_id": "",
-      "summary": "SET NODE WRITE 已是当前写中心时不修改配置并保持运行态",
+      "summary": "SET NODE WRITE 已是当前写中心时不修改配置并保持运行态。先记录配置文件字节及运行状态，再执行已满足目标的管理命令；要求命令成功、配置逐字节未变，执行后的运行状态仍满足原目标。",
       "enabled": true,
       "tags": []
     },
@@ -393,7 +790,7 @@
       "name": "set_node_promoted_idempotent",
       "title": "SET NODE PROMOTED 已是当前提升中心时不修改配置并保持运行态",
       "core_id": "",
-      "summary": "SET NODE PROMOTED 已是当前提升中心时不修改配置并保持运行态",
+      "summary": "SET NODE PROMOTED 已是当前提升中心时不修改配置并保持运行态。先记录配置文件字节及运行状态，再执行已满足目标的管理命令；要求命令成功、配置逐字节未变，执行后的运行状态仍满足原目标。",
       "enabled": true,
       "tags": []
     },
@@ -405,7 +802,7 @@
       "name": "set_cluster_active_idempotent",
       "title": "SET CLUSTER ACTIVE 已是当前状态时不修改配置并保持运行态",
       "core_id": "",
-      "summary": "SET CLUSTER ACTIVE 已是当前状态时不修改配置并保持运行态",
+      "summary": "SET CLUSTER ACTIVE 已是当前状态时不修改配置并保持运行态。先记录配置文件字节及运行状态，再执行已满足目标的管理命令；要求命令成功、配置逐字节未变，执行后的运行状态仍满足原目标。",
       "enabled": true,
       "tags": []
     },
@@ -825,7 +1222,7 @@
       "name": "set_node_weight_idempotent",
       "title": "SET NODE WEIGHT 已是目标值时不修改配置并保持运行态",
       "core_id": "",
-      "summary": "SET NODE WEIGHT 已是目标值时不修改配置并保持运行态",
+      "summary": "SET NODE WEIGHT 已是目标值时不修改配置并保持运行态。先记录配置文件字节及运行状态，再执行已满足目标的管理命令；要求命令成功、配置逐字节未变，执行后的运行状态仍满足原目标。",
       "enabled": true,
       "tags": []
     },
@@ -1257,7 +1654,7 @@
       "name": "lru_close_multiple_restore_consistency",
       "title": "LRU 淘汰并发多连接 Close 与一致性恢复验证",
       "core_id": "",
-      "summary": "LRU 淘汰并发多连接 Close 与一致性恢复验证",
+      "summary": "LRU 淘汰并发多连接 Close 与一致性恢复验证。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1269,7 +1666,7 @@
       "name": "lru_close_skipped_restore_consistency",
       "title": "LRU 替换目标 Parse 失败时跳过 Close 并恢复旧条目一致性",
       "core_id": "",
-      "summary": "LRU 替换目标 Parse 失败时跳过 Close 并恢复旧条目一致性",
+      "summary": "LRU 替换目标 Parse 失败时跳过 Close 并恢复旧条目一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1281,7 +1678,7 @@
       "name": "lru_close_success_consistency",
       "title": "LRU 淘汰成功触发 Close(S) 的缓存与 outstanding 一致性",
       "core_id": "",
-      "summary": "LRU 淘汰成功触发 Close(S) 的缓存与 outstanding 一致性",
+      "summary": "LRU 淘汰成功触发 Close(S) 的缓存与 outstanding 一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1293,7 +1690,7 @@
       "name": "lru_confirmed_multiple_restore_order",
       "title": "复杂流水线下多条 LRU Close 与 Restore 的顺序保序验证",
       "core_id": "",
-      "summary": "复杂流水线下多条 LRU Close 与 Restore 的顺序保序验证",
+      "summary": "复杂流水线下多条 LRU Close 与 Restore 的顺序保序验证。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 2、2；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1305,7 +1702,7 @@
       "name": "long_statement_name_cleanup",
       "title": "超长 prepared statement 名称失败后的 outstanding 清理",
       "core_id": "",
-      "summary": "超长 prepared statement 名称失败后的 outstanding 清理",
+      "summary": "超长 prepared statement 名称失败后的 outstanding 清理。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 0、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1317,7 +1714,7 @@
       "name": "fragmented_close_packet",
       "title": "分片传输 Close 报文场景下的协议解析与缓存清理",
       "core_id": "",
-      "summary": "分片传输 Close 报文场景下的协议解析与缓存清理",
+      "summary": "分片传输 Close 报文场景下的协议解析与缓存清理。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、2；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1329,7 +1726,7 @@
       "name": "fragmented_execute_packet",
       "title": "分片传输 Execute 报文场景下的协议解析与状态一致性",
       "core_id": "",
-      "summary": "分片传输 Execute 报文场景下的协议解析与状态一致性",
+      "summary": "分片传输 Execute 报文场景下的协议解析与状态一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1341,7 +1738,7 @@
       "name": "execute_payload_validation",
       "title": "畸形 Execute 报文格式校验与 08P01 协议拒绝",
       "core_id": "",
-      "summary": "畸形 Execute 报文格式校验与 08P01 协议拒绝",
+      "summary": "畸形 Execute 报文格式校验与 08P01 协议拒绝。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1353,7 +1750,7 @@
       "name": "parse_failure_single_consistency",
       "title": "单连接 Parse 失败后的 outstanding 一致性",
       "core_id": "",
-      "summary": "单连接 Parse 失败后的 outstanding 一致性",
+      "summary": "单连接 Parse 失败后的 outstanding 一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 0、1；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1365,7 +1762,7 @@
       "name": "parse_failure_shared_sync_consistency",
       "title": "多 Parse 批量同步中单条 Parse 失败的 outstanding 一致性",
       "core_id": "",
-      "summary": "多 Parse 批量同步中单条 Parse 失败的 outstanding 一致性",
+      "summary": "多 Parse 批量同步中单条 Parse 失败的 outstanding 一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 1、3；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -1377,7 +1774,7 @@
       "name": "execute_failure_shared_sync_consistency",
       "title": "批量执行中 Execute 阶段失败后的 outstanding 一致性",
       "core_id": "",
-      "summary": "批量执行中 Execute 阶段失败后的 outstanding 一致性",
+      "summary": "批量执行中 Execute 阶段失败后的 outstanding 一致性。协议探针在第一阶段和第二阶段分别暂停，分别检查后端 PreparedStatement 缓存条目数为 2、3；客户端断开后，核对全局引用计数与后端持有条目数一致，避免遗留引用或缓存状态错乱。",
       "enabled": true,
       "tags": []
     },
@@ -2277,9 +2674,25 @@
       "name": "savepoint_recovery_after_local_25p02",
       "title": "Extended 事务在本地 25P02 后仍可 ROLLBACK TO SAVEPOINT",
       "core_id": "",
-      "summary": "Extended 事务在本地 25P02 后仍可 ROLLBACK TO SAVEPOINT",
+      "summary": "分别建立两个协议客户端连接。在各自同一事务中创建保存点 s4、触发除零错误 22012；第二场景还确认普通查询被 25P02 拒绝。随后 ROLLBACK TO SAVEPOINT s4，应保留原事务并使 SELECT 9 返回 9，最后完整回滚结束事务。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "两种场景各建立一个独立连接；每种场景的所有 SQL 在该连接上顺序执行。",
+        "transactions": [
+          {
+            "stage": "直接恢复场景",
+            "operation": "BEGIN；SAVEPOINT s4；SELECT 1/0；ROLLBACK TO SAVEPOINT s4；SELECT 9；ROLLBACK。",
+            "boundary": "回滚到保存点不结束整个事务；最后 ROLLBACK 才结束事务。"
+          },
+          {
+            "stage": "25P02 后恢复场景",
+            "operation": "BEGIN；SAVEPOINT s4；SELECT 1/0；SELECT 1（应返回 25P02）；ROLLBACK TO SAVEPOINT s4；SELECT 9；ROLLBACK。",
+            "boundary": "恢复后的 SELECT 9 仍属于原事务，不是新事务。"
+          }
+        ],
+        "conclusion": "这是事务内保存点恢复，与 JDBC 用例结束失败事务后在新事务中查询的行为不同。"
+      }
     },
     {
       "suite": "sql_parse",
@@ -2289,7 +2702,7 @@
       "name": "heartbeat_bind_normal",
       "title": "SQL_PARSE heartbeat 正常 Extended Bind 本地响应",
       "core_id": "",
-      "summary": "SQL_PARSE heartbeat 正常 Extended Bind 本地响应",
+      "summary": "将 SELECT 1 作为探活请求，以扩展协议发送 Parse / Bind / Execute；应返回绑定完成、数据行、命令完成与就绪消息，且后端 PreparedStatement 列表中不部署 SELECT 1。",
       "enabled": true,
       "tags": []
     },
@@ -2301,7 +2714,7 @@
       "name": "heartbeat_bind_invalid",
       "title": "SQL_PARSE heartbeat 截断 Bind 被安全拒绝",
       "core_id": "",
-      "summary": "SQL_PARSE heartbeat 截断 Bind 被安全拒绝",
+      "summary": "向探活请求发送截断的 Bind 报文；应返回错误与就绪消息，不返回数据行，且不在后端部署 SELECT 1。",
       "enabled": true,
       "tags": []
     },
@@ -2313,7 +2726,7 @@
       "name": "heartbeat_bind_unsupported",
       "title": "SQL_PARSE heartbeat 不支持格式回退 PostgreSQL",
       "core_id": "",
-      "summary": "SQL_PARSE heartbeat 不支持格式回退 PostgreSQL",
+      "summary": "为探活请求发送当前本地处理不支持的格式；应转交 PostgreSQL，返回正常绑定及查询响应，并在后端 PreparedStatement 列表中看到 SELECT 1。",
       "enabled": true,
       "tags": []
     },
@@ -2325,9 +2738,25 @@
       "name": "mmr_hint_switch",
       "title": "MMR HINT 模式读写状态切换",
       "core_id": "",
-      "summary": "MMR HINT 模式读写状态切换",
+      "summary": "在 MMR 拓扑、HINT 路由模式下，顺序执行写事务、只读事务、写事务；两次写请求命中当前配置的 MMR 写中心，读请求命中MMR 主节点及已配置备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2337,9 +2766,25 @@
       "name": "mmr_hint_write",
       "title": "MMR HINT 模式写请求落到 write-leader",
       "core_id": "",
-      "summary": "MMR HINT 模式写请求落到 write-leader",
+      "summary": "在 MMR 拓扑、HINT 路由模式下，执行含临时表写操作的事务，实际后端端口必须为当前配置的 MMR 写中心。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2349,9 +2794,25 @@
       "name": "mmr_hint_read",
       "title": "MMR HINT 模式只读请求落到合法读候选",
       "core_id": "",
-      "summary": "MMR HINT 模式只读请求落到合法读候选",
+      "summary": "在 MMR 拓扑、HINT 路由模式下，执行只读事务，实际后端端口必须属于MMR 主节点及已配置备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2361,7 +2822,7 @@
       "name": "mmr_hint_jdbc",
       "title": "MMR HINT 模式 JDBC 读写切换",
       "core_id": "",
-      "summary": "MMR HINT 模式 JDBC 读写切换",
+      "summary": "在 MMR 拓扑、HINT 路由模式下，使用 JDBC 执行读写切换，并核对实际后端端口与配置中的允许目标。",
       "enabled": true,
       "tags": []
     },
@@ -2373,9 +2834,25 @@
       "name": "rep_hint_switch",
       "title": "REP HINT 模式读写状态切换",
       "core_id": "",
-      "summary": "REP HINT 模式读写状态切换",
+      "summary": "在 REPLICATION 拓扑、HINT 路由模式下，顺序执行写事务、只读事务、写事务；两次写请求命中复制组主节点，读请求命中复制组主节点及备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2385,9 +2862,25 @@
       "name": "rep_hint_read",
       "title": "REP HINT 模式只读请求落到主备读候选",
       "core_id": "",
-      "summary": "REP HINT 模式只读请求落到主备读候选",
+      "summary": "在 REPLICATION 拓扑、HINT 路由模式下，执行只读事务，实际后端端口必须属于复制组主节点及备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2397,9 +2890,25 @@
       "name": "rep_hint_write",
       "title": "REP HINT 模式写请求落到 primary",
       "core_id": "",
-      "summary": "REP HINT 模式写请求落到 primary",
+      "summary": "在 REPLICATION 拓扑、HINT 路由模式下，执行含临时表写操作的事务，实际后端端口必须为复制组主节点。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2409,7 +2918,7 @@
       "name": "rep_hint_jdbc",
       "title": "REP HINT 模式 JDBC 读写切换",
       "core_id": "",
-      "summary": "REP HINT 模式 JDBC 读写切换",
+      "summary": "在 REPLICATION 拓扑、HINT 路由模式下，使用 JDBC 执行读写切换，并核对实际后端端口与配置中的允许目标。",
       "enabled": true,
       "tags": []
     },
@@ -2421,9 +2930,25 @@
       "name": "rep_read_port",
       "title": "REP 读端口路由",
       "core_id": "",
-      "summary": "REP 读端口路由",
+      "summary": "在 REPLICATION 拓扑、PORT 路由模式下，执行只读事务，实际后端端口必须属于复制组主节点及备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2433,9 +2958,25 @@
       "name": "rep_write_port",
       "title": "REP 写端口路由",
       "core_id": "",
-      "summary": "REP 写端口路由",
+      "summary": "在 REPLICATION 拓扑、PORT 路由模式下，执行含临时表写操作的事务，实际后端端口必须为复制组主节点。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2445,7 +2986,7 @@
       "name": "rep_port_jdbc",
       "title": "REP 端口模式 JDBC 读写路由",
       "core_id": "",
-      "summary": "REP 端口模式 JDBC 读写路由",
+      "summary": "在 REPLICATION 拓扑、PORT 路由模式下，使用 JDBC 执行读写切换，并核对实际后端端口与配置中的允许目标。",
       "enabled": true,
       "tags": []
     },
@@ -2457,9 +2998,25 @@
       "name": "mmr_read_port",
       "title": "MMR 读端口路由",
       "core_id": "",
-      "summary": "MMR 读端口路由",
+      "summary": "在 MMR 拓扑、PORT 路由模式下，执行只读事务，实际后端端口必须属于MMR 主节点及已配置备节点的允许端口集合。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2469,9 +3026,25 @@
       "name": "mmr_write_port",
       "title": "MMR 写端口路由",
       "core_id": "",
-      "summary": "MMR 写端口路由",
+      "summary": "在 MMR 拓扑、PORT 路由模式下，执行含临时表写操作的事务，实际后端端口必须为当前配置的 MMR 写中心。",
       "enabled": true,
-      "tags": []
+      "tags": [],
+      "execution_scope": {
+        "connection": "每次只读或写事务脚本由独立 psql 客户端执行，不是在同一连接上切换。",
+        "transactions": [
+          {
+            "stage": "只读事务",
+            "operation": "BEGIN READ ONLY；读取后端地址、端口与恢复状态；COMMIT。",
+            "boundary": "COMMIT 结束此只读事务。"
+          },
+          {
+            "stage": "写事务",
+            "operation": "BEGIN；创建临时表触发写路由；读取后端地址、端口；ROLLBACK。",
+            "boundary": "ROLLBACK 结束此写事务并清理临时表。"
+          }
+        ],
+        "conclusion": "此处临时表与端口查询直接用于路由断言，与已删除 JDBC 参数绑定用例中的无关诊断不同。"
+      }
     },
     {
       "suite": "rw_toggle",
@@ -2481,7 +3054,7 @@
       "name": "mmr_port_jdbc",
       "title": "MMR 端口模式 JDBC 读写路由",
       "core_id": "",
-      "summary": "MMR 端口模式 JDBC 读写路由",
+      "summary": "在 MMR 拓扑、PORT 路由模式下，使用 JDBC 执行读写切换，并核对实际后端端口与配置中的允许目标。",
       "enabled": true,
       "tags": []
     },

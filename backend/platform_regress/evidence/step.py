@@ -83,7 +83,7 @@ class EvidenceStep(object):
         if self.on_change:
             self.on_change()
 
-    def actual_execution(self, command, output, label="实际执行"):
+    def actual_execution(self, command, output, label="执行内容"):
         text = str(command).rstrip()
         rendered_output = str(output).rstrip()
         if rendered_output:

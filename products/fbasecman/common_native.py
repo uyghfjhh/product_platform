@@ -50,7 +50,8 @@ def _parse_table(output):
 
 def _check(context, key, title, expected, actual, passed):
     context.step(key, title, status="PASS" if passed else "FAIL",
-                 details={"expected": expected, "actual": actual})
+                 details={"intent": "verify", "expected": expected, "actual": actual,
+                          "analysis": "实际结果满足声明条件" if passed else "实际结果与声明条件不符"})
     if not passed:
         raise AssertionError("%s: expected %s; actual %s" % (title, expected, actual))
 

@@ -1,0 +1,15 @@
+import { useState } from 'react';
+import { Alert, Button, Collapse, Empty, InputNumber, Select, Space, Typography } from 'antd';
+export type AlertRules={retained_mib:number;consecutive_samples:number;cpu_percent:number;memory_percent:number;disk_free_percent:number;connection_percent:number;blocked_sessions:number;long_transaction_seconds:number};
+export type AlertRecord={key:string;category?:string;node_id:string;slot_name:string;status:string;severity:string;reason:string;hits:number;healthy:number;sample_at?:string;observed_at?:string};
+const statusNames:Record<string,string>={active:'告警',pending:'待连续确认',recovered:'已恢复',unknown:'采样未知',disabled:'已禁用'};
+export default function MonitoringAlertPanel({alerts,rules,dirty,onChange,onSave,onDiscard}:{alerts:AlertRecord[];rules:AlertRules;dirty:boolean;onChange:(value:AlertRules)=>void;onSave:()=>void;onDiscard:()=>void}) {
+  const [status,setStatus]=useState('all');const [category,setCategory]=useState('all');
+  const visible=alerts.filter(a=>(status==='all'||a.status===status)&&(category==='all'||(a.category||'slot')===category));
+  const fields:[keyof AlertRules,string,number][]=[['retained_mib','槽保留阈值 MiB',1048576],['consecutive_samples','连续样本数',20],['cpu_percent','CPU 忙碌阈值 %',100],['memory_percent','内存使用阈值 %',100],['disk_free_percent','磁盘可用低于 %',50],['connection_percent','连接占比阈值 %',100],['blocked_sessions','阻塞会话阈值',100000],['long_transaction_seconds','长事务阈值 秒',86400]];
+  return <Space orientation="vertical" style={{width:'100%'}}><Collapse items={[{key:'rules',label:'告警规则',children:<Space wrap>{fields.map(([key,label,max])=><label key={key}>{label} <InputNumber aria-label={label} precision={0} min={1} max={max} value={rules[key]} onChange={v=>v!==null&&onChange({...rules,[key]:v})} /></label>)}<Button disabled={!dirty} onClick={onSave}>保存告警规则</Button><Button disabled={!dirty} onClick={onDiscard}>放弃修改</Button><Typography.Text type="secondary">主机每约 60 秒确认一个新样本；数据库约 15 秒。恢复有滞后，未知不计为恢复。</Typography.Text></Space>}]} />
+    <Space wrap><Typography.Text>当前活跃 {alerts.filter(a=>a.status==='active').length} · 未知 {alerts.filter(a=>a.status==='unknown').length}</Typography.Text><Select aria-label="告警状态" value={status} onChange={setStatus} options={[{value:'all',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /><Select aria-label="告警类别" value={category} onChange={setCategory} options={[{value:'all',label:'全部类别'},{value:'slot',label:'复制槽'},{value:'link',label:'复制链路'},{value:'member',label:'成员状态'},{value:'host',label:'主机资源'},{value:'database',label:'连接与事务'}]} /></Space>
+    {visible.map(a=><Alert key={a.key} type={a.status==='recovered'?'success':a.status==='unknown'||a.status==='disabled'?'info':a.severity==='critical'?'error':'warning'} title={`${a.node_id} / ${a.slot_name} · ${statusNames[a.status] || a.status} · ${a.status==='unknown'?'最后有效证据：':''}${a.reason}`} description={`异常确认 ${a.hits} / 恢复确认 ${a.healthy} · ${a.sample_at || a.observed_at || '时间未提供'}`} />)}
+    {!!alerts.length&&!visible.length&&<Empty description="没有符合筛选条件的告警" />}
+  </Space>;
+}

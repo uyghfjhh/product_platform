@@ -31,8 +31,10 @@ class ReportCheck(object):
 class ReportStep(object):
     def __init__(self, title, details=None, expected=None, actual=None, result=None, checks=None,
                  execution=None, intermediate=None, evidence=None, key_expected=None,
-                 coverage=None, coverage_check=None):
+                 coverage=None, coverage_check=None, assertion=None, raw_output=None,
+                 actual_summary=None, intent=None):
         self.title = title
+        self.intent = intent
         self.details = details or []
         self.expected = expected
         self.actual = actual
@@ -44,6 +46,9 @@ class ReportStep(object):
         self.key_expected = key_expected
         self.coverage = coverage
         self.coverage_check = coverage_check
+        self.assertion = assertion
+        self.raw_output = raw_output
+        self.actual_summary = actual_summary
 
 
 class ReportDocument(object):

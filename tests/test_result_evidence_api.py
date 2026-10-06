@@ -100,6 +100,18 @@ def test_common_report_preserves_steps_and_exports_fact_verdict(tmp_path):
     assert client.get("/api/v1/environments/lab/reports/unknown").status_code == 404
 
 
+def test_historical_report_marks_missing_verdict_evidence(tmp_path):
+    client, base, route = report_setup(tmp_path)
+    (base / "steps.json").write_text(json.dumps({"steps": [
+        {"title": "执行命令", "result": "PASS", "evidence": ["command.json"]},
+        {"title": "确认后台进程", "result": "PASS", "actual": "输出=1|1，退出码=0"},
+    ]}))
+    response = client.get(route + "/report")
+    assert response.status_code == 200
+    assert [step["title"] for step in response.json()["steps"]] == ["确认后台进程"]
+    assert "历史归档" in response.json()["warning"]
+
+
 def test_common_report_supports_mmr_result_without_sidecars(tmp_path):
     client, _, route = report_setup(tmp_path, "mmr.background.maintenance_lifecycle")
     response = client.get(route + "/report")

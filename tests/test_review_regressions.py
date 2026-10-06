@@ -3,7 +3,6 @@
 import json
 import sys
 import time
-from types import SimpleNamespace
 
 import pytest
 from platform_app.api.schemas import public_task

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -27,19 +28,27 @@ class StorageBackend:
         self.root = Path(data_dir)
         self.runtime_dir = Path(runtime_dir)
         self.logs_dir = Path(logs_dir)
+        self._mutex = threading.RLock()
+        self._local = threading.local()
         (self.runtime_dir / "locks").mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
         """序列化同一控制面内跨进程的写操作。"""
-        lock_path = self.runtime_dir / "locks" / "store.lock"
-        with open(lock_path, "a", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
+        with self._mutex:
+            if getattr(self._local, 'locked', False):
                 yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                return
+            lock_path = self.runtime_dir / "locks" / "store.lock"
+            with open(lock_path, "a", encoding="utf-8") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                self._local.locked = True
+                try:
+                    yield
+                finally:
+                    self._local.locked = False
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
@@ -88,7 +97,7 @@ class StorageBackend:
 
     @contextmanager
     def transaction(self):
-        """Serialize a control-plane operation; never nest this context."""
+        """Serialize a control-plane operation; nested same-thread domains share it."""
         with self._locked():
             yield
 

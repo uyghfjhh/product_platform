@@ -9,6 +9,7 @@ import type { TopologyData, TopologyNode } from '../../../frontend/src/platform/
 import Topology2D from './Topology2D';
 import ReferenceThreeTopology from './ReferenceThreeTopology';
 import type { RegressionTopology } from './topologyModel';
+import ReportEvidenceSteps from './ReportEvidenceSteps';
 
 type ReportStep = {
   title: string;
@@ -29,6 +30,9 @@ type ParsedReport = {
   assertions: ReportStep[];
   key_config: string;
   purpose?: string;
+  purpose_source?: string;
+  execution_scope?: {connection:string;transactions:{stage:string;operation:string;boundary:string}[];conclusion:string};
+  execution_scope_source?: string;
   test_contents?: string[];
   backtrace?: string;
   topology: RegressionTopology | null;
@@ -53,7 +57,6 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
   const [topologyMode, setTopologyMode] = useState<'3d' | '2d' | 'cards'>('3d');
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
@@ -67,7 +70,6 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
     setTopologyMode('3d');
     setPlaybackSpeed(1);
     setSelectedNode(null);
-    setDetailsOpen(false);
     setFullscreen(false);
     void api<Artifact>(`/fbasecman/cases/${encodeURIComponent(target)}/artifacts${environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''}`).then((value) => {
       if (!cancelled) { setArtifact(value); setSelectedLog(value.logs[0]?.name || ''); }
@@ -186,25 +188,14 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
     return list;
   }, [parsed, status]);
 
-  return <Modal open={!!target} title={<Space><span>{target || '测试报告'}</span><Tag color={statusColor(status)}>{status}</Tag><Button size="small" onClick={() => setDetailsOpen(!detailsOpen)}>ⓘ 详情</Button><Button size="small" onClick={() => setFullscreen(!fullscreen)}>{fullscreen ? '退出全屏' : '全屏'}</Button></Space>}
+  return <Modal open={!!target} title={<Space><span>{target || '测试报告'}</span><Tag color={statusColor(status)}>{status}</Tag><Button size="small" onClick={() => setFullscreen(!fullscreen)}>{fullscreen ? '退出全屏' : '全屏'}</Button></Space>}
     onCancel={onClose} footer={null} width={fullscreen ? '100vw' : 'min(1380px, 96vw)'}
     className={`regress-report-modal${fullscreen ? ' report-fullscreen' : ''}`} destroyOnHidden>
     {!artifact ? <Empty description="正在读取测试报告" /> : !artifact.available ? <Empty description="该用例尚无报告" /> : <>
-      {detailsOpen && <div className="report-header"><Typography.Text>{parsed?.purpose || target}</Typography.Text><Typography.Text type="secondary">开始：{parsed?.start_time || '-'} · 结束：{parsed?.end_time || '-'}</Typography.Text>{parsed?.reason && <Typography.Text>{parsed.reason}</Typography.Text>}</div>}
+      {<div className="report-header"><Typography.Text strong>测试目的</Typography.Text><Typography.Text>{parsed?.purpose || '本次未记录测试目的'}</Typography.Text>{parsed?.purpose_source === 'current_catalog' && <Typography.Text type="secondary">当前用例说明；本次执行结论以保存的断言和证据为准。</Typography.Text>}<Typography.Text type="secondary">开始：{parsed?.start_time || '-'} · 结束：{parsed?.end_time || '-'}</Typography.Text>{parsed?.reason && <Typography.Text>{parsed.reason}</Typography.Text>}</div>}
+      {parsed?.execution_scope && <section className="cman-transaction-scope"><strong>连接与事务范围</strong><p>{parsed.execution_scope.connection}</p>{parsed.execution_scope_source === 'current_catalog' && <Typography.Text type="secondary">以下为当前用例设计说明；历史执行结论以当次证据为准。</Typography.Text>}<div style={{overflowX:'auto'}}><table className="case-description-table"><thead><tr><th>阶段</th><th>执行内容</th><th>事务结束方式</th></tr></thead><tbody>{parsed.execution_scope.transactions.map(row => <tr key={row.stage}><td>{row.stage}</td><td>{row.operation}</td><td>{row.boundary}</td></tr>)}</tbody></table></div><p>{parsed.execution_scope.conclusion}</p></section>}
       <Tabs items={[
-        { key: 'steps', label: `交互步骤详情 (${displaySteps.length})`, children: displaySteps.length ? <div className="report-steps">{displaySteps.map((step, index) => <section className={`report-step ${step.status === 'FAIL' ? 'fail' : 'pass'}`} key={index}>
-          <div className="report-step-header"><strong>{step.title}</strong><Tag color={statusColor(step.status)}>{step.status}</Tag></div>
-          {step.action && <div className="report-step-field"><span>动作</span><p>{step.action}</p></div>}
-          {step.command && <div className="report-step-field"><span>执行命令</span><pre>{step.command}</pre></div>}
-          {step.expected && <div className="report-step-field"><span>预期结果</span><p>{step.expected}</p></div>}
-          {step.actual && <div className="report-step-field"><span>实际结果</span><p>{step.actual}</p></div>}
-          {step.evidence && <div className="report-step-field"><span>证据</span><p>{step.evidence}</p></div>}
-          {step.state_table && <div className="report-step-field"><span>中间状态</span><pre className="state-table-block">{step.state_table}</pre></div>}
-        </section>)}</div> : <Empty description="报告中没有结构化步骤" /> },
-        { key: 'checks', label: `检测项断言 (${displayAssertions.length})`, children: displayAssertions.length ? <div className="report-steps">{displayAssertions.map((check, index) => <section className={`report-step ${check.status === 'FAIL' ? 'fail' : 'pass'}`} key={index}>
-          <Space><Typography.Text strong>{check.title}</Typography.Text><Tag color={statusColor(check.status)}>{check.status}</Tag></Space>
-          <p><b>预期：</b>{check.expected || '-'}</p><p><b>实际：</b>{check.actual || '-'}</p>
-        </section>)}</div> : <Empty description="报告中没有独立检测项" /> },
+        { key: 'steps', label: `验证结果与证据 (${displaySteps.length})`, children: <ReportEvidenceSteps steps={[...displaySteps, ...displayAssertions.map(step => ({ ...step, intent: 'verify' }))]} /> },
         ...(currentClusters.length ? [{ key: 'topology', label: '🪐 架构拓扑看板', children: <>
           <Alert type="info" showIcon className="report-source-note" message="拓扑快照部分由报告步骤推演；实测状态以原始命令和日志为准。" />
           <div className="report-topology-toolbar"><Segmented value={topologyMode} onChange={(value) => setTopologyMode(value as typeof topologyMode)} options={[{ label: '3D 全息拓扑', value: '3d' }, { label: '2D 架构图', value: '2d' }, { label: '详细节点卡片', value: 'cards' }]} /></div>
@@ -226,9 +217,9 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
           </div>}
         </> }] : []),
         ...(parsed?.backtrace ? [{ key: 'backtrace', label: '🚨 GDB 崩溃调用栈', children: <pre className="raw-report">{parsed.backtrace}</pre> }] : []),
-        { key: 'overview', label: '用例设计与配置', children: <div className="report-steps"><section className="report-step"><strong>验证目的</strong><p>{parsed?.purpose || '未提供'}</p></section><section className="report-step"><strong>测试内容</strong>{parsed?.test_contents?.length ? parsed.test_contents.map((item, index) => <p key={index}>{item}</p>) : <p>未提供</p>}</section><section className="report-step"><strong>关键配置</strong>{parsed?.key_config ? <CodeEditor value={parsed.key_config} language="ini" readOnly height={360} /> : <p>未提供</p>}</section></div> },
-        { key: 'raw', label: '原始报告 (report.txt)', children: <pre className="raw-report">{artifact.report}</pre> },
-        { key: 'logs', label: '运行时日志', children: <><Select value={selectedLog || undefined} onChange={setSelectedLog} style={{ minWidth: 280, marginBottom: 14 }} placeholder="选择原始日志" options={artifact.logs.map((item) => ({ label: item.name, value: item.name }))} /><LogViewer lines={logLines} filename={selectedLog} /></> },
+        { key: 'overview', label: '用例设计与配置', children: <div className="report-steps"><section className="report-step"><strong>测试目的</strong><p>{parsed?.purpose || '未提供'}</p></section><section className="report-step"><strong>操作步骤与逐步预期</strong><div style={{overflowX:'auto'}}><table className="case-description-table"><thead><tr><th>操作／检查</th><th>预期结果</th><th>实际结论</th></tr></thead><tbody>{displaySteps.map((s,i)=><tr key={i}><td>{s.title}</td><td>{s.expected || '当次未保存期望'}</td><td>{s.status}</td></tr>)}</tbody></table></div></section><section className="report-step"><strong>测试内容</strong>{parsed?.test_contents?.length ? parsed.test_contents.map((item, index) => <p key={index}>{item}</p>) : <p>未提供</p>}</section><section className="report-step"><strong>关键配置</strong>{parsed?.key_config ? <CodeEditor value={parsed.key_config} language="ini" readOnly height={360} /> : <p>未提供</p>}</section></div> },
+        { key: 'raw', label: '原始报告（report.txt）', children: artifact.report !== null ? <pre className="raw-report">{artifact.report}</pre> : <Empty description="本次执行没有生成原始报告" /> },
+        { key: 'logs', label: '诊断日志', children: <><Select value={selectedLog || undefined} onChange={setSelectedLog} style={{ minWidth: 280, marginBottom: 14 }} placeholder="选择原始日志" options={artifact.logs.map((item) => ({ label: item.name, value: item.name }))} /><LogViewer lines={logLines} filename={selectedLog} /></> },
       ].sort((a, b) => {
         const order = ['steps', 'topology', 'backtrace', 'checks', 'overview', 'raw', 'logs'];
         return order.indexOf(a.key) - order.indexOf(b.key);

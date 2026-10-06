@@ -74,6 +74,8 @@ def setup_fixture(context, definition, name, options):
         suffix, title = ROOT_FIXTURES[name]
         _isolated_cluster_root(context, definition, options, name,
                                _tmp_prefix(context) + suffix, title)
+        if name in {"isolated_tlcp_audit", "isolated_tlcp_handshake"}:
+            _reserve_ports(context, definition)
     else:
         raise ValueError("平台暂不支持隔离 fixture: %s" % name)
 

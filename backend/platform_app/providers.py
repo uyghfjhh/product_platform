@@ -80,17 +80,34 @@ class PgclusterDatabaseProvider:
         if not pgcluster.is_file():
             raise FileNotFoundError("pgcluster 入口不存在: %s" % pgcluster)
         cli_action = action.partition(".")[2]
+        if cli_action == "change":
+            plan_id = environment.get("_deployment_plan_id")
+            if not plan_id:
+                raise ValueError("集群变更缺少已审阅计划")
+            return CommandSpec([
+                sys.executable, str(Path(__file__).parent / "deployment" / "change_cli.py"),
+                "--engine-root", str(settings.pgcluster_root),
+                "--plan", str(settings.data_dir / "deployment-plans" / plan_id / "plan.json"),
+                "--checkpoint", str(settings.data_dir / "deployment-checkpoints" / (plan_id + ".json")),
+            ], settings.pgcluster_root)
         if cli_action == "heal":
             return CommandSpec([
                 sys.executable, str(Path(__file__).with_name("pgcluster_heal.py")),
-                str(pgcluster), str(config_file), target,
+                str(pgcluster), str(config_file),
+                *(["--control-root", str(settings.data_dir), "--environment", environment["id"]] if environment.get("id") else []),
+                target,
             ], settings.pgcluster_root)
         if cli_action == "reset":
             return CommandSpec([
                 sys.executable, str(Path(__file__).with_name("pgcluster_reset.py")),
-                str(pgcluster), str(config_file), target,
+                str(pgcluster), str(config_file),
+                *(["--control-root", str(settings.data_dir), "--environment", environment["id"]] if environment.get("id") else []),
+                target,
             ], settings.pgcluster_root)
-        command = [sys.executable, str(pgcluster), "-f", str(config_file), cli_action]
+        command = [sys.executable, str(Path(__file__).with_name("pgcluster_entry.py")), str(pgcluster)]
+        if environment.get("id"):
+            command += ["--control-root", str(settings.data_dir), "--environment", environment["id"]]
+        command += ["-f", str(config_file), cli_action]
         if cli_action != "doctor":
             command.append(target)
         if cli_action in {"clean", "failover", "rejoin", "switchover", "restore"}:
@@ -173,6 +190,7 @@ class ProviderExtensions:
     invalidate: Callable | None = None
     after_command: Callable | None = None
     progress_observer: Callable | None = None
+    workload_catalog: Callable | None = None
 
 
 def _extensions(manifest, provider):
@@ -195,6 +213,7 @@ def _extensions(manifest, provider):
         invalidate=hook("deployment_invalidate"),
         after_command=hook("after_command"),
         progress_observer=hook("progress_observer"),
+        workload_catalog=hook('workload_catalog'),
     )
 
 
@@ -227,6 +246,11 @@ class ProductRegistry:
                              for p in paths if p.is_file())
             cached = self._entries.get(product_id)
             if cached is None or cached[0] != revision:
+                if cached is not None:
+                    for name, module in list(sys.modules.items()):
+                        path=getattr(module,'__file__',None)
+                        if path and Path(path).resolve().is_relative_to(manifest.package_root.resolve()):
+                            sys.modules.pop(name,None)
                 provider = _load_provider(manifest)
                 cached = (revision, provider, _extensions(manifest, provider))
                 self._entries[product_id] = cached
@@ -260,6 +284,9 @@ def command_for(settings: Settings, environment: dict, action: str,
         raise ValueError("产品未安装: %s" % environment["product_id"])
     if action.startswith("deployment."):
         return DATABASE_CLUSTER_PROVIDER.lifecycle(settings, environment, action, target).command
+    if action in {'workload.pgbench','workload.jdbc'}:
+        from .workloads import command
+        return command(settings,environment,action,parameters)
     return provider_for(settings, environment["product_id"]).command(
         settings, environment, action, target, parameters,
     )

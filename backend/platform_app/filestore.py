@@ -6,6 +6,7 @@ from .storage.bindings import BindingsStore
 from .storage.deployments import DeploymentsStore
 from .storage.diagnoses import DiagnosesStore
 from .storage.environments import EnvironmentsStore
+from .storage.orchestration import OrchestrationStore
 from .storage.results import ResultsStore
 from .storage.tasks import TasksStore
 
@@ -25,5 +26,7 @@ class FileStore:
         self.results = ResultsStore(self.backend, self)
         self.diagnoses = DiagnosesStore(self.backend, self)
         self.tasks = TasksStore(self.backend, self)
+        self.orchestration = OrchestrationStore(self.backend)
         self.tasks.recover_event_projections()
         self.tasks.recover_task_index()
+        self.tasks.recover_notification_outbox()

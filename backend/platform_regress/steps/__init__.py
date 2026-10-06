@@ -85,9 +85,14 @@ def run_declared_steps(context: CaseContext, steps: list[dict[str, Any]],
         if halted:
             context.step(f"step-{index}", title, status="BLOCKED", details={
                 "reason": "前序步骤失败，当前步骤不再具备有效前置条件",
+                "expected": step.get("expected"),
+                "assertion": step.get("assertion"),
+                "intent": step.get("intent"),
+                "actual": "未执行：前序步骤失败",
             })
             continue
         try:
+            context.values['_step_intent']=step.get('intent')
             run_declared_step(context, step, index, before_command,
                               definition=definition)
         except AssertionError as exc:
@@ -97,8 +102,12 @@ def run_declared_steps(context: CaseContext, steps: list[dict[str, Any]],
             raise
         except Exception as exc:  # noqa: BLE001 - executor errors are step failures
             context.step(f"step-{index}", title, status="FAIL",
-                         details={"executor_error": str(exc)})
+                         details={"executor_error": str(exc), "expected": step.get("expected"),
+                                  "assertion": step.get("assertion"), "intent": step.get("intent"),
+                                  "actual": "执行器异常：" + str(exc)})
             failures.append("第 %s 步 %s: 执行器异常: %s" % (index, title, exc))
             halted = not step.get("continue_on_failure", False)
+        finally:
+            context.values.pop('_step_intent',None)
     if failures:
         raise AssertionError("; ".join(failures))

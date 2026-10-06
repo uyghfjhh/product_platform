@@ -7,6 +7,7 @@ from typing import Any
 
 import psycopg
 
+from ..commands import display_command
 from ..engine import CaseContext
 from .base import (SUPPORTED_SQL_ASSERTIONS, StepExecutionResult, _record_step,
                    evaluate_assertion, format_psql_output, step_user)
@@ -103,9 +104,11 @@ def _run_sql_step(context: CaseContext, step: dict[str, Any], index: int,
                   definition: dict[str, Any] | None) -> None:
     node, execution = _sql_execution(context, step, definition)
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, f"step-{index}", step.get("title") or f"step {index}",
-                 passed, actual,
-                 format_psql_output(execution.display_output), reason, node)
+    _record_step(
+        context, f"step-{index}", step.get("title") or f"step {index}",
+        passed, actual, format_psql_output(execution.display_output), reason, node,
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )
 
 
 def _run_wait_sql_step(context: CaseContext, step: dict[str, Any], index: int,
@@ -120,8 +123,12 @@ def _run_wait_sql_step(context: CaseContext, step: dict[str, Any], index: int,
         passed, actual, reason = evaluate_assertion(step["assertion"], execution)
         last = (node, execution, actual, reason)
         if passed:
-            _record_step(context, key, title, True, actual,
-                         format_psql_output(execution.display_output), "", node)
+            _record_step(
+                context, key, title, True, actual,
+                format_psql_output(execution.display_output), "", node,
+                expected=step.get("expected"), assertion=step["assertion"],
+                execution=execution,
+            )
             return
         time.sleep(float(step.get("interval", 1)))
     if last is None:
@@ -129,8 +136,12 @@ def _run_wait_sql_step(context: CaseContext, step: dict[str, Any], index: int,
         return
     node, execution, actual, reason = last
     reason = "等待 %ss 超时；%s" % (step.get("timeout", 30), reason)
-    _record_step(context, key, title, False, actual,
-                 format_psql_output(execution.display_output), reason, node)
+    _record_step(
+        context, key, title, False, actual,
+        format_psql_output(execution.display_output), reason, node,
+        expected=step.get("expected"), assertion=step["assertion"],
+        execution=execution,
+    )
 
 
 def _run_background_sql_step(context: CaseContext, step: dict[str, Any],
@@ -167,14 +178,18 @@ def _run_background_sql_step(context: CaseContext, step: dict[str, Any],
     if process.poll() is not None:
         completed = context.finish_command(argv, process, 1)
         execution = StepExecutionResult(completed.returncode,
-                                        output=completed.stdout, command=argv)
+                                        output=completed.stdout, command=argv,
+                                        display_command=display_command(argv))
     else:
         execution = StepExecutionResult(
             0, output="后台 psql 已启动，pid=%s；事务保持中" % process.pid,
-            command=argv)
+            command=argv, display_command=display_command(argv))
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, key, title, passed, actual,
-                 format_psql_output(execution.output), reason, node)
+    _record_step(
+        context, key, title, passed, actual,
+        format_psql_output(execution.output), reason, node,
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )
 
 
 def _run_wait_background_sql_step(context: CaseContext, step: dict[str, Any],
@@ -189,7 +204,11 @@ def _run_wait_background_sql_step(context: CaseContext, step: dict[str, Any],
         entry["command"], entry["process"], step.get("timeout", 30))
     execution = StepExecutionResult(completed.returncode,
                                     output=completed.stdout,
-                                    command=entry["command"])
+                                    command=entry["command"],
+                                    display_command=display_command(entry["command"]))
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, key, title, passed, actual,
-                 format_psql_output(execution.output), reason, entry["node"])
+    _record_step(
+        context, key, title, passed, actual,
+        format_psql_output(execution.output), reason, entry["node"],
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )

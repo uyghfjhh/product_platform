@@ -1,0 +1,20 @@
+.cman-report-evidence { color: var(--text-primary); }
+.cman-report-toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:16px; }
+.cman-evidence-card { background:var(--bg-surface); border:1px solid var(--border-subtle); border-radius:12px; margin:16px 0; overflow:hidden; }
+.cman-evidence-card header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid var(--border-subtle); }
+.cman-step-number { display:inline-block; margin-right:12px; color:var(--text-secondary); }
+.cman-step-kind { display:inline-block; margin-left:12px; font-size:12px; color:var(--text-secondary); }
+.cman-evidence-comparison { display:grid; grid-template-columns:1fr 1fr; gap:24px; padding:20px; }
+.cman-evidence-card label { display:block; color:var(--text-secondary); font-size:12px; margin-bottom:8px; }
+.cman-evidence-card p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.65; }
+.cman-evidence-analysis { padding:0 20px 20px; }
+.cman-evidence-card details { padding:14px 20px; background:var(--bg-surface-elevated); border-top:1px solid var(--border-subtle); }
+.cman-evidence-card summary { cursor:pointer; color:var(--text-secondary); }
+.cman-evidence-card pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; padding:12px; border:1px solid var(--border-subtle); border-radius:6px; }
+@media(max-width:700px) { .cman-evidence-comparison { grid-template-columns:1fr; gap:16px; } .cman-report-toolbar { align-items:flex-start; flex-direction:column; } }
+
+.cman-evidence-code { padding:20px 20px 0; }
+.cman-evidence-code pre { margin:0; background:var(--bg-surface-elevated); }
+
+.cman-transaction-scope { margin:16px 0; padding:16px; border:1px solid var(--border-subtle); border-radius:8px; background:var(--bg-surface); }
+.cman-transaction-scope p { margin:8px 0; line-height:1.6; }

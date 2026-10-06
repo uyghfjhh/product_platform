@@ -12,12 +12,16 @@ def main() -> int:
     parser.add_argument("pgcluster", type=Path)
     parser.add_argument("config", type=Path)
     parser.add_argument("target")
+    parser.add_argument("--control-root", type=Path)
+    parser.add_argument("--environment")
     args = parser.parse_args()
 
     def run(action: str) -> int:
         print("[pgcluster] %s %s" % (action, args.target), flush=True)
         result = subprocess.run([
-            sys.executable, str(args.pgcluster), "-f", str(args.config),
+            sys.executable, str(Path(__file__).with_name("pgcluster_entry.py")), str(args.pgcluster),
+            *(["--control-root", str(args.control_root), "--environment", args.environment] if args.control_root and args.environment else []),
+            "-f", str(args.config),
             action, args.target,
         ], cwd=args.pgcluster.parent, check=False)
         return result.returncode

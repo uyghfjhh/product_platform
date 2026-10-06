@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import Body, HTTPException
+from fastapi import Body, Header, HTTPException
 
 from ..actions import actions_for_environment
 from ..catalog import get_product
@@ -103,6 +103,55 @@ def register(app, settings: Settings, store) -> None:
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/api/v1/environments/{environment_id}/monitoring")
+    def environment_monitoring(environment_id: str, window_minutes: int = 60):
+        from ..providers import provider_for
+        value = store.environments.get_environment(environment_id)
+        if value is None:
+            raise HTTPException(404, "环境不存在")
+        provider = provider_for(settings, value["product_id"])
+        collect = getattr(provider, "monitoring_snapshot", None)
+        if collect is None:
+            raise HTTPException(422, "产品尚未提供监控接口")
+        try:
+            return app.state.monitoring.read(environment_id, window_minutes)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/v1/environments/{environment_id}/monitoring/metrics")
+    def monitoring_metrics(environment_id: str):
+        from fastapi.responses import Response
+        if store.environments.get_environment(environment_id) is None:
+            raise HTTPException(404, "环境不存在")
+        return Response(app.state.monitoring.metrics(environment_id),headers={"Content-Type":"text/plain; version=0.0.4; charset=utf-8","Cache-Control":"no-store"})
+
+    @app.post("/api/v1/environments/{environment_id}/monitoring")
+    def enable_environment_monitoring(environment_id: str, item: dict = Body(...)):
+        from ..providers import provider_for
+        value = store.environments.get_environment(environment_id)
+        if value is None:
+            raise HTTPException(404, "环境不存在")
+        if not callable(getattr(provider_for(settings, value["product_id"]), "monitoring_snapshot", None)):
+            raise HTTPException(422, "产品尚未提供监控接口")
+        if not isinstance(item.get("enabled"), bool):
+            raise HTTPException(422, "enabled 必须是布尔值")
+        if item['enabled']:
+            try:
+                configured_topology(settings,value)
+            except (ValueError,FileNotFoundError) as exc:
+                raise HTTPException(422,'启用监控前需要有效的部署拓扑') from exc
+        app.state.monitoring.enable(environment_id, item["enabled"])
+        return {"enabled": item["enabled"]}
+
+    @app.put("/api/v1/environments/{environment_id}/monitoring/rules")
+    def monitoring_rules(environment_id: str, item: dict = Body(...)):
+        if store.environments.get_environment(environment_id) is None:
+            raise HTTPException(404, "环境不存在")
+        try:
+            return app.state.monitoring.rules(environment_id, item)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
     @app.get("/api/v1/cases", response_model=list[Case])
     def cases(product_id: str):
         if not get_product(product_id, settings):
@@ -128,13 +177,36 @@ def register(app, settings: Settings, store) -> None:
             target.update(host=node["host"], port=node["port"])
         return target
 
+    @app.get("/api/v1/environments/{environment_id}/monitoring/nodes/{node_id}/diagnostics/{view}")
+    def monitoring_diagnostics(environment_id: str, node_id: str, view: str):
+        from fastapi.encoders import jsonable_encoder
+        from ..postgres_monitoring import diagnostics
+        if view not in ("queries", "tables"):
+            raise HTTPException(422, "未知诊断视图")
+        return jsonable_encoder(diagnostics(studio_environment(environment_id,node_id),view))
+
     @app.post("/api/v1/environments/{environment_id}/studio")
-    def studio_bff(environment_id: str, item: dict = Body(...)):
-        return studio_dispatch(studio_environment(environment_id), item)
+    def studio_bff(environment_id: str, item: dict = Body(...), request_id: str | None = Header(default=None, alias='X-Studio-Request-Id')):
+        return studio_dispatch(studio_environment(environment_id), item, **({'request_id':request_id} if isinstance(request_id,str) else {}))
 
     @app.post("/api/v1/environments/{environment_id}/studio/nodes/{node_id}")
-    def studio_node_bff(environment_id: str, node_id: str, item: dict = Body(...)):
-        return studio_dispatch(studio_environment(environment_id, node_id), item)
+    def studio_node_bff(environment_id: str, node_id: str, item: dict = Body(...), request_id: str | None = Header(default=None, alias='X-Studio-Request-Id')):
+        return studio_dispatch(studio_environment(environment_id, node_id), item, **({'request_id':request_id} if isinstance(request_id,str) else {}))
+
+    def cancel_studio(environment_id, request_id, node_id=None):
+        from ..studio_runtime import cancel
+        try:
+            return cancel(studio_environment(environment_id,node_id),request_id)
+        except ValueError as exc:
+            raise HTTPException(422,str(exc)) from exc
+
+    @app.post('/api/v1/environments/{environment_id}/studio/cancel/{request_id}')
+    def cancel_studio_query(environment_id: str, request_id: str):
+        return cancel_studio(environment_id,request_id)
+
+    @app.post('/api/v1/environments/{environment_id}/studio/nodes/{node_id}/cancel/{request_id}')
+    def cancel_studio_node_query(environment_id: str, node_id: str, request_id: str):
+        return cancel_studio(environment_id,request_id,node_id)
 
     @app.get("/api/v1/environments/{environment_id}/configuration")
     def environment_configuration(environment_id: str):

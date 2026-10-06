@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..deployment.models import DiscoveryInput, DraftInput
+from ..deployment.adoption import discover_existing
+from ..deployment.models import AdoptionInput, DiscoveryInput, DraftInput
 from ..deployment.probes import probe
 from ..deployment.workbench import Workbench, templates
 from ..operations import OperationError
@@ -44,7 +45,12 @@ def register(app, settings, store):
     def discover_installations(item: DiscoveryInput):
         request = item.model_dump()
         ssh = request.pop("ssh") or None
+        request["operation"] = "discover"
         return call(probe, item.host, request, ssh=ssh)
+
+    @app.post("/api/v1/deployment/discover-existing")
+    def discover_existing_instances(item: AdoptionInput):
+        return call(discover_existing, item)
 
     @app.post("/api/v1/deployment/import-targets")
     def import_targets(item: ImportInput):
@@ -84,6 +90,16 @@ def register(app, settings, store):
     def draft(draft_id: str):
         return call(service.draft, draft_id)
 
+    @app.get('/api/v1/deployment/drafts/{draft_id}/plans')
+    def draft_plans(draft_id: str):
+        call(service.draft,draft_id)
+        rows=[]
+        for path in service.plans.glob('*/plan.json'):
+            row=json.loads(path.read_text())
+            if row['environment_id']==draft_id:
+                rows.append({'id':row['id'],'action':row['action'],'ready':row['ready'],'draft_revision':row['draft_revision'],'target':row['target']})
+        return rows
+
     @app.put("/api/v1/deployment/drafts/{draft_id}")
     def save_draft(draft_id: str, item: DraftInput):
         return call(service.save, draft_id, item.spec, item.expected_revision)
@@ -118,6 +134,10 @@ def register(app, settings, store):
                     }
                 )
         row["attempts"] = attempts
+        checkpoint = settings.data_dir / 'deployment-checkpoints' / (plan_id+'.json')
+        row['checkpoint'] = json.loads(checkpoint.read_text()) if checkpoint.is_file() else None
+        environment = store.environments.get_environment(row['environment_id'])
+        row['completed'] = bool(environment and environment.get('applied_deployment_plan_id') == plan_id)
         return row
 
     @app.get("/api/v1/deployment/plans/{plan_id}/files/{name}")

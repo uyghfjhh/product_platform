@@ -94,7 +94,10 @@ def _run_cluster_action(context: CaseContext, step: dict[str, Any],
             _run_pg_ctl(context, node, "restart" if status == 0 else "start")
     execution = StepExecutionResult(0, output="%s complete" % action)
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, key, title, passed, actual, execution.output, reason)
+    _record_step(
+        context, key, title, passed, actual, execution.output, reason,
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )
 
 
 def _run_node_action(context: CaseContext, step: dict[str, Any],
@@ -108,7 +111,10 @@ def _run_node_action(context: CaseContext, step: dict[str, Any],
     _run_pg_ctl(context, node, action)
     execution = StepExecutionResult(0, output="%s %s complete" % (action, node))
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, key, title, passed, actual, execution.output, reason, node)
+    _record_step(
+        context, key, title, passed, actual, execution.output, reason, node,
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )
 
 
 def _run_system_time_shift(context: CaseContext, step: dict[str, Any],
@@ -143,5 +149,8 @@ def _run_system_time_shift(context: CaseContext, step: dict[str, Any],
         output="原始 epoch=%s，目标 epoch=%s\n%s" % (state["epoch"], target, output),
         command=argv)
     passed, actual, reason = evaluate_assertion(step["assertion"], execution)
-    _record_step(context, key, title, passed, actual,
-                 format_psql_output(execution.output), reason)
+    _record_step(
+        context, key, title, passed, actual,
+        format_psql_output(execution.output), reason,
+        expected=step.get("expected"), assertion=step["assertion"], execution=execution,
+    )

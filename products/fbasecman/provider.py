@@ -161,6 +161,8 @@ class FbasecmanProvider:
             return True
         valid = {case["target"] for case in self.discover(settings)}
         valid.update(case.split(".", 1)[0] for case in tuple(valid))
+        if target.endswith(".failed"):
+            return target[:-7] in valid
         return target in valid
 
     def discover(self, settings):
@@ -169,6 +171,10 @@ class FbasecmanProvider:
         if payload.get("schema_version") != 1:
             raise ValueError("fbasecman 用例目录版本无效")
         return payload["cases"]
+
+    def workload_catalog(self, settings, environment):
+        from products.fbasecman.workloads import catalog
+        return catalog(settings, environment)
 
     def observe_database(self, environment):
         # The common executor checks the configured endpoint. Proxy-specific
@@ -249,6 +255,22 @@ class FbasecmanProvider:
                     "--product-dir", str(Path(__file__).resolve().parent),
                     "--output-dir", str(output), "--context-json", json.dumps(case_context),
                     "--suite", target,
+                ], settings.data_dir)
+            if target.endswith(".failed"):
+                suite = target[:-7]
+                output = settings.artifact_dir("fbasecman", environment["id"])
+                case_context = {
+                    "regress_source": str(settings.product_regress_root("fbasecman")),
+                    "regress_override": str(override),
+                    "regress_report_root": str(evidence_root(settings, environment["id"])),
+                    "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
+                }
+                case_context.update(suite_case_context(settings, environment))
+                return CommandSpec([
+                    sys.executable, "-m", "platform_regress.cli",
+                    "--product-dir", str(Path(__file__).resolve().parent),
+                    "--output-dir", str(output), "--context-json", json.dumps(case_context),
+                    "--suite", suite, "failed",
                 ], settings.data_dir)
             if target == "failed":
                 output = settings.artifact_dir("fbasecman", environment["id"])

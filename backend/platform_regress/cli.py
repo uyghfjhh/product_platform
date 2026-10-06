@@ -68,8 +68,25 @@ def main(argv: list[str] | None = None) -> int:
         # merges the freshest per-suite records so `run failed` reruns every
         # target the most recent suite runs left behind.
         targets = [target for target in recorded if target in cases]
+        if args.suite:
+            targets = [target for target in targets if target.startswith(args.suite + ".")]
         if not targets:
-            failed_bookkeeping.write_last_failed(args.state_dir, [])
+            case_dirs = list((args.output_dir / "cases").glob("*/result.json")) if (args.output_dir / "cases").exists() else []
+            discovered = []
+            for cp in case_dirs:
+                t_name = cp.parent.name
+                if args.suite and not t_name.startswith(args.suite + "."):
+                    continue
+                try:
+                    cdata = json.loads(cp.read_text(encoding="utf-8"))
+                    if cdata.get("verdict") != "PASS" and t_name in cases:
+                        discovered.append(t_name)
+                except Exception:
+                    pass
+            targets = discovered
+        if not targets:
+            if not args.suite:
+                failed_bookkeeping.write_last_failed(args.state_dir, [])
             print("No failed cases recorded from the previous run.")
             return 0
     elif args.target:
@@ -257,9 +274,15 @@ def main(argv: list[str] | None = None) -> int:
     # verdict, so only executed non-PASS results are recorded.
     from .suites import failed as failed_bookkeeping
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    failed_bookkeeping.write_last_failed(
-        args.state_dir,
-        [item.target for item in results if item.verdict != "PASS"])
+    current_passed = {item.target for item in results if item.verdict == "PASS"}
+    current_failed = {item.target for item in results if item.verdict != "PASS"}
+    try:
+        prev_recorded = failed_bookkeeping.read_last_failed(args.state_dir)
+    except Exception:
+        prev_recorded = []
+    updated_failed = [t for t in prev_recorded if t not in current_passed and t not in current_failed]
+    updated_failed.extend(current_failed)
+    failed_bookkeeping.write_last_failed(args.state_dir, updated_failed)
     if args.junit or args.html:
         # Reports render from the in-memory CaseResult fact model — the same
         # data result.json/suite-result.json persist — never from report text.

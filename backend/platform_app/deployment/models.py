@@ -101,3 +101,17 @@ class DiscoveryInput(BaseModel):
         if set(value) - allowed:
             raise ValueError("SSH 选项含未知字段")
         return value
+
+
+class AdoptionInput(DiscoveryInput):
+    data_dirs: list[str] = Field(min_length=1, max_length=32)
+    database_name: Literal["postgres"] = "postgres"
+    database_user: Literal["postgres"] = "postgres"
+
+    @field_validator("data_dirs")
+    @classmethod
+    def instance_paths(cls, values):
+        paths = [NodeOverride.absolute_path(value) for value in values]
+        if len(set(paths)) != len(paths):
+            raise ValueError("实例数据目录不能重复")
+        return paths

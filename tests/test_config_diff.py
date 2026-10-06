@@ -3,7 +3,6 @@ import pytest
 from platform_regress.evidence.config_diff import (
     strip_inline_comment,
     parse_semantic_objects,
-    command_mutation_scope,
     semantic_config_diff,
 )
 

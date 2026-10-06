@@ -148,3 +148,22 @@ def _migrating_case(item):
 CASES = {item["target"]: NATIVE_CASES.get(
     item["target"], _migrating_case(item)) for item in CASE_METADATA}
 CASE_ORDER = [item["target"] for item in CASE_METADATA]
+
+
+# Runtime reports already declare their detailed purpose and expected outcomes.
+# Archive that purpose for native cases too, without inventing unexecuted steps.
+for _metadata in CASE_METADATA:
+    CASES[_metadata['target']].report_description={
+        'target':_metadata['target'],
+        'purpose':_metadata.get('summary') or _metadata.get('title'),
+        'scope_note':'通过条件以当次执行步骤的期望、实际结果和清理结论为准。',
+        **({'execution_scope':_metadata['execution_scope']} if _metadata.get('execution_scope') else {}),
+    }
+    if _metadata['target'] not in NATIVE_CASES:
+        _spec = _SUITE_SPECS.get(_metadata['target'])
+        _contents = tuple(getattr(_spec, 'test_contents', ()) or getattr(_spec, 'notes', ()) or ())
+        if _contents:
+            CASES[_metadata['target']].report_description['purpose'] = (
+                CASES[_metadata['target']].report_description['purpose'] +
+                "\n主要检查内容：\n" + "\n".join(_contents)
+            )

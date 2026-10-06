@@ -77,6 +77,7 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_seconds: float
+    evidence: str | None = None
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable
 
+from ..commands import display_command
 from ..engine import CaseContext
 from .base import (DEFAULT_COMMAND_TIMEOUT, StepExecutionResult, _record_step,
                    _shell_command, evaluate_assertion, format_psql_output)
@@ -46,6 +47,7 @@ def run_command_step(context: CaseContext, step: dict[str, Any], index: int,
         ssh_port = transport.get("ssh_port") or context.environment.get("ssh_port") or 22
         run_argv = ["ssh", "-p", str(ssh_port), "%s@%s" % (ssh_user, host),
                     _shell_command(argv, cwd, env)]
+    result = None
     try:
         result = context.command(run_argv, timeout_seconds=timeout_seconds,
                                  input_text=step.get("input"), merge_stderr=True)
@@ -54,7 +56,14 @@ def run_command_step(context: CaseContext, step: dict[str, Any], index: int,
         returncode = 124
         output = ((getattr(exc, "partial_stdout", "") or "") +
                   f"\n命令执行超时（{timeout_seconds}s）")
-    execution = StepExecutionResult(returncode, output=output, command=argv)
+    execution = StepExecutionResult(
+        returncode, output=output, command=run_argv,
+        display_command=display_command(run_argv, step.get("display_sql")),
+        evidence=getattr(result, "evidence", None),
+    )
     passed, actual, reason = evaluate_assertion(assertion, execution)
-    _record_step(context, key, title, passed, actual,
-                 format_psql_output(execution.output), reason, node)
+    _record_step(
+        context, key, title, passed, actual,
+        format_psql_output(execution.output), reason, node,
+        expected=step.get("expected"), assertion=assertion, execution=execution,
+    )

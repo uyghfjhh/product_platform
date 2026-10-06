@@ -99,31 +99,44 @@ get_running_pid() {
     return 1
 }
 
-# 启动 Web 平台服务
-do_start() {
-    local port="$DEFAULT_PORT"
-    local host="$DEFAULT_HOST"
-
-    # 解析命令行参数 (如: ./web.sh start 8080 或 ./web.sh start --port 8080)
+# 先校验参数，restart 不应因无效端口而先停止现有服务。
+parse_start_args() {
+    WEB_START_PORT="$DEFAULT_PORT"
+    WEB_START_HOST="$DEFAULT_HOST"
+    local positional_port=false
+    local positional_host=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --port|-p)
-                port="$2"
-                shift 2
-                ;;
+                [ $# -ge 2 ] || { echo "❌ --port 缺少值"; return 1; }
+                WEB_START_PORT="$2"; positional_port=true; shift 2 ;;
             --host|-h)
-                host="$2"
-                shift 2
-                ;;
-            [0-9]*)
-                port="$1"
-                shift
-                ;;
+                [ $# -ge 2 ] || { echo "❌ --host 缺少值"; return 1; }
+                WEB_START_HOST="$2"; positional_host=true; shift 2 ;;
             *)
-                shift
-                ;;
+                if [[ "$1" =~ ^[0-9]+$ ]] && [ "$positional_port" = false ]; then
+                    WEB_START_PORT="$1"; positional_port=true
+                elif [ "$positional_port" = true ] && [ "$positional_host" = false ] && [[ "$1" != -* ]]; then
+                    WEB_START_HOST="$1"; positional_host=true
+                else
+                    echo "❌ 未知启动参数: $1"; return 1
+                fi
+                shift ;;
         esac
     done
+    if ! [[ "$WEB_START_PORT" =~ ^[0-9]{1,5}$ ]] || [ -z "$WEB_START_HOST" ]; then
+        echo "❌ 端口必须为 1 到 65535，主机不能为空"; return 1
+    fi
+    if (( 10#$WEB_START_PORT < 1 || 10#$WEB_START_PORT > 65535 )); then
+        echo "❌ 端口必须为 1 到 65535"; return 1
+    fi
+}
+
+# 启动 Web 平台服务
+do_start() {
+    parse_start_args "$@" || return 1
+    local port="$WEB_START_PORT"
+    local host="$WEB_START_HOST"
 
     local pid
     if pid="$(get_running_pid)"; then
@@ -374,6 +387,7 @@ case "$COMMAND" in
         do_stop
         ;;
     restart)
+        parse_start_args "$@" || exit 1
         do_stop
         sleep 1
         do_start "$@"

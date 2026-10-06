@@ -1,6 +1,7 @@
 """统一 HTTP API；产品命令通过已登记的提供者与本机任务执行。"""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from ..config import Settings, load_settings
 from ..deployment.service import DeploymentService
 from ..filestore import ConflictError, FileStore
 from ..operations import OperationError, OperationService
+from ..orchestration import Orchestrator
 from ..product_catalog import ProductManifestError, discover_products
 from ..product_routes import register_product_routes
 from ..providers import registry_for
@@ -20,7 +22,10 @@ from . import (
     routes_licenses,
     routes_meta,
     routes_operations,
+    routes_orchestration,
+    routes_products,
     routes_results,
+    routes_workloads,
 )
 
 
@@ -54,6 +59,9 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
 
     operations = OperationService(settings, store, enqueuer)
     deployments = DeploymentService(settings, store, operations)
+    orchestrator = Orchestrator(store, operations)
+    from ..monitoring import MonitoringService
+    monitoring = MonitoringService(settings, store)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -61,20 +69,34 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
         async def dispatch_loop():
             while True:
                 await asyncio.to_thread(operations.retry_dispatch)
+                try:
+                    await asyncio.to_thread(orchestrator.tick)
+                except Exception as exc:  # noqa: BLE001 - optional automation cannot stop task delivery
+                    logging.getLogger(__name__).warning('运营循环将在下一次重试：%s', type(exc).__name__)
                 await asyncio.sleep(2)
+        async def monitoring_loop():
+            while True:
+                await asyncio.to_thread(monitoring.tick)
+                await asyncio.sleep(2)
+        collector = asyncio.tasks.create_task(monitoring_loop())
         dispatcher = asyncio.tasks.create_task(dispatch_loop())
         try:
             yield
         finally:
+            collector.cancel()
+            with suppress(asyncio.CancelledError):
+                await collector
             dispatcher.cancel()
             with suppress(asyncio.CancelledError):
                 await dispatcher
 
     app = FastAPI(title="公司产品公共管理平台", version="0.1.0", lifespan=lifespan)
+    app.state.monitoring = monitoring
     app.state.settings = settings
     app.state.store = store
     app.state.operations = operations
     app.state.deployments = deployments
+    app.state.orchestrator = orchestrator
 
     @app.exception_handler(OperationError)
     async def operation_error(_request, exc):
@@ -92,6 +114,9 @@ def create_app(settings: Settings | None = None, enqueuer=None) -> FastAPI:
     routes_operations.register(app, settings, store)
     routes_results.register(app, settings, store)
     routes_deployment.register(app, settings, store)
+    routes_orchestration.register(app, settings, store)
+    routes_products.register(app, settings, store)
+    routes_workloads.register(app, settings, store)
     register_product_routes(app, settings, store)
 
     if settings.frontend_dist.is_dir():

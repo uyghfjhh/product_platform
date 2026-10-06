@@ -10,14 +10,16 @@ type Props = {
   onChange?: (value: string) => void;
   readOnly?: boolean;
   height?: number;
+  theme?: string;
 };
 
-export default function CodeEditor({ value, language, onChange, readOnly = false, height = 360 }: Props) {
+export default function CodeEditor({ value, language, onChange, readOnly = false, height = 360, theme }: Props) {
   return (
     <div className="code-editor" style={{ height }}>
       <Editor
         height="100%"
         language={language}
+        theme={theme}
         value={value}
         onChange={(text) => onChange?.(text || '')}
         options={{

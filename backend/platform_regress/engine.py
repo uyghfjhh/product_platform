@@ -345,6 +345,9 @@ class RegressionEngine:
         # Cleanup runs after every attempted setup, including blocked and
         # failed setup. Its failure is reported separately from business truth.
         try:
+            description=getattr(case,'report_description',None)
+            if isinstance(description,dict):
+                context.attach_text('case-description.json',json.dumps(description,ensure_ascii=False,indent=2)+'\n')
             context.check_cancel()
             if isinstance(case, SetupCase):
                 context.emit("phase.started", {"phase": "setup"})

@@ -224,6 +224,63 @@
   padding: 8px 12px;
 }
 
+.step-analysis-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #27364f;
+  border-radius: 6px;
+  background: #0a0f1d;
+}
+
+.step-analysis-card pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #cbd5e1;
+  font: 11px/1.5 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.step-analysis-card.single { grid-template-columns: 1fr; }
+
+.analysis-pass { color: #4ade80; font-size: 12px; line-height: 1.55; }
+.analysis-fail { color: #f87171; font-size: 12px; line-height: 1.55; }
+
+/* 技术附件：默认折叠的工件 JSON、断言规则与日志证据 */
+.step-tech-attachment {
+  border: 1px dashed #263449;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.step-tech-attachment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: #0d1527;
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.step-tech-attachment-header:hover { color: #cbd5e1; }
+
+.step-tech-attachment-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #0a0f1d;
+}
+
+.step-tech-assertion .step-section-label { color: #94a3b8; }
+
+@media (max-width: 720px) {
+  .step-analysis-card { grid-template-columns: 1fr; }
+}
+
 .step-verdict-lines {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 11.5px;
@@ -401,7 +458,10 @@
   color: #fbbf24;
   font-size: 11px;
   font-family: monospace;
+  text-decoration: none;
 }
+
+a.evidence-artifact-pill:hover { color: #fde68a; border-color: #fbbf24; }
 
 .step-log-evidence-box {
   background: #060a14;
@@ -434,3 +494,49 @@
   border: 1px solid #1e293b;
   border-radius: 6px;
 }
+
+/* 用例说明（报告头部） */
+.case-brief {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-left: 4px solid var(--border-active);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.case-brief-row {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0;
+  align-items: baseline;
+}
+.case-brief-label {
+  flex: 0 0 auto;
+  min-width: 5em;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.case-brief-target {
+  color: #64748b;
+  font-family: monospace;
+  font-size: 11.5px;
+}
+.case-brief-flow {
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+.case-brief-points {
+  margin: 0;
+  padding-left: 20px;
+  color: #cbd5e1;
+  line-height: 1.7;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.case-description-table { width: 100%; border-collapse: collapse; color: var(--text-primary); }
+.case-description-table th, .case-description-table td { padding: 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
+.case-description-table th { color: var(--text-secondary); }
+.case-brief .case-brief-points { max-height: none; overflow: visible; }

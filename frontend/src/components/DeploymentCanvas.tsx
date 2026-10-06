@@ -5,7 +5,7 @@ import type { TopologyData, TopologyNode } from '../platform/topology';
 import { renderDeploymentCanvas } from './referenceDeploymentCanvas';
 import './referenceDeploymentCanvas.css';
 
-type Observed = Record<string, { running: boolean | null; message: string }> | null;
+type Observed = Record<string, { running: boolean | null; message?: string; pid?: number | null }> | null;
 
 function toReference(topology: TopologyData, observed: Observed) {
   const groups = Array.from(new Set(topology.nodes.map((node) => node.group || 'cluster')));
@@ -19,12 +19,15 @@ function toReference(topology: TopologyData, observed: Observed) {
     const primaries = members.filter((n) => n.role === 'primary' || n.role?.includes('primary'));
     const nonPrimaries = members.filter((n) => !primaries.includes(n));
 
-    const rowGap = 250;
+    // 自适应列数：当备库数量 >= 4 时采用 3 列排布，大幅压缩垂直层高（从 3 排降至 2 排，立省 100px+）
+    const standbyCols = nonPrimaries.length >= 4 ? 3 : (nonPrimaries.length > 1 ? 2 : 1);
+    const colWidth = 305;
+    const rowGap = 82;
     const primaryRows = Math.max(1, primaries.length);
-    const standbyRows = Math.max(1, Math.ceil(nonPrimaries.length / 2));
+    const standbyRows = Math.max(1, Math.ceil(nonPrimaries.length / standbyCols));
     const rows = Math.max(primaryRows, standbyRows);
-    const groupHeight = 60 + rows * rowGap + 30;
-    const groupWidth = nonPrimaries.length > 1 ? 1100 : 800;
+    const groupHeight = 42 + rows * rowGap + 18;
+    const groupWidth = Math.max(720, 360 + standbyCols * colWidth + 24);
 
     let groupTitle = `${group.toUpperCase()} 复制组`;
     let groupTag = `${group.toUpperCase()} 复制组 (${primaries.length} 主 + ${nonPrimaries.length} 备)`;
@@ -51,21 +54,23 @@ function toReference(topology: TopologyData, observed: Observed) {
 
     primaries.forEach((priNode, pIdx) => {
       nodePositions[priNode.id] = {
-        x: 90,
-        y: currentY + 60 + (rows - primaryRows) * rowGap / 2 + pIdx * rowGap,
+        x: 45,
+        y: currentY + 38 + (rows - primaryRows) * rowGap / 2 + pIdx * rowGap,
         compact: false,
       };
     });
 
     nonPrimaries.forEach((stdNode, sIdx) => {
+      const col = sIdx % standbyCols;
+      const row = Math.floor(sIdx / standbyCols);
       nodePositions[stdNode.id] = {
-        x: 460 + (sIdx % 2) * 340,
-        y: currentY + 60 + Math.floor(sIdx / 2) * rowGap,
+        x: 355 + col * colWidth,
+        y: currentY + 38 + row * rowGap,
         compact: true,
       };
     });
 
-    currentY += groupHeight + 40;
+    currentY += groupHeight + 24;
   });
 
   const nodes = topology.nodes.map((node) => {
@@ -73,24 +78,37 @@ function toReference(topology: TopologyData, observed: Observed) {
     const pos = nodePositions[node.id] || { x: 100, y: 100, compact: false };
     const isMacSubscriber = node.role === 'logical_subscriber' || node.id === 'logical_subscriber';
     const probe = observed?.[node.id];
+
+    const rawExtensions = node.extensions || [];
+    const extSet = new Set(rawExtensions);
+    if (node.group?.startsWith('mmr') || topology.kind === 'mmr') extSet.add('fdd_mmr');
+    if (node.group === 'mac' || topology.kind === 'mac') extSet.add('fbase_mac');
+    if (node.group?.startsWith('citus') || topology.kind === 'citus') extSet.add('citus');
+
+    const corePlugins: Array<{ name: string; type: 'mmr' | 'mac' | 'citus' }> = [];
+    if (extSet.has('fdd_mmr')) corePlugins.push({ name: 'MMR', type: 'mmr' });
+    if (extSet.has('fbase_mac')) corePlugins.push({ name: 'MAC', type: 'mac' });
+    if (extSet.has('citus')) corePlugins.push({ name: 'Citus', type: 'citus' });
+
     return {
       id: node.id,
-      label: `${node.label} (${node.port})`,
+      label: node.label,
       type: primary ? 'db_master' : 'db_standby',
       cluster: node.group,
-      role: primary ? 'MMR Master (写)' : (isMacSubscriber ? '逻辑订阅端 (只读)' : 'Standby (物理备库)'),
+      role: primary ? 'Primary (写)' : (isMacSubscriber ? '订阅端 (只读)' : 'Standby (读)'),
       host: node.host,
       port: node.port,
-      // 区分"未探测"(observed 尚未返回/请求失败)与"确认离线"——前者不得渲染成故障红
+      endpoint: `${node.host}:${node.port}`,
+      data_dir: node.data_dir,
+      corePlugins,
+      pid: probe?.pid,
       status: probe?.running == null ? 'unknown' : (probe.running ? 'active' : 'down'),
+      statusText: probe?.running == null ? '探测中' : (probe.running ? '运行中' : '已停止'),
       x: pos.x,
       y: pos.y,
-      desc: primary
-        ? '接收写事务并广播物理/逻辑 WAL'
-        : (isMacSubscriber ? '逻辑解码订阅同步节点' : '流复制物理只读备库'),
       compact: pos.compact,
-      width: 300,
-      height: pos.compact ? 220 : 240,
+      width: 280,
+      height: 68,
     };
   });
 
@@ -176,6 +194,33 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
       );
     }, canvasRef);
     return () => ctx.revert();
+  }, [html]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    function handleMouseOver(e: MouseEvent) {
+      const card = (e.target as Element).closest<HTMLElement>('.topo-node[data-node-id]');
+      if (!card) return;
+      const nodeId = card.dataset.nodeId;
+      if (!nodeId) return;
+      const edges = el?.querySelectorAll<SVGPathElement>(
+        `.topo-edge-line[data-source="${nodeId}"], .topo-edge-line[data-target="${nodeId}"]`
+      );
+      edges?.forEach((edge) => edge.classList.add('edge-highlight'));
+    }
+    function handleMouseOut(e: MouseEvent) {
+      const card = (e.target as Element).closest<HTMLElement>('.topo-node[data-node-id]');
+      if (!card) return;
+      const edges = el?.querySelectorAll<SVGPathElement>('.topo-edge-line.edge-highlight');
+      edges?.forEach((edge) => edge.classList.remove('edge-highlight'));
+    }
+    el.addEventListener('mouseover', handleMouseOver);
+    el.addEventListener('mouseout', handleMouseOut);
+    return () => {
+      el.removeEventListener('mouseover', handleMouseOver);
+      el.removeEventListener('mouseout', handleMouseOut);
+    };
   }, [html]);
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {

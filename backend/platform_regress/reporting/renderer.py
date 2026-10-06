@@ -40,6 +40,14 @@ def render_psql_table_from_pipe_text(output):
     return "\n".join(rendered)
 
 
+def _is_artifact_reference(text):
+    """Single-line artifact path (artifacts/… or *.json/*.log) — kept in steps.json, not report body."""
+    stripped = str(text).strip()
+    if not stripped or "\n" in stripped:
+        return False
+    return stripped.startswith("artifacts/") or stripped.endswith((".json", ".log"))
+
+
 def render_report(document):
     """Render a structured document without suite-specific wording."""
     lines = [
@@ -86,19 +94,24 @@ def render_report(document):
         if step.coverage_check:
             _append_value(lines, "    本步骤检查: ", step.coverage_check)
         for item in step.execution:
-            _append_value(lines, "    %s: " % item.get("label", "实际执行"), item.get("text", ""))
+            _append_value(lines, "    %s: " % item.get("label", "执行内容"), item.get("text", ""))
         for item in step.intermediate:
             _append_value(lines, "    %s: " % item.get("label", "中间状态"), item.get("text", ""))
         for item in step.evidence:
-            _append_value(lines, "    %s: " % item.get("label", "证据"), item.get("text", ""))
+            if not _is_artifact_reference(item.get("text", "")):
+                _append_value(lines, "    %s: " % item.get("label", "证据"), item.get("text", ""))
         for label, value in step.details:
-            _append_value(lines, "    %s: " % label, value)
+            if label not in ("结果分析", "判定依据"):
+                _append_value(lines, "    %s: " % label, value)
         if step.key_expected is not None:
             _append_value(lines, "    关键期望: ", step.key_expected)
         if step.expected is not None:
             _append_value(lines, "    预期: ", step.expected)
         if step.actual is not None:
-            _append_value(lines, "    实际: ", step.actual)
+            _append_value(lines, "    实际输出: ", step.actual)
+        for label, value in step.details:
+            if label in ("结果分析", "判定依据"):
+                _append_value(lines, "    结果分析: ", value)
         if step.result is not None:
             lines.append("    判定: %s" % step.result)
         for check in step.checks:

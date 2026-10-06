@@ -484,14 +484,11 @@ def test_drifted_import_is_blocked_and_context_preserved(workbench, tmp_path):
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("stale identifiers")
     client.post("/api/v1/environments/cman-imported/deployment-draft")
-    # 把草稿里的拓扑改到另一组端口——差异计划会如实列出，但不可执行，
+    # 重命名既有成员——差异计划会如实列出，但不可执行，
     # 不允许把平台无法落地的配置发布为环境当前配置。
-    moved = dict(config)
-    moved["instances"] = dict(config["instances"])
-    moved["instances"]["test_mmr1"] = {
-        **config["instances"]["test_mmr1"],
-        "port": config["instances"]["test_mmr1"]["port"] + 400,
-    }
+    moved = yaml.safe_load(yaml.safe_dump(config))
+    first_member = next(iter(moved['mmr_clusters']['fbasecman_regress']['members'].values()))
+    first_member['node_name'] = 'renamed_existing_member'
     draft = client.get("/api/v1/deployment/drafts/cman-imported").json()
     updated = client.put(
         "/api/v1/deployment/drafts/cman-imported",
@@ -818,7 +815,7 @@ def test_diff_plan_scale_out_new_standby_is_executable(workbench, tmp_path):
     assert plan["executable"], plan["operations"]
     kinds = {op["kind"] for op in plan["operations"]}
     assert kinds == {"add_standby"}
-    assert plan["action"] == "deployment.create"
+    assert plan["action"] == "deployment.change"
     assert plan["ready"], plan["checks"]
     # 新节点按"新实例"探测（空目录+端口可用），既有节点按接管口径探测。
     linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
@@ -830,7 +827,7 @@ def test_diff_plan_scale_out_new_standby_is_executable(workbench, tmp_path):
     assert applied.status_code == 202, applied.text
 
 
-def test_diff_plan_scale_in_is_listed_but_blocked(workbench, tmp_path):
+def test_diff_plan_scale_in_executes_via_change_plan(workbench, tmp_path):
     client, service, spec, _ = workbench
     config, target, _ = compile_spec(
         service.settings, DeploymentSpec(**spec), "fixture"
@@ -851,25 +848,27 @@ def test_diff_plan_scale_in_is_listed_but_blocked(workbench, tmp_path):
     edited = yaml.safe_load(yaml.safe_dump(config))
     plan = _import_plan(client, spec, "fbase-shrink", edited)
     assert plan["mode"] == "diff"
-    assert not plan["executable"]
+    assert plan["executable"]
+    assert plan["action"] == "deployment.change"
     assert any(
-        op["kind"] == "remove_node" and op["node"] == "mac_s2"
+        op["kind"] == "remove_node" and op["node"] == "mac_s2" and op["executable"]
         for op in plan["operations"]
     )
+    # 变更动作必须显式确认；不确认直接 apply 被拦下。
+    linked = client.post(f"/api/v1/deployment/plans/{plan['id']}/associate")
+    assert linked.status_code == 200, linked.text
     assert (
-        client.post(f"/api/v1/deployment/plans/{plan['id']}/associate").status_code
+        client.post(f"/api/v1/deployment/plans/{plan['id']}/apply").status_code
         == 422
     )
-    assert (
-        client.post(
-            f"/api/v1/deployment/plans/{plan['id']}/apply",
-            json={"acknowledge_change": True},
-        ).status_code
-        == 422
+    applied = client.post(
+        f"/api/v1/deployment/plans/{plan['id']}/apply",
+        json={"acknowledge_change": True},
     )
+    assert applied.status_code == 202, applied.text
 
 
-def test_diff_plan_structural_and_parameter_changes_blocked(workbench, tmp_path):
+def test_diff_plan_structural_blocked_parameters_executable(workbench, tmp_path):
     client, service, spec, _ = workbench
     config, target, _ = compile_spec(
         service.settings, DeploymentSpec(**spec), "fixture"
@@ -877,15 +876,34 @@ def test_diff_plan_structural_and_parameter_changes_blocked(workbench, tmp_path)
     _materialize_cluster(config)
     _register_fbase_environment(service, config, "fbase-edit")
     edited = yaml.safe_load(yaml.safe_dump(config))
-    edited["instances"]["mac_standby"]["port"] += 500
+    edited["instances"]["mac_primary"]["port"] += 500
     plan = _import_plan(client, spec, "fbase-edit", edited)
-    assert plan["mode"] == "diff" and not plan["executable"]
+    assert plan["mode"] == "diff" and plan["executable"]
+    assert plan["action"] == 'deployment.change'
     assert any(op["kind"] == "change_node" for op in plan["operations"])
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited['instances']['mac_primary']['data_dir'] += '-moved'
+    # A fresh copy cannot run at the old endpoint while the source is active.
+    plan = _import_plan(client, spec, 'fbase-edit', edited)
+    assert not plan['executable'] and plan['action'] is None
     edited = yaml.safe_load(yaml.safe_dump(config))
     edited["postgresql_config"]["parameters"]["max_connections"] = 500
     plan = _import_plan(client, spec, "fbase-edit", edited)
+    assert plan["mode"] == "diff" and plan["executable"]
+    assert plan["action"] == "deployment.change"
+    assert any(
+        op["kind"] == "parameters" and op["executable"]
+        for op in plan["operations"]
+    )
+    # 结构参数（port/data_directory 等）不属于可在线变更集合，仍被拦下。
+    edited = yaml.safe_load(yaml.safe_dump(config))
+    edited["postgresql_config"]["parameters"]["port"] = 15432
+    plan = _import_plan(client, spec, "fbase-edit", edited)
     assert plan["mode"] == "diff" and not plan["executable"]
-    assert any(op["kind"] == "parameters" for op in plan["operations"])
+    assert any(
+        op["kind"] == "parameters" and not op["executable"]
+        for op in plan["operations"]
+    )
 
 
 def test_partially_applied_plan_resumes_via_managed_markers(workbench, tmp_path):
@@ -949,11 +967,11 @@ def test_free_topology_compiles_and_generates_plan(workbench, tmp_path):
         "cluster_name": "playground",
         "template_id": "free",
         "nodes": [
-            {"name": "pg1", "role": "primary", "port": 45440,
+            {"name": "pg1", "role": "primary", "port": 7450,
              "data_dir": str(tmp_path / "pg1")},
-            {"name": "pg2", "role": "standby", "port": 45441,
+            {"name": "pg2", "role": "standby", "port": 7451,
              "data_dir": str(tmp_path / "pg2")},
-            {"name": "pg3", "role": "standby", "port": 45442,
+            {"name": "pg3", "role": "standby", "port": 7452,
              "data_dir": str(tmp_path / "pg3")},
         ],
     }
@@ -1184,3 +1202,36 @@ def test_run_command_appends_stage_logs(workbench, tmp_path):
     assert "deploy-stage" in log and "health-stage" in log
     assert log.count("=====") >= 4  # 两个阶段分隔行
     assert "echo deploy-stage" in log and "echo health-stage" in log
+
+
+def test_installation_discovery_requests_actual_agent_operation(workbench, monkeypatch):
+    client, _, _, _ = workbench
+    captured = {}
+
+    def fake_probe(host, request, ssh=None):
+        captured.update(request)
+        return {"installations": []}
+
+    monkeypatch.setattr("platform_app.api.routes_deployment.probe", fake_probe)
+    response = client.post("/api/v1/deployment/discover", json={"host": "localhost"})
+    assert response.status_code == 200
+    assert captured["operation"] == "discover"
+
+
+def test_existing_discovery_api_passes_validated_paths_and_ssh(workbench, monkeypatch):
+    client, _, _, _ = workbench
+    captured = {}
+
+    def discover(item):
+        captured.update(item.model_dump())
+        return {"source_yaml": "hosts: {}", "targets": [], "instances": [], "warnings": []}
+
+    monkeypatch.setattr("platform_app.api.routes_deployment.discover_existing", discover)
+    response = client.post("/api/v1/deployment/discover-existing", json={
+        "host": "192.168.0.15", "data_dirs": ["/opt/data/rep8/"], "ssh": {"user": "postgres"},
+    })
+    assert response.status_code == 200
+    assert captured["data_dirs"] == ["/opt/data/rep8"]
+    assert captured["ssh"] == {"user": "postgres"}
+    response = client.post("/api/v1/deployment/discover-existing", json={"host": "localhost", "data_dirs": ["/"]})
+    assert response.status_code == 422

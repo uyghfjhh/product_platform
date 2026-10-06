@@ -9,7 +9,6 @@ after a run is cancelled.
 
 from __future__ import annotations
 
-import signal
 import sys
 from pathlib import Path
 

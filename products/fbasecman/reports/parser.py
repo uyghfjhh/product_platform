@@ -565,6 +565,39 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
     if purp_match:
         purpose = purp_match.group(1).strip()
 
+    purpose_source = "execution_report"
+    archived = None
+    result_path = case_dir / "result.json"
+    try:
+        result_fact = json.loads(result_path.read_text(encoding="utf-8"))
+        from platform_regress.reporting.description import read_description
+        archived = read_description(case_dir, str(result_fact.get("execution_id") or ""))
+        if archived and archived.get("target") == target and archived.get("purpose"):
+            purpose = archived["purpose"]
+            purpose_source = "execution_description"
+    except (OSError, ValueError, TypeError):
+        pass
+    if not purpose or purpose == target:
+        try:
+            catalog = json.loads((Path(__file__).parents[1] / "regression" / "catalog.json").read_text(encoding="utf-8"))
+            item = next((item for item in catalog["cases"] if item["target"] == target), {})
+            purpose = item.get("summary") or purpose
+            purpose_source = "current_catalog"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    execution_scope = None
+    execution_scope_source = "current_catalog"
+    try:
+        catalog = json.loads((Path(__file__).parents[1] / "regression" / "catalog.json").read_text(encoding="utf-8"))
+        item = next((item for item in catalog["cases"] if item["target"] == target), {})
+        execution_scope = item.get("execution_scope")
+        if archived and archived.get("target") == target and archived.get("execution_scope"):
+            execution_scope = archived["execution_scope"]
+            execution_scope_source = "execution_description"
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
     test_contents = []
     cont_match = re.search(r"^测试内容:\s*\n(.*?)(?=\n\n[^\s]|\n[^\s]+:|\Z)", raw_text, re.S | re.M)
     if cont_match:
@@ -595,27 +628,54 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
         if re.search(r"判定:\s*FAIL", body):
             step_obj["status"] = "FAIL"
 
-        act_m = re.search(r"动作:\s*(.*?)(?=\n\s*(?:预期|实际|判定|证据|中间状态)|\Z)", body, re.S)
+        act_m = re.search(r"动作:\s*(.*?)(?=\n\s*(?:关键期望|预期|期望|实际|判定|证据|日志证据|中间状态|结果分析|判定依据)|\Z)", body, re.S)
         if act_m:
             step_obj["action"] = act_m.group(1).strip()
 
-        cmd_m = re.search(r"(?:实际执行|命令):\s*(.*?)(?=\n\s*(?:中间状态|证据|动作|预期|实际|判定)|\Z)", body, re.S)
+        cmd_m = re.search(r"(?:实际执行|执行内容|命令):\s*(.*?)(?=\n\s*(?:中间状态|证据|日志证据|动作|关键期望|预期|期望|实际|判定|结果分析|判定依据)|\Z)", body, re.S)
         if cmd_m:
-            step_obj["command"] = cmd_m.group(1).strip()
+            raw_cmd = cmd_m.group(1).strip()
+            cleaned_lines = []
+            for line in raw_cmd.splitlines():
+                sline = line.strip()
+                if sline.startswith("监听端口:"):
+                    step_obj["port"] = sline.partition(":")[2].strip()
+                elif sline.startswith("配置文件:"):
+                    step_obj["config_file"] = sline.partition(":")[2].strip()
+                elif sline.startswith("关键期望:") or sline.startswith("预期:") or sline.startswith("期望:"):
+                    if not step_obj["expected"]:
+                        step_obj["expected"] = sline.partition(":")[2].strip()
+                else:
+                    cleaned_lines.append(line)
+            cleaned_cmd = "\n".join(cleaned_lines).strip()
+            if cleaned_cmd.startswith("$ "):
+                parts = re.split(r"\n\s*\n", cleaned_cmd, maxsplit=1)
+                if len(parts) == 2:
+                    step_obj["command"] = parts[0].strip()
+                    if not step_obj["state_table"]:
+                        step_obj["state_table"] = parts[1].strip()
+                else:
+                    step_obj["command"] = cleaned_cmd
+            else:
+                step_obj["command"] = cleaned_cmd
 
-        exp_m = re.search(r"预期:\s*(.*?)(?=\n\s*(?:实际|判定|证据|动作)|\Z)", body, re.S)
+        exp_m = re.search(r"(?:关键期望|预期|期望):\s*(.*?)(?=\n\s*(?:实际|判定|证据|日志证据|动作|结果分析|判定依据)|\Z)", body, re.S)
         if exp_m:
             step_obj["expected"] = exp_m.group(1).strip()
 
-        actu_m = re.search(r"实际:\s*(.*?)(?=\n\s*(?:判定|证据|预期)|\Z)", body, re.S)
+        actu_m = re.search(r"实际(?:输出)?:\s*(.*?)(?=\n\s*(?:判定|证据|日志证据|关键期望|预期|期望|结果分析|判定依据)|\Z)", body, re.S)
         if actu_m:
             step_obj["actual"] = actu_m.group(1).strip()
 
-        evi_m = re.search(r"证据:\s*(.*?)(?=\n\s*(?:动作|预期|实际|判定)|\Z)", body, re.S)
+        ana_m = re.search(r"(?:结果分析|判定依据):\s*(.*?)(?=\n\s*(?:判定|证据|日志证据|关键期望|预期|期望)|\Z)", body, re.S)
+        if ana_m:
+            step_obj["analysis"] = ana_m.group(1).strip()
+
+        evi_m = re.search(r"(?:日志证据|证据):\s*(.*?)(?=\n\s*(?:动作|关键期望|预期|期望|实际|判定|结果分析|判定依据)|\Z)", body, re.S)
         if evi_m:
             step_obj["evidence"] = evi_m.group(1).strip()
 
-        tbl_m = re.search(r"中间状态:\s*(.*?)(?=\n\s*(?:证据|动作|预期|实际|判定)|\Z)", body, re.S)
+        tbl_m = re.search(r"中间状态:\s*(.*?)(?=\n\s*(?:证据|日志证据|动作|关键期望|预期|期望|实际|判定|结果分析|判定依据)|\Z)", body, re.S)
         if tbl_m:
             step_obj["state_table"] = tbl_m.group(1).strip()
 
@@ -636,6 +696,29 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
             "expected": exp_m.group(1).strip() if exp_m else "",
             "actual": actu_m.group(1).strip() if actu_m else "",
         })
+
+    for step in steps:
+        if re.sub(r"^步骤\s*\d+[:：]\s*", "", step["title"]).startswith(("执行 SQL", "执行命令")):
+            step["intent"] = "action"
+
+    # SDK 事件是同次执行的结构化证据；补回旧文本遗漏的业务步骤。
+    from platform_regress.reporting.case_report import _event_steps, _steps_payload
+    recorded = _steps_payload(target, _event_steps(case_dir))["steps"]
+    matched_steps = set()
+    for fact in recorded:
+        clean_title = re.sub(r"^(?:步骤|检测项)\s*\d+[:：]\s*", "", fact["title"])
+        match = next((step for step in steps if id(step) not in matched_steps and re.sub(
+            r"^(?:步骤|检测项)\s*\d+[:：]\s*", "", step["title"]) == clean_title), None)
+        mapped = {**fact, "status": fact["result"], "title": clean_title}
+        if match is not None:
+            matched_steps.add(id(match))
+            match.update({key: value for key, value in mapped.items() if value is not None})
+        elif fact.get("intent") == "verify" or fact.get("assertion") or not clean_title.startswith("执行"):
+            steps.append(mapped)
+
+    from products.fbasecman.reports.observations import readable_jdbc_observations
+    for step in steps:
+        step["actual"] = readable_jdbc_observations(step.get("actual"))
 
     # 若用例判定为 FAIL 但步骤中未包含 FAIL 步骤（例如执行中抛出异常提前退出导致报告中断），从 steps.json 或 reason 补全
     if status == "FAIL" and not any(s.get("status") == "FAIL" for s in steps):
@@ -730,6 +813,9 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
         "end_time": end_time,
         "reason": reason,
         "purpose": purpose,
+        "purpose_source": purpose_source,
+        "execution_scope": execution_scope,
+        "execution_scope_source": execution_scope_source,
         "test_contents": test_contents,
         "key_config": key_config,
         "steps": steps,

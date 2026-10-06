@@ -170,7 +170,7 @@ def build_evidence_bundle(settings: Settings, result: dict) -> dict:
                            "--porcelain", "--", item["path"])
             if blamed:
                 revision = blamed.splitlines()[0].split()[0]
-                if re.fullmatch(r"[0-9a-f]{40}", revision):
+                if re.fullmatch(r"[0-9a-f]{40}", revision) and revision != '0'*40:
                     item["last_modified_commit"] = revision
                     candidate_revisions.add(revision)
     evidence.extend(code)

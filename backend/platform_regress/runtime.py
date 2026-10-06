@@ -225,7 +225,7 @@ class ReportRuntime:
                     checks.append(ReportCheck(*check))
             timeline.append((item["order"], ReportStep(
                 item["title"], details=item["details"],
-                execution=([{"label": "实际执行", "text": item["command"]}] if item["command"] else []),
+                execution=([{"label": "执行内容", "text": item["command"]}] if item["command"] else []),
                 key_expected=item["expected"], actual=item["actual"], result=item["result"],
                 checks=checks,
             )))

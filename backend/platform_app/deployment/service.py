@@ -13,7 +13,7 @@ class DeploymentService:
         plan = self.workbench.verify(plan_id)
         if not plan["action"]:
             raise OperationError(422, "方案没有可执行操作")
-        if plan["action"] == "deployment.create" and not acknowledge_change:
+        if plan["action"] in {"deployment.create", "deployment.change"} and not acknowledge_change:
             raise OperationError(422, "请确认此方案将初始化并部署新实例")
         request = self.store.deployments.begin_deployment_request(
             plan_id, plan["environment_id"], acknowledge_change)

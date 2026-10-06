@@ -1,5 +1,8 @@
 """Read-only probe; also sent verbatim to SSH hosts with their Python 3."""
 
+# CentOS 8 hosts run Python 3.6: capture_output/text require Python 3.7.
+# ruff: noqa: UP021, UP022
+
 import glob
 import json
 import os
@@ -23,9 +26,11 @@ def inspect_installation(home, sources):
     if tools["postgres"]:
         result = subprocess.run(
             [str(root / "bin/postgres"), "--version"],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=3,
+            check=False,
         )
         if result.returncode == 0:
             version = result.stdout.strip()
@@ -34,9 +39,11 @@ def inspect_installation(home, sources):
         if exists:
             output = subprocess.run(
                 [str(root / "bin" / name), "--version"],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
                 timeout=3,
+                check=False,
             )
             match = (
                 re.search(r"(\d+)\.\d+", output.stdout)
@@ -59,9 +66,11 @@ def inspect_installation(home, sources):
         ):
             output = subprocess.run(
                 [str(root / "bin/pg_config"), flag],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
                 timeout=3,
+                check=False,
             )
             value = output.stdout.strip()
             if output.returncode == 0 and value.startswith("/"):
@@ -205,7 +214,16 @@ def run(request):
                 },
             }
         )
-        if not existing:
+        own_port = False
+        pid_path = Path(node.get('port_owner_dir') or str(path)) / 'postmaster.pid'
+        if (node.get('port_changed') or node.get('port_owner_dir')) and pid_path.is_file():
+            try:
+                pid_lines = pid_path.read_text().splitlines()
+                own_port = int(pid_lines[3]) == node['port']
+                os.kill(int(pid_lines[0]), 0)
+            except (OSError, ValueError, IndexError):
+                own_port = False
+        if (not existing and not own_port) or (node.get('port_changed') and not own_port):
             probe = socket.socket()
             try:
                 probe.bind(("0.0.0.0", node["port"]))
@@ -237,6 +255,6 @@ def run(request):
 if __name__ == "__main__":
     try:
         print(json.dumps(run(json.loads(sys.argv[1])), ensure_ascii=False))
-    except Exception as exc:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         sys.exit(1)

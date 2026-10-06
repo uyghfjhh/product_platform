@@ -6,10 +6,13 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from platform_regress.reporting.case_report import _event_steps, _steps_payload
 from platform_regress.reporting.export import (
     collect_results_from_run, export_junit, export_html, row_from_case_result,
     rows_from_results,
 )
+from platform_regress.reporting.model import ReportDocument
+from platform_regress.reporting.renderer import render_report
 
 
 def case_result(target, verdict, reason=None, duration=1.5, evidence=()):
@@ -45,6 +48,42 @@ class RowMappingTest(unittest.TestCase):
             case_result("s.a", "FAIL", "assertion", evidence=["artifacts/e1/x.log"]))
         self.assertIn("artifacts/e1/x.log", row["details"])
         self.assertIn("assertion", row["details"])
+
+
+class CaseReportTest(unittest.TestCase):
+    def test_semantic_steps_replace_transport_noise_and_keep_verdict_basis(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = [
+                {"kind": "command.finished", "payload": {
+                    "returncode": 0, "evidence": "artifacts/e/command-1.json"}},
+                {"kind": "step.finished", "payload": {
+                    "title": "确认后台进程", "status": "PASS", "details": {
+                        "command": "psql -c 'SELECT 1'", "expected": "返回 1",
+                        "actual": "输出=1，退出码=0",
+                        "assertion": {"type": "output_contains", "values": ["1"]},
+                        "analysis": "断言 output_contains 通过；实际结果满足声明期望",
+                        "evidence": "artifacts/e/command-1.json",
+                    }}},
+            ]
+            (root / "events.jsonl").write_text("".join(
+                json.dumps(event, ensure_ascii=False) + "\n" for event in events))
+            steps = _event_steps(root)
+            self.assertEqual(["确认后台进程"], [step.title for step in steps])
+            payload = _steps_payload("mmr.background.case", steps)["steps"][0]
+            self.assertEqual("psql -c\n  SELECT 1", payload["command"])
+            self.assertEqual("返回 1", payload["expected"])
+            self.assertEqual("output_contains", payload["assertion"]["type"])
+            self.assertIn("满足声明期望", payload["analysis"])
+            self.assertEqual(["artifacts/e/command-1.json"], payload["evidence"])
+            rendered = render_report(ReportDocument(
+                target="mmr.background.case", status="PASS", started_at="s",
+                finished_at="f", purpose="p", steps=steps))
+            self.assertIn("执行内容:\n      psql -c\n        SELECT 1", rendered)
+            self.assertIn("实际输出: 输出=1，退出码=0", rendered)
+            self.assertIn("结果分析: 断言 output_contains 通过", rendered)
+            self.assertNotIn("证据: artifacts/", rendered)
+            self.assertNotIn("断言规则:", rendered)
 
 
 class CollectFromRunTest(unittest.TestCase):

@@ -5,20 +5,65 @@ import hashlib
 import ipaddress
 import json
 import socket
+import struct
 from contextlib import ExitStack, contextmanager
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 import yaml
+
+
+@lru_cache(maxsize=1)
+def local_addresses():
+    """Read local interfaces without DNS or a shell; refresh on process start."""
+    addresses = {'127.0.0.1','::1','0.0.0.0','::'}
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as handle:
+        for _,name in socket.if_nameindex():
+            try:
+                value=fcntl.ioctl(handle.fileno(),0x8915,struct.pack('256s',name[:15].encode()))
+                addresses.add(socket.inet_ntoa(value[20:24]))
+            except OSError:
+                continue
+    path=Path('/proc/net/if_inet6')
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            addresses.add(str(ipaddress.IPv6Address(int(line.split()[0],16))))
+    return addresses
+
+
+@contextmanager
+def product_lock(settings, product_id, *, exclusive=False):
+    from .config import scope
+    directory=settings.runtime_dir/'locks'/'products'
+    directory.mkdir(parents=True,exist_ok=True)
+    path=directory/(scope(product_id)+'.lock')
+    with path.open('a') as handle:
+        try:fcntl.flock(handle.fileno(),(fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)|fcntl.LOCK_NB)
+        except BlockingIOError as exc:raise ConflictError('产品正在执行或安装，请稍后重试') from exc
+        try:yield
+        finally:fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+
+
+@contextmanager
+def frontend_build_lock(settings):
+    path=settings.runtime_dir/'locks'/'frontend-build.lock'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open('a') as handle:
+        try:fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError as exc:raise ConflictError('平台前端正在重建，请稍后安装') from exc
+        try:yield
+        finally:fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
 
 from .filestore import ConflictError
 
 
 def canonical_host(host):
     host = host.lower().rstrip('.')
-    if host in {'localhost', '127.0.0.1', '::1', socket.gethostname().lower(), socket.gethostname().lower().split(".", 1)[0]}:
+    if host in local_addresses() | {'localhost', socket.gethostname().lower(), socket.gethostname().lower().split(".", 1)[0]}:
         return 'local'
     try:
-        return str(ipaddress.ip_address(host))
+        address = ipaddress.ip_address(host)
+        return 'local' if address.is_loopback else str(address)
     except ValueError:
         return host
 
@@ -32,8 +77,10 @@ def resource_keys(environment):
     keys = set()
     host = canonical_host(environment['host'])
     keys.add(f"endpoint:{host}:{environment['port']}")
-    config_path = environment.get('deployment_config')
-    if config_path and Path(config_path).is_file():
+    config_paths = {environment.get(key) for key in ('deployment_config', 'resource_baseline_config', 'applied_deployment_config')}
+    for config_path in config_paths:
+        if not config_path or not Path(config_path).is_file():
+            continue
         config = yaml.safe_load(Path(config_path).read_text())
         if not isinstance(config, dict):
             raise ValueError('部署配置不是对象')
@@ -87,6 +134,8 @@ def resource_lock(settings, environment):
             for parent in PurePosixPath(path).parents:
                 modes.setdefault("directory:" + json.dumps([host, str(parent)]), fcntl.LOCK_SH)
     with ExitStack() as stack:
+        if environment.get('product_id'):
+            stack.enter_context(product_lock(settings,environment['product_id']))
         for key in sorted(modes):
             path = directory / (hashlib.sha256(key.encode()).hexdigest() + '.lock')
             handle = stack.enter_context(path.open('a'))

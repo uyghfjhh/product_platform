@@ -90,7 +90,7 @@
       const edgeStatusClass = isEdgeActive ? 'edge-active' : 'edge-inactive';
       const edgeTypeClass = edge.type || 'route';
       svgLines += `
-        <path d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}" />
+        <path id="edge_${escapeHtml(edge.id)}" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}" />
       `;
     });
 
@@ -112,43 +112,47 @@
       const isDown = n.status === 'down';
       const isUnknown = n.status === 'unknown';
       const statusClass = isDown ? 'down' : (isUnknown ? 'unknown' : 'active');
-      const nodeCardClass = isDown ? 'node-down' : 'node-active';
-      const roleBadge = isDown ? '离线 DOWN' : (isUnknown ? '探测中' : (n.role || n.type));
-      const compactClass = n.compact ? 'compact' : '';
-      const isDb = n.type === 'db_master' || n.type === 'db_standby' || n.type === 'proxy';
+      const isPrimary = n.type === 'db_master';
+      const accentClass = isDown ? 'accent-down' : (isPrimary ? 'accent-primary' : 'accent-standby');
+      const roleBadge = isDown ? '离线 DOWN' : (isUnknown ? '探测中' : (n.role || (isPrimary ? 'Primary (写)' : 'Standby (读)')));
+      const roleColorClass = isPrimary ? 'role-primary' : 'role-standby';
+      const endpoint = n.endpoint || (n.host && n.port ? `${n.host}:${n.port}` : (n.host || ''));
 
-      const cardTitle = isDb
-        ? `点击查看节点详情 (${escapeHtml(n.label || n.id)})，右上角 ⚙️ 可查看节点指标`
-        : '点击查看详情';
+      const pluginsHtml = (n.corePlugins || []).map((p) => {
+        const pName = typeof p === 'object' ? p.name : p;
+        const pType = (typeof p === 'object' ? p.type : p).toLowerCase();
+        return `<span class="plugin-pill plugin-${escapeHtml(pType)}" title="核心扩展: ${escapeHtml(pName)}">${escapeHtml(pName)}</span>`;
+      }).join('');
+
+      const cardTitle = `点击查看节点详情 (${escapeHtml(n.label || n.id)}) 与单节点运维`;
+
+      // PostgreSQL 根守护进程 (postmaster/pgmaster) PID，重启后 PID 变化直观可见
+      const pidText = n.pid != null ? String(n.pid) : '--';
+      const pidTooltip = n.pid != null
+        ? `PostgreSQL 根守护进程 (postmaster/pgmaster) PID: ${n.pid}`
+        : '未运行 / 未获取到 postmaster PID';
+      const pidClass = n.pid != null ? 'has-pid' : 'no-pid';
 
       nodesHtml += `
-        <div class="topo-node ${compactClass} ${nodeCardClass}" id="node_${escapeHtml(n.id)}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;${n.width ? `width: ${n.width}px;` : ''}${n.height ? `height: ${n.height}px;` : ''}" data-action="inspect" title="${cardTitle}">
+        <div class="topo-node ${accentClass} ${isDown ? 'node-down' : 'node-active'}" id="node_${escapeHtml(n.id)}" data-node-id="${escapeHtml(n.id)}" style="left: ${n.x}px; top: ${n.y}px;${n.width ? `width: ${n.width}px;` : ''}${n.height ? `height: ${n.height}px;` : ''}" data-action="inspect" title="${cardTitle}">
           <div class="topo-node-header">
             <div class="topo-node-title">
               <span class="topo-node-pulse ${statusClass}"></span>
-              <span class="node-label-text">${escapeHtml(n.label)}</span>
+              <span class="node-label-text" title="${escapeHtml(n.label)}">${escapeHtml(n.label)}</span>
             </div>
             <div class="topo-node-badges">
-              <span class="topo-node-badge ${statusClass}">${escapeHtml(roleBadge)}</span>
-              ${isDb && !isDown ? `<button class="node-action-icon-btn zap" data-action="inspect" title="快捷运维诊断指令">⚡</button>` : ''}
-              ${isDb ? `<button class="node-action-icon-btn" data-action="inspect" title="查看节点运维与指标详情">⚙️</button>` : ''}
+              <span class="topo-node-role-badge ${statusClass === 'down' ? 'down' : roleColorClass}">${escapeHtml(roleBadge)}</span>
+              ${pluginsHtml}
             </div>
           </div>
-          <div class="topo-node-body">
-            ${isDown ? `<div class="topo-node-field"><span class="field-key">状态:</span><span class="field-val status-field-down">● 已停止 (未启动)</span></div>` : ''}
-            ${n.host ? `<div class="topo-node-field"><span class="field-key">Host:</span><span class="field-val">${escapeHtml(n.host)}</span></div>` : ''}
-            ${n.port ? `<div class="topo-node-field"><span class="field-key">Port:</span><span class="field-val">${escapeHtml(n.port)}</span></div>` : ''}
-            ${n.desc ? `<div class="topo-node-field"><span class="field-key">说明:</span><span class="field-val">${escapeHtml(n.desc)}</span></div>` : ''}
-            ${isDb && !isDown ? `
-              <div class="node-quick-btn-row">
-                <button class="node-quick-zap-btn" data-action="inspect" title="快速执行运维/排障指令">
-                  <span>⚡ 快捷指令</span>
-                </button>
-                <div class="node-quick-sql-btn" data-action="sql" title="进入数据库 SQL 工作区">
-                  <span>💻 SQL 控制台</span>
-                </div>
-              </div>
-            ` : ''}
+          <div class="topo-node-subline">
+            <span class="topo-node-endpoint" title="连接地址: ${escapeHtml(endpoint)}">${escapeHtml(endpoint)}</span>
+            <div class="topo-node-meta">
+              <span class="topo-node-pid ${pidClass}" title="${escapeHtml(pidTooltip)}">PID: ${escapeHtml(pidText)}</span>
+              <span class="topo-node-status-text ${statusClass}">
+                ● ${escapeHtml(n.statusText || (isDown ? '已停止' : '运行中'))}
+              </span>
+            </div>
           </div>
         </div>
       `;

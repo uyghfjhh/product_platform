@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -16,6 +18,185 @@ from .contracts import Cancelled, CommandResult
 
 if TYPE_CHECKING:
     from .engine import CaseContext
+
+
+_SECRET_ASSIGNMENT = re.compile(r"^([^=]*(?:password|passwd|secret|token|api_key)[^=]*)=(.*)$", re.IGNORECASE)
+_SECRET_DSN = re.compile(r"(?i)(password\s*=\s*)(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_FLAGS = {"--password", "--passwd", "--secret", "--token", "--api-key"}
+
+
+def safe_argv(argv: list[str]) -> list[str]:
+    rendered = []
+    hide_next = False
+    for value in argv:
+        if hide_next:
+            rendered.append("<redacted>")
+            hide_next = False
+            continue
+        if value.lower() in _SECRET_FLAGS:
+            rendered.append(value)
+            hide_next = True
+            continue
+        assignment = _SECRET_ASSIGNMENT.match(value)
+        if assignment:
+            rendered.append(assignment.group(1) + "=<redacted>")
+            continue
+        rendered.append(_SECRET_DSN.sub(r"\1<redacted>", value))
+    return rendered
+
+
+def render_command(argv: list[str]) -> str:
+    return shlex.join(safe_argv(argv))
+
+
+_SH_WRAPPERS = {"sh", "bash", "dash", "ksh", "zsh"}
+# Wrappers whose ``-c`` flag takes the real command as the next argument
+# (``script -qefc 'cmd' /dev/null`` records a pseudo-tty transcript).
+_C_FLAG_WRAPPERS = _SH_WRAPPERS | {"script"}
+# psql transport/formatting flags dropped from the display form — they
+# shape output bytes, not what the statement means; full argv stays in
+# the command evidence JSON.
+_PSQL_FORMAT_FLAGS = {
+    "-X", "-A", "-t", "-q", "-a", "-e", "-E", "-n", "-x",
+    "--csv", "--expanded", "--no-align", "--no-psqlrc", "--no-readline",
+    "--tuples-only", "--quiet", "--all", "--echo-all", "--echo-errors",
+}
+_PSQL_FORMAT_FLAGS_ARG = {
+    "-v", "-P", "-o", "-L", "--set", "--pset", "--variable",
+    "--output", "--log-file",
+}
+_PSQL_FORMAT_PREFIX = ("-v", "-P", "--set=", "--pset=", "--variable=",
+                       "--output=", "--log-file=")
+# Letters that may appear in combined short flags like ``-Atx``.
+_PSQL_FORMAT_LETTERS = frozenset("XAtqaeEnx")
+
+
+def _psql_display(safe: list[str]) -> list[str]:
+    """Drop formatting flags, keep connection/semantic flags and the SQL."""
+    kept = [safe[0]]
+    index = 1
+    while index < len(safe):
+        arg = safe[index]
+        if arg in _PSQL_FORMAT_FLAGS:
+            index += 1
+        elif arg in _PSQL_FORMAT_FLAGS_ARG:
+            index += 2
+        elif arg.startswith(_PSQL_FORMAT_PREFIX) or (
+                arg.startswith("-") and not arg.startswith("--")
+                and set(arg[1:]) <= _PSQL_FORMAT_LETTERS):
+            index += 1
+        else:
+            kept.append(arg)
+            index += 1
+    return kept
+
+
+def _shell_lines(script: str) -> list[str]:
+    """Split a shell one-liner at unquoted ``;``/``&&``/``||`` boundaries."""
+    lines: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote = ""
+    index = 0
+    while index < len(script):
+        ch = script[index]
+        if quote:
+            buf.append(ch)
+            if ch == quote and script[index - 1] != "\\":
+                quote = ""
+            index += 1
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif script.startswith("$(", index):
+            depth += 1
+            buf.append("$(")
+            index += 2
+            continue
+        elif ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        elif depth == 0 and ch == ";":
+            buf.append(";")
+            lines.append("".join(buf).strip())
+            buf = []
+            index += 1
+            continue
+        buf.append(ch)
+        index += 1
+    tail = "".join(buf).strip()
+    if tail:
+        lines.append(tail)
+    return lines
+
+
+def _indent_shell(lines: list[str]) -> str:
+    indent = 0
+    rendered = []
+    for line in lines:
+        words = line.split()
+        first = words[0].rstrip(";") if words else ""
+        if first in ("done", "fi", "esac", "}", "elif", "else"):
+            indent = max(0, indent - 1)
+        rendered.append("  " * indent + line)
+        if first in ("do", "then", "else", "elif", "case"):
+            indent += 1
+    return "\n".join(rendered)
+
+
+def _format_shell(script: str) -> str:
+    """Reformat a long one-line shell script for review readability."""
+    if "\n" in script or len(script) < 100:
+        return script
+    lines = _shell_lines(script)
+    if len(lines) < 3:
+        return script
+    return _indent_shell(lines)
+
+
+def display_command(argv: list[str], override: str | None = None) -> str:
+    """Human-readable command for report ``执行内容``.
+
+    ``sh -c``/``sh -ec`` wrappers show the inner script verbatim and psql
+    ``-c`` shows the SQL unquoted — the escaped one-liner form is only
+    useful for exact replay and stays in the command evidence JSON.
+    """
+    if override:
+        return _SECRET_DSN.sub(r"\1<redacted>", str(override))
+    safe = safe_argv([str(value) for value in argv])
+    prefix = ""
+    if safe and safe[0] == "env":
+        consumed = ["env"]
+        safe = safe[1:]
+        while safe and "=" in safe[0] and not safe[0].startswith("-"):
+            consumed.append(safe.pop(0))
+        prefix = " ".join(shlex.quote(arg) for arg in consumed) + " "
+
+    def finish(text: str) -> str:
+        return prefix + _SECRET_DSN.sub(r"\1<redacted>", text)
+
+    if len(safe) >= 3 and Path(safe[0]).name in _C_FLAG_WRAPPERS:
+        for index in range(1, len(safe) - 1):
+            flags = safe[index]
+            if flags.startswith("-") and "c" in flags.lstrip("-"):
+                return finish(_format_shell(safe[index + 1]))
+    if len(safe) >= 3 and Path(safe[0]).name == "psql":
+        kept = _psql_display(safe)
+        for flag in ("-c", "--command"):
+            if flag in kept:
+                index = kept.index(flag)
+                if index + 1 < len(kept):
+                    head = " ".join(
+                        shlex.quote(arg) for arg in kept[:index + 1])
+                    tail = kept[index + 1]
+                    extra = (" " + shlex.join(kept[index + 2:])
+                             ) if index + 2 < len(kept) else ""
+                    return finish(f"{head}\n  {tail}{extra}")
+        return finish(" ".join(shlex.quote(arg) for arg in kept))
+    if len(safe) >= 3 and Path(safe[0]).name == "ssh":
+        return finish(f"ssh {safe[-2]} {_format_shell(safe[-1])}")
+    return prefix + shlex.join(safe)
 
 
 class CommandExecutor:
@@ -102,6 +283,9 @@ class CommandExecutor:
                 key + ".json",
                 json.dumps(
                     {
+                        "command": render_command(argv),
+                        "argv": safe_argv(argv),
+                        "cwd": str(cwd) if cwd is not None else None,
                         "stdout": stdout,
                         "stderr": stderr,
                         "error": str(exc),
@@ -119,22 +303,26 @@ class CommandExecutor:
                 exc.partial_stdout = stdout
                 exc.partial_stderr = stderr
             raise
-        result = CommandResult(
-            process.returncode, stdout or "", stderr or "", time.monotonic() - started
-        )
+        duration = time.monotonic() - started
         reference = self.context.attach_text(
             key + ".json",
             json.dumps(
                 {
-                    "returncode": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "duration_seconds": result.duration_seconds,
+                    "command": render_command(argv),
+                    "argv": safe_argv(argv),
+                    "cwd": str(cwd) if cwd is not None else None,
+                    "returncode": process.returncode,
+                    "stdout": stdout or "",
+                    "stderr": stderr or "",
+                    "duration_seconds": duration,
                 },
                 ensure_ascii=False,
                 indent=2,
             )
             + "\n",
+        )
+        result = CommandResult(
+            process.returncode, stdout or "", stderr or "", duration, reference
         )
         self.context.emit(
             "command.finished",

@@ -1,0 +1,9 @@
+import { Card, Empty, Space, Typography } from 'antd';
+import MonitoringTrend from './MonitoringTrend';
+export type DatabaseMetric={node_id:string;baseline:string|null;metrics:Record<string,number|null>};
+type Sample={observed_at:string;database_metrics?:DatabaseMetric[]};
+export default function DatabaseLoadCharts({ current, history, nodeId, recovery }: {current:DatabaseMetric|undefined;history:Sample[];nodeId:string;recovery:boolean|undefined}) {
+  const charts=[['commit_per_second','提交事务速率','tx/s'],['rollback_per_second','回滚事务速率','tx/s'],['active','活动客户端连接','连接'],['idle','空闲客户端连接','连接'],['idle_in_transaction','事务内空闲连接','连接'],['buffer_hit_percent','共享缓冲命中率','%'],['wal_mib_per_second',recovery?'WAL 接收速率':'WAL 产生速率','MiB/s'],['blocked','被阻塞客户端会话','会话'],['long_transactions','超过 60 秒的客户端事务','事务'],['longest_transaction_seconds','最长客户端事务时长','秒'],['temp_mib_per_second','临时文件写入速率','MiB/s'],['deadlocks_per_second','数据库死锁速率','次/s']];
+  if(!current)return <Empty description="尚未获得负载指标" />;
+  return <><Space wrap><Card size="small" title="实例客户端连接"><p>{current.metrics.instance_clients??'不可观测'} / {current.metrics.max_connections??'未知'}</p><Typography.Text type="secondary">上限包含实例保留连接，排除采集连接</Typography.Text></Card><Card size="small" title="当前数据库客户端连接"><p>{current.metrics.database_clients??'不可观测'}</p></Card></Space><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,340px),1fr))',gap:12,marginTop:12}}>{charts.map(([key,label,unit])=><Card key={key} title={label}><MonitoringTrend label={`${nodeId} · ${label}`} unit={unit} points={history.map(s=>{const m=s.database_metrics?.find(x=>x.node_id===nodeId);return {time:s.observed_at,value:m?.baseline===current.baseline?m.metrics[key]??null:null};})} /></Card>)}</div><Typography.Paragraph type="secondary">事务统计可能包含复制应用及监控内部事务，不是去重业务 TPS。无访问量时命中率无样本；共享缓冲命中率不是操作系统缓存命中率。</Typography.Paragraph></>;
+}

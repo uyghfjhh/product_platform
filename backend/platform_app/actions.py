@@ -35,7 +35,7 @@ DEPLOYMENT_ACTIONS = frozenset({
     "deployment.start", "deployment.stop", "deployment.restart",
     "deployment.clean", "deployment.failover", "deployment.rejoin",
     "deployment.lag", "deployment.verify", "deployment.switchover",
-    "deployment.reset", "deployment.restore",
+    "deployment.reset", "deployment.restore", "deployment.change",
 })
 
 
@@ -51,12 +51,15 @@ ACTIONS = {
     item.id: item
     for item in (
         Action("database.check", "检查数据库连接", "database"),
+        Action("workload.pgbench", "运行 pgbench 负载", "workload"),
+        Action("workload.jdbc", "运行 JDBC 负载", "workload"),
         Action("deployment.validate", "校验部署配置", "deployment"),
         Action("deployment.status", "查看部署状态", "deployment"),
         Action("deployment.health", "检查集群健康", "deployment"),
         Action("deployment.doctor", "环境体检", "deployment"),
         Action("deployment.heal", "检查并恢复集群", "deployment", True),
         Action("deployment.create", "创建集群", "deployment", True),
+        Action("deployment.change", "按已审阅计划变更集群", "deployment", True),
         Action("deployment.start", "启动集群", "deployment", True),
         Action("deployment.stop", "停止集群", "deployment", True),
         Action("deployment.restart", "重启集群", "deployment", True),
@@ -88,9 +91,17 @@ def actions_for_environment(environment: dict, settings: Settings) -> list[dict]
     declared = {item.id: item for item in manifest.actions}
     if environment.get("deployment_config") and "deployment" in manifest.capabilities:
         declared.update({item.id: item for item in ACTIONS.values() if item.id in DEPLOYMENT_ACTIONS})
+    if 'database' in manifest.capabilities:
+        declared.update({item.id:item for item in ACTIONS.values() if item.capability=='workload'})
+    def parameter_schema(item):
+        if item.capability == 'workload':
+            from .workloads import WorkloadInput
+            return WorkloadInput.model_json_schema()
+        return (declared[item.id].parameter_schema or {}) if item.id not in ACTIONS else {}
     return [
         {"id": item.id, "title": item.title, "capability": item.capability,
-         "changes_environment": item.changes_environment}
+         "changes_environment": item.changes_environment,
+         "parameter_schema": parameter_schema(item)}
         for item in (declared[action_id] for action_id in sorted(declared))
     ]
 
@@ -346,6 +357,8 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
                 success, reason = True, "连接正常"
             else:
                 emit_configured_scene(store, settings, task_id, environment)
+                if action.capability == 'workload':
+                    parameters['_workload_task_id'] = task_id
                 command, cwd = command_for_task(
                     settings, environment, task["action"], task["target"], parameters
                 )
@@ -363,7 +376,7 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
                 except Exception:
                     emit_action(store, task_id, environment, action.id, task["target"], "finished")
                     raise
-                if success and parameters.get("_deployment_snapshot") and action.id == "deployment.create":
+                if success and parameters.get("_deployment_snapshot") and action.id in {"deployment.create", "deployment.change"}:
                     store.tasks.add_event(task_id, "step.started", {"title": "部署后健康验收"})
                     health_command, health_cwd = command_for_task(settings, environment, "deployment.health", task["target"], {})
                     success, health_reason = _run_command(store, task_id, health_command, health_cwd, False)
@@ -374,6 +387,9 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
                     after_command(store, settings, environment, task_id, action.id, success)
                 if action.id.startswith("deployment.") and action.id != "deployment.validate":
                     emit_pgcluster_status(store, settings, task_id, environment)
+                if action.capability == 'workload':
+                    from .workloads import publish
+                    publish(store,settings,environment,task_id,success)
         execution_finished = True
         current = store.tasks.get_task(task_id)
         if current and current["cancel_requested"]:
@@ -381,7 +397,7 @@ def run_task(store: FileStore, settings: Settings, task_id: str) -> None:
                 "RECOVERY_REQUIRED" if action.changes_environment else "CANCELLED"
             )
         else:
-            terminal = "SUCCEEDED" if success else "FAILED"
+            terminal = "SUCCEEDED" if success else ("RECOVERY_REQUIRED" if action.id == "deployment.change" else "FAILED")
 
         # Publish the current result before the task becomes terminal. Readers
         # should never observe "finished" while still seeing the prior result.

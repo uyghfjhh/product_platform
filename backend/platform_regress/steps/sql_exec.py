@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from ..commands import display_command
 from ..engine import CaseContext
 from .base import (_NULL_TOKEN, _SQLSTATE, DEFAULT_COMMAND_TIMEOUT,
                    StepExecutionResult, _parse_csv, _render_aligned, step_user)
@@ -55,6 +56,7 @@ def execute_psql(context: CaseContext, node: str, sql: str, *,
     effective_timeout = timeout if timeout is not None else DEFAULT_COMMAND_TIMEOUT
     if command is not None:
         argv = command
+    result = None
     try:
         result = context.command(argv, timeout_seconds=effective_timeout,
                                  merge_stderr=True)
@@ -77,9 +79,11 @@ def execute_psql(context: CaseContext, node: str, sql: str, *,
             columns, rows = [], []
     return StepExecutionResult(
         returncode, output=output, display_output=display, command=argv,
+        display_command=display_command(argv),
         columns=columns, rows=rows,
         sqlstate=match.group(1) if match else None,
-        error_message=match.group(2).strip() if match else None)
+        error_message=match.group(2).strip() if match else None,
+        evidence=getattr(result, "evidence", None))
 
 
 def _sql_execution(context: CaseContext, step: dict[str, Any],
@@ -89,6 +93,7 @@ def _sql_execution(context: CaseContext, step: dict[str, Any],
     assertion = step.get("assertion") or {}
     structured = assertion.get("type") in {
         "rows_equal", "rows_with_output_contains", "query_equals", "scalar_equals",
+        "scalar_integer",
     }
     connection = step.get("connection") or (definition or {}).get("connection")
     if connection:

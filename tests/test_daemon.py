@@ -149,7 +149,6 @@ class ManagedDaemonTest(unittest.TestCase):
 
     def test_recycled_pid_in_pid_file_is_not_killed(self):
         """A stale pid file pointing at a reused PID must not be SIGTERMed."""
-        import os
         import subprocess
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

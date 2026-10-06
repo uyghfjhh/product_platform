@@ -1,10 +1,11 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Badge, Button, Empty, Select, Space, Typography } from 'antd';
-import { CompressOutlined, ExpandOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CompressOutlined, ExpandOutlined, ReloadOutlined } from '@ant-design/icons';
 
 import { api, type Environment } from '../platform/api';
 import type { TopologyNode } from '../platform/topology';
 import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
+import StudioOperations from '../components/StudioOperations';
 
 const StudioPanel = lazy(() => import('../components/StudioPanel'));
 type Props = {
@@ -12,6 +13,8 @@ type Props = {
   environments?: Environment[];
   onSelectEnvironment?: (id: string) => void;
   initialNodeId?: string;
+  onSelectNode?: (id: string) => void;
+  onBackToDeployment?: () => void;
 };
 type NodeStatus = Record<string, { running: boolean | null }>;
 
@@ -19,7 +22,7 @@ function resetStudioNavigation() {
   window.history.replaceState(null, '', window.location.pathname + window.location.search);
 }
 
-export default function DatabasePage({ environment, environments = [], onSelectEnvironment, initialNodeId }: Props) {
+export default function DatabasePage({ environment, environments = [], onSelectEnvironment, initialNodeId, onSelectNode, onBackToDeployment }: Props) {
   const [nodes, setNodes] = useState<TopologyNode[]>([]);
   const [status, setStatus] = useState<NodeStatus>({});
   const [selection, setSelection] = useState({ environmentId: '', nodeId: '' });
@@ -63,9 +66,21 @@ export default function DatabasePage({ environment, environments = [], onSelectE
     <div className="database-manager">
       <div className={`database-studio${fullscreen ? ' database-studio-fullscreen' : ''}`}>
         <header className="database-studio-toolbar">
-          <div className="database-studio-heading">
-            <Typography.Title level={3}>数据库管理</Typography.Title>
-            {environment && <Typography.Text type="secondary">{environment.database_name} · {environment.database_user}</Typography.Text>}
+          <div className="database-studio-heading" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {onBackToDeployment && (
+              <Button
+                type="link"
+                icon={<ArrowLeftOutlined />}
+                onClick={onBackToDeployment}
+                style={{ padding: '0 4px', fontSize: 13, display: 'inline-flex', alignItems: 'center', color: 'var(--accent, #38bdf8)' }}
+              >
+                返回集群拓扑
+              </Button>
+            )}
+            <div>
+              <Typography.Title level={3} style={{ margin: 0 }}>数据库管理</Typography.Title>
+              {environment && <Typography.Text type="secondary">{environment.database_name} · {environment.database_user}</Typography.Text>}
+            </div>
           </div>
           <div className="database-studio-controls">
             <Select aria-label="选择数据库环境" placeholder="选择数据库环境" value={environment?.id}
@@ -73,7 +88,12 @@ export default function DatabasePage({ environment, environments = [], onSelectE
               onChange={(id) => { resetStudioNavigation(); onSelectEnvironment?.(id); }} />
             <Select aria-label="选择目标实例" placeholder="选择目标实例" value={environment ? nodeId : undefined}
               disabled={!environment} options={targetOptions}
-              onChange={(id) => { resetStudioNavigation(); setSelection({ environmentId: environment!.id, nodeId: id }); }} />
+              onChange={(id) => { resetStudioNavigation(); setSelection({ environmentId: environment!.id, nodeId: id }); onSelectNode?.(id); }} />
+            {environment && (
+              <StudioOperations
+                url={`/environments/${encodeURIComponent(environment.id)}/studio${nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : ''}`}
+              />
+            )}
             <Button aria-label="刷新数据库工作区" icon={<ReloadOutlined />} disabled={!environment}
               onClick={() => setRevision((value) => value + 1)} />
             <Button icon={fullscreen ? <CompressOutlined /> : <ExpandOutlined />}
