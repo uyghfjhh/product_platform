@@ -115,7 +115,8 @@ export const StepList: React.FC<StepListProps> = ({
         <Empty description="没有匹配条件的步骤" style={{ margin: '24px 0' }} />
       ) : (
         filteredSteps.map((step) => (
-          <StepCard key={`${step.key}-${allExpanded}`} step={step} defaultExpanded={allExpanded}
+          <StepCard key={`${step.key}-${allExpanded}`} step={step}
+            defaultExpanded={allExpanded && step.kind !== 'action'}
             evidenceBasePath={evidenceBasePath} />
         ))
       )}

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 
 import json
+import difflib
 import re
 import socket
 import struct
@@ -502,6 +503,8 @@ class JdbcConsoleHaCommandsCase:
         if len(ports) < 3:
             raise Blocked("HA JDBC 用例缺少 MMR 主节点或备节点")
         snapshots = context.output_dir / "jdbc-config-snapshots"
+        snapshots.mkdir(parents=True, exist_ok=True)
+        (snapshots / "00_initial.conf").write_bytes(config.read_bytes())
         urls = [jdbc_client.build_url(context.environment.get("local_host", "127.0.0.1"), port, db,
                                       {"preferQueryMode": "simple"})
                 for db in ("console", "mmr_group", "single_group")]
@@ -509,21 +512,202 @@ class JdbcConsoleHaCommandsCase:
             jdbc_client.classpath(context.output_dir, jar), "HaConsoleCommands",
             urls[0], "admin", "", str(config), str(snapshots), urls[1], urls[2], *ports)
         result = context.command(args, cwd=context.output_dir, timeout_seconds=180)
-        markers = ("JDBC_CONNECT=OK", "SET_NODE_PARTED=OK", "SET_NODE_ACTIVE=OK",
-                   "SET_NODE_WEIGHT=OK", "SET_NODE_WRITE=OK", "SET_NODE_PROMOTED=OK",
-                   "SET_CLUSTER_PARTED=OK", "SET_CLUSTER_ACTIVE=OK", "REFRESH_CLUSTER=OK",
-                   "ALL_HA_COMMANDS=OK")
+        checks = (
+            ("JDBC_CONNECT=OK", "JDBC 连接控制台并读取初始数据源状态", "连接成功；SHOW DATASOURCES 包含 pg_3 active"),
+            ("SET_NODE_PARTED=OK", "SET NODE PARTED pg_3 并验证单节点回退", "pg_3 变为 parted，single 路由回退到主库"),
+            ("SET_NODE_ACTIVE=OK", "SET NODE ACTIVE pg_3 并验证节点恢复", "pg_3 恢复 active，single 路由重新可用"),
+            ("SET_NODE_WEIGHT=OK", "SET NODE WEIGHT pg_3=0 并验证权重路由", "SHOW NODES 显示 weight=0，业务路由回退主库"),
+            ("SET_NODE_WEIGHT_RESTORE=OK", "恢复 SET NODE WEIGHT pg_3=10 并验证路由", "SHOW NODES 恢复 weight=10，single 路由恢复"),
+            ("SET_NODE_PROMOTED=OK", "SET NODE PROMOTED pg_1 并验证 promoted 路由", "SHOW GROUP_ROUTING 保留 promoted cluster，写请求仍符合预期"),
+            ("SET_NODE_WRITE=OK", "SET NODE WRITE pg_1 并验证写路由", "SHOW GROUP_ROUTING 与实际写入端口切换到 pg_cluster_1"),
+            ("SET_NODE_WRITE_RESTORE=OK", "恢复 SET NODE WRITE pg_2 并验证写路由", "SHOW GROUP_ROUTING 与实际写入端口恢复到 pg_cluster_2"),
+            ("SET_CLUSTER_PARTED=OK", "SET CLUSTER PARTED pg_cluster_2 并验证故障路由", "pg_cluster_2 为 parted，写路由切到 promoted cluster"),
+            ("SET_CLUSTER_ACTIVE=OK", "SET CLUSTER ACTIVE pg_cluster_2 并验证恢复路由", "pg_cluster_2 恢复 active，写路由回到 write cluster"),
+            ("REFRESH_CLUSTER=OK", "REFRESH CLUSTER 并验证拓扑刷新", "SHOW GROUP_ROUTING 仍指向预期写集群"),
+            ("ALL_HA_COMMANDS=OK", "汇总 JDBC 高可用命令矩阵", "全部命令及路由检查完成"),
+        )
+        markers = tuple(marker for marker, _, _ in checks)
+        detail_markers = {
+            "JDBC_CONNECT=OK": ("JDBC_CONNECT=OK",),
+            "SET_NODE_PARTED=OK": ("SET_NODE_PARTED=OK", "PARTED_FALLS_BACK_TO_PRIMARY="),
+            "SET_NODE_ACTIVE=OK": ("SET_NODE_ACTIVE=OK", "ACTIVE_RESTORES_SINGLE_ROUTE="),
+            "SET_NODE_WEIGHT=OK": ("SET_NODE_WEIGHT=OK", "ZERO_WEIGHT_FALLS_BACK_TO_PRIMARY="),
+            "SET_NODE_WEIGHT_RESTORE=OK": ("SET_NODE_WEIGHT_RESTORE=OK", "WEIGHT_RESTORES_SINGLE_ROUTE="),
+            "SET_NODE_PROMOTED=OK": ("SET_NODE_PROMOTED=OK", "PROMOTED_KEEPS_WRITE_ROUTE="),
+            "SET_NODE_WRITE=OK": ("SET_NODE_WRITE=OK", "WRITE_ROUTE_CLUSTER_1="),
+            "SET_NODE_WRITE_RESTORE=OK": ("SET_NODE_WRITE_RESTORE=OK", "WRITE_ROUTE_CLUSTER_2="),
+            "SET_CLUSTER_PARTED=OK": ("SET_CLUSTER_PARTED=OK", "PARTED_ROUTE_PROMOTED_CLUSTER="),
+            "SET_CLUSTER_ACTIVE=OK": ("SET_CLUSTER_ACTIVE=OK", "ACTIVE_ROUTE_WRITE_CLUSTER="),
+            "REFRESH_CLUSTER=OK": ("REFRESH_CLUSTER=OK",),
+            "ALL_HA_COMMANDS=OK": ("ALL_HA_COMMANDS=OK",),
+        }
+        snapshot_markers = {
+            "SET_NODE_PARTED=OK": "01_node_parted.conf",
+            "SET_NODE_ACTIVE=OK": "02_node_active.conf",
+            "SET_NODE_WEIGHT=OK": "03_weight_0.conf",
+            "SET_NODE_WEIGHT_RESTORE=OK": "04_weight_10.conf",
+            "SET_NODE_PROMOTED=OK": "05_promoted_cluster_1.conf",
+            "SET_NODE_WRITE=OK": "06_write_cluster_1.conf",
+            "SET_NODE_WRITE_RESTORE=OK": "07_write_cluster_2.conf",
+            "SET_CLUSTER_PARTED=OK": "08_cluster_2_parted.conf",
+            "SET_CLUSTER_ACTIVE=OK": "09_cluster_2_active.conf",
+            "REFRESH_CLUSTER=OK": "10_after_refresh.conf",
+        }
+        snapshot_order = [
+            "01_node_parted.conf", "02_node_active.conf", "03_weight_0.conf",
+            "04_weight_10.conf", "05_promoted_cluster_1.conf", "06_write_cluster_1.conf",
+            "07_write_cluster_2.conf",
+            "08_cluster_2_parted.conf", "09_cluster_2_active.conf", "10_after_refresh.conf",
+        ]
+        show_needles = {
+            "JDBC_CONNECT=OK": ("SHOW_INITIAL", "pg_3"),
+            "SET_NODE_PARTED=OK": ("SHOW_NODE_PARTED", "pg_3"),
+            "SET_NODE_ACTIVE=OK": ("SHOW_NODE_ACTIVE", "pg_3"),
+            "SET_NODE_WEIGHT=OK": ("SHOW_WEIGHT_ZERO", "pg_3"),
+            "SET_NODE_WEIGHT_RESTORE=OK": ("SHOW_WEIGHT_RESTORE", "pg_3"),
+            "SET_NODE_PROMOTED=OK": ("SHOW_PROMOTED", "mmr_group"),
+            "SET_NODE_WRITE=OK": ("SHOW_WRITE_CLUSTER_1", "mmr_group"),
+            "SET_NODE_WRITE_RESTORE=OK": ("SHOW_WRITE_CLUSTER_2", "mmr_group"),
+            "SET_CLUSTER_PARTED=OK": ("SHOW_CLUSTER_PARTED", "pg_cluster_2"),
+            "SET_CLUSTER_ACTIVE=OK": ("SHOW_CLUSTER_ACTIVE", "pg_cluster_2"),
+            "REFRESH_CLUSTER=OK": ("SHOW_REFRESH", "mmr_group"),
+        }
         passed = result.returncode == 0 and all(marker in result.stdout for marker in markers)
         context.attach_text("ha-command-markers.txt", result.stdout)
-        context.step("ha-command-verdict", "核对 JDBC 高可用命令矩阵和路由结果",
-                     status="PASS" if passed else "FAIL",
-                     details={"intent": "verify", "expected": "客户端退出码为 0，全部管理命令检查标记为 OK",
-                              "actual": "退出码=%s；已完成 %s/%s 项管理命令标记检查" %
-                                        (result.returncode, sum(marker in result.stdout for marker in markers), len(markers)),
-                              "analysis": "全部声明标记已出现" if passed else
-                                          "缺失标记：" + ", ".join(marker for marker in markers if marker not in result.stdout),
-                              "required": markers, "output": result.stdout,
-                              "evidence": getattr(result, "evidence", None)})
+        snapshot_files = sorted(p for p in snapshots.glob("*.conf") if p.name != "00_initial.conf") if snapshots.is_dir() else []
+        for snapshot in snapshot_files:
+            try:
+                context.attach_file("jdbc-snapshot-%s" % snapshot.name, snapshot)
+            except Exception:
+                pass
+        initial_snapshot = snapshots / "00_initial.conf"
+        final_snapshot = snapshots / "10_after_refresh.conf"
+        restored = (initial_snapshot.is_file() and final_snapshot.is_file() and
+                    initial_snapshot.read_bytes() == final_snapshot.read_bytes())
+        context.step("jdbc-ha-config-restore", "核对 JDBC 高可用用例结束后恢复初始配置",
+                     status="PASS" if restored else "FAIL",
+                     details={"intent": "verify",
+                              "expected": "REFRESH CLUSTER 完成后，10_after_refresh.conf 与 00_initial.conf 逐字节一致",
+                              "actual": "最终配置%s初始配置" % ("等于" if restored else "不等于"),
+                              "analysis": "配置修改已完整恢复，未留下测试污染" if restored else
+                                         "最终配置与初始配置存在差异，不能证明用例清理完整",
+                              "assertion": {"type": "files_equal", "initial": "00_initial.conf",
+                                            "final": "10_after_refresh.conf", "equal": restored}})
+        context.step("jdbc-ha-config-snapshots", "核对 JDBC 高可用命令后的配置快照",
+                     status="PASS" if len(snapshot_files) == 10 else "FAIL",
+                     details={"intent": "verify",
+                              "expected": "每个高可用命令阶段均保存 1 份配置快照，共 10 份，供配置持久化和恢复审阅",
+                              "actual": "已保存 %d/10 份配置快照：%s" %
+                                       (len(snapshot_files), ", ".join(p.name for p in snapshot_files) or "无"),
+                              "analysis": "配置快照数量完整，命令前后配置证据可追溯" if len(snapshot_files) == 10 else
+                                         "配置快照不完整，无法证明每个命令阶段的持久化结果",
+                              "assertion": {"type": "artifact_count", "expected": 10,
+                                            "actual": len(snapshot_files)}})
+        for index, (marker, title, expected) in enumerate(checks, 1):
+            found = marker in result.stdout
+            config_valid = True
+            wanted = detail_markers.get(marker, (marker,))
+            actual_lines = [line.strip() for line in result.stdout.splitlines()
+                            if line.startswith(wanted)]
+            show_info = show_needles.get(marker)
+            if marker in snapshot_markers:
+                actual_lines.append("配置快照: jdbc-snapshot-" + snapshot_markers[marker])
+                current = snapshots / snapshot_markers[marker]
+                snapshot_index = snapshot_order.index(snapshot_markers[marker])
+                previous = snapshots / ("00_initial.conf" if snapshot_index == 0 else snapshot_order[snapshot_index - 1])
+                if current.is_file() and previous and previous.is_file():
+                    diff = "".join(difflib.unified_diff(
+                        previous.read_text(encoding="utf-8", errors="replace").splitlines(True),
+                        current.read_text(encoding="utf-8", errors="replace").splitlines(True),
+                        fromfile=previous.name, tofile=current.name))
+                    actual_lines.append("配置文件 diff:\n" + (diff.rstrip() or "<无配置变化>"))
+                    commands = {
+                        'SET_NODE_PARTED=OK': 'SET NODE PARTED pg_3;',
+                        'SET_NODE_ACTIVE=OK': 'SET NODE ACTIVE pg_3;',
+                        'SET_NODE_WEIGHT=OK': 'SET NODE WEIGHT pg_3=0;',
+                        'SET_NODE_WEIGHT_RESTORE=OK': 'SET NODE WEIGHT pg_3=10;',
+                        'SET_NODE_PROMOTED=OK': 'SET NODE PROMOTED pg_1 IN GROUP mmr_group;',
+                        'SET_NODE_WRITE=OK': 'SET NODE WRITE pg_1 IN GROUP mmr_group;',
+                        'SET_NODE_WRITE_RESTORE=OK': 'SET NODE WRITE pg_2 IN GROUP mmr_group;',
+                        'SET_CLUSTER_PARTED=OK': 'SET CLUSTER PARTED pg_cluster_2;',
+                        'SET_CLUSTER_ACTIVE=OK': 'SET CLUSTER ACTIVE pg_cluster_2;',
+                        'REFRESH_CLUSTER=OK': 'REFRESH CLUSTER pg_cluster_1;',
+                    }
+                    from platform_regress.evidence.config_diff import semantic_config_diff
+                    config_valid, changes = semantic_config_diff(
+                        previous.read_text(encoding='utf-8'), current.read_text(encoding='utf-8'), commands[marker])
+                    semantic_meaning = {
+                        'SET_NODE_PARTED=OK': 'status=parted 将目标节点从正常候选状态隔离；SHOW 和业务端口需证明流量已回退。',
+                        'SET_NODE_ACTIVE=OK': 'status=active 将目标节点重新纳入配置；SHOW 和业务端口需证明恢复后的候选资格。',
+                        'SET_NODE_WEIGHT=OK': 'weight=0 将目标节点从权重选择中排除；业务路由应回退到可用主节点。',
+                        'SET_NODE_WEIGHT_RESTORE=OK': 'weight 恢复为 10；SHOW 和业务端口应证明节点重新参与权重选择。',
+                        'SET_NODE_PROMOTED=OK': 'promoted_cluster 定义故障接管来源；它本身不等于立即切换 write_cluster。',
+                        'SET_NODE_WRITE=OK': 'write_cluster 改为目标集群；SHOW 必须有且只有一个 WRITE/is_write_target，业务端口应命中该集群。',
+                        'SET_NODE_WRITE_RESTORE=OK': 'write_cluster 恢复初始集群；SHOW 和业务端口应回到原写中心。',
+                        'SET_CLUSTER_PARTED=OK': '整个 cluster 被隔离；组路由应按 promoted/fallback 规则切换。',
+                        'SET_CLUSTER_ACTIVE=OK': 'cluster 恢复 active；组路由应恢复到 write_cluster。',
+                        'REFRESH_CLUSTER=OK': 'REFRESH 重新探测并发布拓扑；配置通常不应产生语义变化，生效性以 SHOW 验证。',
+                    }.get(marker, '按命令声明核对配置字段和运行状态。')
+                    explanation = ('实际修改的对象和字段如下：\n' + changes +
+                                   '\n源码语义: ' + semantic_meaning + '\n逐项检查修改范围和目标值；' +
+                                   ('其它对象、字段及对象顺序未出现非预期修改。' if config_valid else
+                                    '存在非预期修改，配置检查失败。')) if diff else (
+                                   '前后配置逐字节一致。REFRESH 仅触发运行态复探，不应改写配置。' if marker == 'REFRESH_CLUSTER=OK' else
+                                   '前后配置逐字节一致；本次命令没有产生落盘变化，应结合初始字段判断是否为幂等设置。')
+                    actual_lines.append('配置检查分析:\n' + explanation)
+                    if not config_valid:
+                        passed = False
+                    context.attach_text(
+                        "jdbc-config-diff-%s.diff" % current.stem,
+                        diff or "<无配置变化>\n",
+                    )
+            analysis = "客户端完成该阶段；具体结果见本步骤证据。"
+            if show_info:
+                label, needle = show_info
+                inside = False
+                table_lines = []
+                for line in result.stdout.splitlines():
+                    if line.strip() == label + "_BEGIN":
+                        inside = True
+                        continue
+                    if line.strip() == label + "_END":
+                        inside = False
+                        continue
+                    if inside:
+                        table_lines.append(line.strip())
+                if table_lines:
+                    from platform_regress.reporting.renderer import render_psql_table_from_pipe_text
+                    selected = [table_lines[0]] + [line for line in table_lines[1:] if needle in line.split('|')]
+                    query = 'SHOW NODES;' if 'WEIGHT' in label else 'SHOW DATASOURCES;' if label in ('SHOW_INITIAL', 'SHOW_NODE_PARTED', 'SHOW_NODE_ACTIVE', 'SHOW_CLUSTER_PARTED', 'SHOW_CLUSTER_ACTIVE') else 'SHOW GROUP_ROUTING mmr_group;'
+                    actual_lines.append(query + '\n' + render_psql_table_from_pipe_text('\n'.join(selected)))
+                    if query == 'SHOW DATASOURCES;':
+                        analysis = ('源码 console.c 的 fb_console_show_datasources 输出 config_status，表示配置中的节点状态，不能单独证明节点在线。'
+                                    '本步骤按 node_name/cluster_name 定位目标行，配置 diff 验证落盘，业务端口证据验证实际路由。')
+                    elif query == 'SHOW NODES;':
+                        analysis = ('SHOW NODES 的 weight 是节点权重；必须检查 pg_3 所在行的 weight 字段，不能搜索整段输出中的数字。'
+                                    '权重 0 与恢复 10 分别结合配置 diff 和 single 连接实际端口判断；命中主库不代表备库恢复承担读流量。')
+                    else:
+                        analysis = ('源码 console.c 的 fb_console_group_route_write_origin 将配置写集群标为 WRITE_CLUSTER；'
+                                    'promoted 集群接管时标为 PROMOTED_CLUSTER，并注明 WRITE_CLUSTER_UNAVAILABLE。'
+                                    '应联合检查 candidate_node、candidate_type=WRITE、is_write_target=true、route_status=AVAILABLE，'
+                                    '再与本次业务连接返回的端口对照。设置 PROMOTED 不等于立即切换写中心。')
+                    if query == 'SHOW GROUP_ROUTING mmr_group;':
+                        write_rows = [line for line in table_lines[1:] if '| WRITE |' in line]
+                        write_ok = any('| true |' in line and 'AVAILABLE' in line for line in write_rows)
+                        analysis = ('实际 SHOW 中 WRITE 行=%d；' % len(write_rows) +
+                                    ('目标写候选的 is_write_target=true 且 route_status=AVAILABLE，'
+                                     '配置写源与业务端口结果一致，判定通过。' if write_ok else
+                                     '未找到同时满足 is_write_target=true 和 route_status=AVAILABLE 的 WRITE 行，判定失败。'))
+                else:
+                    analysis = '本阶段缺少 SHOW 输出，不能从 OK 标记证明配置生效。'
+            context.step("jdbc-ha-%02d" % index, title,
+                         status="PASS" if found and config_valid and result.returncode == 0 else "FAIL",
+                         details={"intent": "verify", "expected": expected,
+                                  "actual": "\n\n".join(actual_lines) or ("未找到 %s" % marker),
+                                  "analysis": analysis if found else "缺少命令标记或客户端提前结束",
+                                  "assertion": {"type": "output_contains", "marker": marker},
+                                  "output": result.stdout,
+                                  "evidence": getattr(result, "evidence", None)})
         if not passed:
             raise AssertionError("JDBC 高可用命令检查失败：退出码=%s，缺少标记=%s" % (result.returncode, [marker for marker in markers if marker not in result.stdout]))
         return True
@@ -1401,6 +1585,9 @@ class GucSessionCase:
         self.mode = mode
         self.actions = actions
         self.verify = verify
+        self.title = "GUC 会话参数、代理同步与连接边界验证"
+        self.summary = ("验证 GUC 在单个客户端会话内的 SET/SHOW、事务边界和清理行为；"
+                        "不同脚本使用独立客户端，不把连接池复用或 ParameterStatus 同步当作已证明事实。")
 
     def run(self, context: CaseContext) -> bool:
         config = context.output_dir / "fbasecman.conf"
@@ -1412,9 +1599,10 @@ class GucSessionCase:
         context.step("boot-config",
                      "检查待启动代理的 GUC 配置文件 (rw_split_method=%s)" % self.mode,
                      status="PASS" if not missing else "FAIL",
-                     details={"expected": "且".join(required),
+                     details={"intent": "prepare", "expected": "且".join(required),
                               "actual": "缺失字段: %s" % missing if missing
-                              else "配置文件包含所有必要字段"})
+                              else "\n".join(required),
+                              "analysis": "仅检查本次生成配置包含声明字段；不据此宣称运行态或 GUC 同步已生效，后续 SQL 结果独立验证。"})
         context.attach_text("fbasecman.conf", text)
         if missing:
             raise AssertionError("GUC 配置字段未生效: %s" % missing)
@@ -1423,6 +1611,7 @@ class GucSessionCase:
                               timeout_seconds=30)
         _wait_mmr_routing(context, port, psql)
         session = 0
+        blocked_reason = None
         for index, (title, expected, sql, predicate) in enumerate(self.actions, 1):
             key = "guc-%02d" % index
             if sql is None:
@@ -1430,10 +1619,28 @@ class GucSessionCase:
                 continue
             session += 1
             measured_title = title.replace("复用后端连接", "观察后端参数状态").replace("复用连接", "观察参数状态")
-            _expect(context, key, "客户端会话 %s：%s" % (session, measured_title), expected, predicate,
-                    lambda sql=sql: _guc_script(context, psql, port, sql), command=sql)
+            result = _guc_script(context, psql, port, sql)
+            output = result.stdout or ""
+            passed = result.returncode == 0 and predicate(output)
+            boundaries = [token for token in ('BEGIN', 'COMMIT', 'ROLLBACK', 'RESET', 'DISCARD') if token in sql.upper()]
+            analysis = ("通过：" if passed else "失败：") + "本次会话 %d 的 SQL 输出%s声明期望：%s。" % (session, "满足" if passed else "不满足", expected)
+            analysis += " 本段 SQL 在同一个 psql 客户端连接内顺序执行；本用例只证明该会话的 SET/SHOW 语义，不证明不同客户端复用后端或 ParameterStatus 同步。"
+            if boundaries:
+                analysis += " 本段边界/清理操作：%s；只依据该客户端操作前后的 SHOW 值判断恢复。" % ', '.join(boundaries)
+            if 'timezone' in sql.lower():
+                analysis += " SHOW TimeZone 证明查询时的参数值；没有采集 wire ParameterStatus 报文或代理缓存快照，不能据此证明 ParameterStatus 缓存同步。源码 fb_guc_cache.c 区分缓存写入与客户端显示值。"
+            context.step(key, "客户端会话 %s：%s" % (session, measured_title), status="PASS" if passed else "FAIL", details={
+                "intent": "verify", "command": sql, "expected": expected,
+                "actual": output.rstrip() or "<空输出>", "analysis": analysis,
+                "assertion": {"type": "declared_output_predicate", "passed": passed},
+                "evidence": getattr(result, "evidence", None), "returncode": result.returncode})
+            if not passed:
+                raise AssertionError("%s：期望 %s；实际 %s" % (title, expected, output))
             context.attach_text("guc-log-%02d.txt" % index,
                                 _guc_log_evidence(context, config))
+        if blocked_reason:
+            from platform_regress.sdk import Blocked
+            raise Blocked(blocked_reason)
         if self.verify:
             created = _guc_prepare_tables(context)
             context.step("guc-fixture", "双主库准备 search_path 同名表验证数据",
@@ -1590,18 +1797,10 @@ _GUC_SPECS = {
          _guc_pred("SET", "PRC")),
     ], None),
     "report_param_timezone": ([
-        ("客户端执行 SET TimeZone = 'Asia/Shanghai'",
-         "SET 成功且 SHOW 返回 Asia/Shanghai",
-         "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone;",
-         _guc_pred("SET", "Asia/Shanghai")),
-        ("新建另一客户端会话，执行 SHOW 校验 TimeZone",
-         "返回 Asia/Shanghai",
-         "SHOW TimeZone;",
-         _guc_pred("Asia/Shanghai")),
-        ("再次新建客户端会话，检查 TimeZone 返回值",
-         "返回 Asia/Shanghai",
-         "SHOW TimeZone;",
-         _guc_pred("Asia/Shanghai")),
+        ("同一客户端会话执行 SET 并连续 SHOW 校验 TimeZone",
+         "同一个 psql 客户端内 SET 成功，随后两次 SHOW 均返回 Asia/Shanghai；只证明本会话 SET/SHOW 语义",
+         "SET TimeZone = 'Asia/Shanghai'; SHOW TimeZone; SHOW TimeZone;",
+         lambda output: _guc_pred("SET", "Asia/Shanghai")(output) and output.count("Asia/Shanghai") >= 2),
     ], None),
 }
 

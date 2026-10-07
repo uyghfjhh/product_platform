@@ -21,6 +21,7 @@ interface StepCardProps {
 export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true, evidenceBasePath }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [showRawTable, setShowRawTable] = useState(false);
+  const [showAllRows, setShowAllRows] = useState(false);
   const [logExpanded, setLogExpanded] = useState(true);
   const [techOpen, setTechOpen] = useState(false);
 
@@ -122,7 +123,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
               {step.expected && (
                 <div className="step-expected-card">
                   <div className="step-section-label expected">
-                    <span>🎯 关键期望 (Expected Criteria)</span>
+                    <span>🎯 关键期望</span>
                   </div>
                   <div className="step-expected-content">{step.expected}</div>
                 </div>
@@ -133,7 +134,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                 <div className="step-actual-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div className="step-section-label actual">
-                      <span>📊 实际输出 (Actual Payload)</span>
+                      <span>📊 实际结果</span>
                     </div>
                     {step.actualPayload.parsedTable && (
                       <Button
@@ -160,7 +161,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                           </tr>
                         </thead>
                         <tbody>
-                          {step.actualPayload.parsedTable.rows.map((row, ri) => (
+                          {step.actualPayload.parsedTable.rows.slice(0, showAllRows ? undefined : 8).map((row, ri) => (
                             <tr key={ri}>
                               {row.map((col, ci) => (
                                 <td key={ci}>{col}</td>
@@ -171,6 +172,11 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                       </table>
                       {step.actualPayload.parsedTable.footer && (
                         <div className="step-table-footer">{step.actualPayload.parsedTable.footer}</div>
+                      )}
+                      {step.actualPayload.parsedTable.rows.length > 8 && (
+                        <Button type="link" size="small" onClick={() => setShowAllRows(!showAllRows)}>
+                          {showAllRows ? '收起多余行' : `展开全部 ${step.actualPayload.parsedTable.rows.length} 行`}
+                        </Button>
                       )}
                     </div>
                   ) : (
@@ -193,7 +199,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                     step.actualSummary !== step.actualPayload?.raw)) && (
                 <div className="step-verdict-card">
                   <div className="step-section-label verdict">
-                    <span>� 断言判定 (Assertion Verdict)</span>
+                    <span>✅ 判定依据</span>
                   </div>
                   <div className="step-verdict-lines">
                     {step.actualSummary.split('\n').map((line, i) => {
@@ -209,14 +215,6 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
             </div>
           )}
 
-          {step.analysis && (
-            <div className="step-analysis-card single">
-              <div>
-                <div className="step-section-label verdict">结果分析</div>
-                <div className={isPass ? 'analysis-pass' : 'analysis-fail'}>{step.analysis}</div>
-              </div>
-            </div>
-          )}
 
           {/* 配置比对步骤专用：Diff 视图 (Diff Workbench) */}
           {step.kind === 'diff' && step.actualPayload && (
@@ -235,7 +233,7 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
               {step.actualPayload.semanticChanges && step.actualPayload.semanticChanges.length > 0 && (
                 <div>
                   <div className="step-section-label" style={{ color: '#fbbf24' }}>
-                    <span>⚡ 识别到的语义变更 (Semantic Changes)</span>
+                    <span>⚡ 语义变更</span>
                   </div>
                   <div className="step-semantic-tags">
                     {step.actualPayload.semanticChanges.map((sc, i) => (
@@ -279,6 +277,15 @@ export const StepCard: React.FC<StepCardProps> = ({ step, defaultExpanded = true
                     );
                   })}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {step.analysis && (
+            <div className="step-analysis-card single">
+              <div>
+                <div className="step-section-label verdict">检查分析</div>
+                <div className={isPass ? 'analysis-pass' : 'analysis-fail'}>{step.analysis}</div>
               </div>
             </div>
           )}

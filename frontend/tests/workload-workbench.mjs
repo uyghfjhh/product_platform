@@ -14,7 +14,12 @@ try {
   await page.goto(base + '/?page=stability:fbasecman&env=workload-browser');
   await page.getByRole('heading', { name: '工作负载库', exact: true }).waitFor();
   assert.equal(await page.getByRole('checkbox', { name: '选择 连接与轻查询', exact: true }).isChecked(), true);
+  assert.equal(await page.locator('.wb-library-row:visible').count(), 4);
+  await page.locator('.wb-group-label').filter({ hasText: '产品常稳' }).click();
   assert.equal(await page.getByRole('checkbox', { name: '选择 MMR hint 长连接读写切换', exact: true }).isDisabled(), true);
+  await page.locator('.wb-group-label').filter({ hasText: '产品常稳' }).click();
+  await page.locator('.wb-library-row.unavailable').first().waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.wb-library-row:visible').count(), 4);
   await page.getByRole('checkbox', { name: '选择 JDBC 查询负载', exact: true }).check();
   await page.locator('.wb-library-open').filter({ hasText: 'JDBC 查询负载' }).click();
   await page.getByText('驱动路径已填入', { exact: true }).waitFor();
@@ -82,6 +87,11 @@ try {
   let run = await until((row) => row.tasks.length === 1);
   assert.equal((await page.request.post(base + '/api/v1/workload-browser-fixture/finish/' + run.tasks[0])).status(), 200);
   run = await until((row) => row.tasks.length === 2);
+  await page.getByRole('heading', { name: '稳定性综合监控', exact: true }).waitFor();
+  await page.getByText('fixture-primary', { exact: true }).first().waitFor();
+  await page.getByRole('img', { name: 'CPU 使用率，%' }).waitFor();
+  await page.screenshot({ path: '/tmp/workload-dashboard-desktop.png', fullPage: true });
+  await page.getByRole('tab', { name: /运行观察/ }).click();
   await page.getByRole('button', { name: '采样与判点', exact: true }).first().click();
   await page.getByText('fixture exit', { exact: true }).waitFor();
   await page.getByRole('button', { name: /停止整组/ }).click();

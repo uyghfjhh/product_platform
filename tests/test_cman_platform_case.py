@@ -128,6 +128,25 @@ def test_suite_failures_map_to_fail_verdict(tmp_path):
         assert issubclass(failure_class, CaseFailure), failure_name
 
 
+def test_ha_command_runtime_exposes_documented_overview():
+    import sys
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "products" / "fbasecman" / "regression"
+    sys.path.insert(0, str(root))
+    try:
+        from suites.ha_commands.manifest import find_case
+        from suites.ha_commands.runtime import HaCommandRuntime
+        case = find_case("set_node_write_switch_and_restore")
+        assert case.notes
+        runtime = object.__new__(HaCommandRuntime)
+        runtime.case = case
+        runtime.report_config_lines = lambda: []
+        kwargs = runtime.report_document_kwargs("PASS", "ok")
+        assert kwargs["overview_steps"] == list(case.notes)
+    finally:
+        sys.path.remove(str(root))
+
+
 def test_common_table_parser_matches_legacy_psql_shape():
     from products.fbasecman.common_native import _parse_table
 

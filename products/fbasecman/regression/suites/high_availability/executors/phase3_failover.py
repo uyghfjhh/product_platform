@@ -1,6 +1,7 @@
 """Phase 3 executors: Failover, promotion, and MMR write center drift (CORE-16, CORE-17)."""
 
 import time
+import re
 from platform_regress.reporting import ReportCheck
 from ..console_parser import ConsoleAssertionError
 def run_core_16_rep_failover(context):
@@ -404,10 +405,34 @@ def run_core_17_mmr_write_center_failover(context):
 
     # Step 5: Manual switch via SET NODE WRITE ... IN GROUP qa_mmr
     refresh_a0 = ops.admin_psql("REFRESH CLUSTER site_a;")
+    config_before_manual = ops.active_conf.read_text(encoding="utf-8") if ops.active_conf and ops.active_conf.exists() else ""
     set_write = ops.admin_psql("SET NODE WRITE test_mmr2 IN GROUP qa_mmr;", title="人工命令锁定写中心为 B0")
+    config_after_manual = ops.active_conf.read_text(encoding="utf-8") if ops.active_conf and ops.active_conf.exists() else ""
+    config_diff_manual = ops.diff_text(
+        config_before_manual, config_after_manual,
+        "SET NODE WRITE 前配置", "SET NODE WRITE 后配置")
+    if not config_diff_manual:
+        raise ConsoleAssertionError("SET NODE WRITE 执行后配置文件没有产生持久化变化")
+    # The semantic diff is rendered at group-field level; it records the
+    # resolved cluster names (site_b/site_a), not the SQL group/node tokens.
+    # Validate the actual persisted meaning instead of requiring those input
+    # spellings to appear literally in the diff text.
+    expected_config_changes = (
+        r'(?m)^-\s+write_cluster\s+"site_a"\s*$',
+        r'(?m)^\+\s+write_cluster\s+"site_b"\s*$',
+        r'(?m)^-\s+promoted_cluster\s+"site_b"\s*$',
+        r'(?m)^\+\s+promoted_cluster\s+"site_a"\s*$',
+    )
+    if any(not re.search(pattern, config_diff_manual)
+           for pattern in expected_config_changes):
+        raise ConsoleAssertionError(
+            "SET NODE WRITE 配置 diff 未包含 qa_mmr 写中心切换到 site_b 的预期语义变化: %s" % config_diff_manual)
     snap_manual = ops.admin_psql("SHOW GROUP_ROUTING qa_mmr;")
     snap_manual.assert_field({"candidate_node": "test_mmr2"}, "is_write_target", "true")
     snap_manual.assert_field({"candidate_node": "test_mmr2"}, "write_source", "WRITE_CLUSTER")
+    snap_manual.assert_write_target_count(1, user_name="qa_hint_user")
+    snap_cluster_manual = ops.admin_psql("SHOW CLUSTERS;")
+    snap_cluster_manual.assert_field({"cluster_name": "site_b"}, "current_primary", "test_mmr2")
 
     # Group isolation check: other groups untouched
     snap_rep = ops.admin_psql("SHOW GROUP_ROUTING qa_rep;")
@@ -421,7 +446,8 @@ def run_core_17_mmr_write_center_failover(context):
         coverage_check="验证人工命令锁定写中心与组配置隔离",
         action="控制台执行 SET NODE WRITE test_mmr2 IN GROUP qa_mmr; 锁定写中心，并检查 qa_rep 组隔离",
         command="%s\n\n%s\n\n%s" % (recover_a0, ops.console_result(refresh_a0), ops.console_result(set_write)),
-        intermediate="SHOW GROUP_ROUTING qa_mmr:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s" % (
+        intermediate="配置文件语义 diff:\n%s\n\nSHOW CLUSTERS:\n%s\n\nSHOW GROUP_ROUTING qa_mmr:\n%s\n\nSHOW GROUP_ROUTING qa_rep:\n%s" % (
+            config_diff_manual, snap_cluster_manual.format_table(),
             snap_manual.format_table(), snap_rep.format_table()
         ),
         expected="B0 变为 WRITE_CLUSTER 锁定写中心，其他组不受影响保持独立路由",
@@ -430,8 +456,20 @@ def run_core_17_mmr_write_center_failover(context):
         checks=[
             ReportCheck(
                 title="人工锁定写中心生效",
-                expected="candidate_node=test_mmr2, write_source=WRITE_CLUSTER, is_write_target=true",
+                expected="candidate_node=test_mmr2, write_source=WRITE_CLUSTER, is_write_target=true，且 qa_mmr 只有 1 个写目标",
                 actual=snap_manual.format_record(candidate_node="test_mmr2"),
+                result="PASS",
+            ),
+            ReportCheck(
+                title="SET NODE WRITE 已持久化到配置文件",
+                expected="SET NODE WRITE 前后配置存在且只包含 qa_mmr 写中心切换到 test_mmr2 的预期 diff",
+                actual=config_diff_manual,
+                result="PASS",
+            ),
+            ReportCheck(
+                title="SHOW CLUSTERS 与运行态一致",
+                expected="site_b.current_primary=test_mmr2",
+                actual=snap_cluster_manual.format_record(cluster_name="site_b"),
                 result="PASS",
             ),
             ReportCheck(

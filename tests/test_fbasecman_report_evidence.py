@@ -36,6 +36,30 @@ def test_transport_records_are_actions_not_business_assertions(tmp_path):
     assert '独立断言' in fact['analysis']
 
 
+def test_configuration_evidence_extensions_are_artifacts():
+    from platform_regress.reporting.renderer import _is_artifact_reference
+    assert _is_artifact_reference('artifacts/run/jdbc-config-diff.diff')
+    assert _is_artifact_reference('artifacts/run/jdbc-snapshot.conf')
+
+
+def test_ha_journal_preserves_business_analysis_in_report_steps(tmp_path):
+    from platform_regress.runtime import ReportRuntime, ReportSpec
+    runtime = ReportRuntime(
+        tmp_path, ReportSpec('case', 'ha_commands.case', 'HA command', 'ha_commands'),
+        case_dir=tmp_path / 'case', lock_dir=tmp_path / 'locks', context_data={})
+    runtime.step_journal.append({
+        'order': 1, 'title': 'SET NODE WRITE 生效检查', 'execution': [],
+        'intermediate': [], 'evidence': [], 'expected': 'SHOW 状态为 WRITE_CLUSTER',
+        'actual': 'write_source=WRITE_CLUSTER', 'result': 'PASS',
+        'intent': 'verify', 'analysis': '配置已持久化且 SHOW 状态已生效',
+        'assertion': {'type': 'field_equals', 'field': 'write_source', 'value': 'WRITE_CLUSTER'},
+    })
+    steps = runtime._timeline_steps()
+    assert steps[0].intent == 'verify'
+    assert ('结果分析', '配置已持久化且 SHOW 状态已生效') in steps[0].details
+    assert steps[0].assertion['field'] == 'write_source'
+
+
 def test_missing_purpose_uses_labeled_current_catalog(tmp_path):
     path = Path(__file__).parents[1] / 'products/fbasecman/reports/parser.py'
     spec = importlib.util.spec_from_file_location('cman_report_purpose', path)
@@ -89,6 +113,14 @@ def test_report_explains_connection_and_distinct_transactions(tmp_path):
     assert '实际执行回滚' in scope['transactions'][2]['boundary']
     assert '新事务' in scope['conclusion']
     assert report['execution_scope_source'] == 'current_catalog'
+
+
+def test_report_runtime_uses_client_timezone(tmp_path):
+    from platform_regress.runtime import ReportRuntime, ReportSpec
+    runtime = ReportRuntime(
+        tmp_path, ReportSpec('case', 'ha_commands.case', 'HA', 'ha_commands'),
+        case_dir=tmp_path / 'case', lock_dir=tmp_path / 'locks', context_data={})
+    assert runtime.started_at.strftime('%z') == '+0800'
 
 
 def test_readable_observations_preserve_actual_values():

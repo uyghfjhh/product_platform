@@ -17,6 +17,7 @@ class EnvironmentInput(BaseModel):
     database_user: str = "postgres"
     deployment_config: str | None = None
     deployment_target: str | None = None
+    product_test_settings: dict | None = None
 
 
 class RegressionBindingInput(BaseModel):

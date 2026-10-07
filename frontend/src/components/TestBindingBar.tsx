@@ -3,6 +3,7 @@ import { Alert, App, Button, Select, Space, Tag, Tooltip, Typography } from 'ant
 import { AimOutlined, CheckCircleFilled, CloseCircleFilled, LinkOutlined } from '@ant-design/icons';
 
 import { api, post, type Environment, type Product, type RegressionBinding } from '../platform/api';
+import { productFrontends } from '../products/generated';
 
 type NodeStatus = { running?: boolean | null; known?: boolean; message?: string };
 type ProbeResult =
@@ -32,6 +33,7 @@ export default function TestBindingBar({ product, profileId, environments, bindi
   const binding = bindings.find((item) => item.product_id === product?.id
     && item.profile_id === (profileId || 'default'));
   const bound = compatible.find((item) => item.id === binding?.environment_id);
+  const TestSettings = product ? productFrontends[product.id]?.TestSettings : undefined;
 
   useEffect(() => { setProbe(null); }, [binding?.environment_id]);
 
@@ -155,6 +157,7 @@ export default function TestBindingBar({ product, profileId, environments, bindi
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {bound.host}:{bound.port}
         </Typography.Text>
+        {TestSettings && <TestSettings environment={bound} onChanged={onChanged} />}
       </Space>
     </div>
   );

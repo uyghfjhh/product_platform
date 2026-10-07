@@ -333,6 +333,8 @@ class FbasecmanCaseRuntime(ReportRuntime):
             "%s：%s" % (phase, state_sql),
             "$ %s" % result.command, "console 状态可读取", output,
             "PASS" if result.returncode == 0 else "FAIL",
+            details=[("intent", "action"),
+                     ("结果分析", "保存%s的运行态快照；业务结论由对应验证步骤判定。" % phase)],
         )
         if result.returncode != 0:
             raise self.failure_class("HA state query failed: %s" % state_sql)
@@ -357,6 +359,9 @@ class FbasecmanCaseRuntime(ReportRuntime):
     def psql(self, sql, title, expected, predicate):
         """执行一条 console 命令并断言输出；命令后自动做配置语义 diff 校验。"""
         self.last_ha_sql = sql.strip()
+        mutating = bool(re.match(r"(?is)^\s*(SET|REFRESH|RELOAD|ALTER)\b", sql))
+        if mutating:
+            self._record_ha_state(sql, "命令前运行态")
         config_before = self.active_conf.read_text(encoding="utf-8") if self.active_conf else None
         command = build_psql_command(
             self.env.config["local"]["postgres_dir"], os.environ.get("FBCMAN_LOCAL_HOST", "127.0.0.1"),
@@ -393,6 +398,18 @@ class FbasecmanCaseRuntime(ReportRuntime):
                 if not valid_diff:
                     raise self.failure_class(
                         "configuration persistence changed an unexpected object or field")
+            elif mutating:
+                self.record_step(
+                    "%s：配置文件未发生变化" % title,
+                    "读取活动配置文件",
+                    "该命令应保持配置不变",
+                    "配置字节完全一致",
+                    "PASS",
+                    details=[("结果分析", "命令执行后配置文件未发生非预期修改。"),
+                             ("intent", "verify")],
+                )
+        if mutating:
+            self._record_ha_state(sql, "命令后生效状态")
         return output
 
     def psql_monitor(self, sql, title, expected, predicate, retry_timeout=5):
@@ -874,13 +891,12 @@ class FbasecmanCaseRuntime(ReportRuntime):
         ))
         if getattr(self.case, "route_mode", None):
             group_lines.append("routing mode: %s" % self.case.route_mode)
+        binary_label = "fbasecman"
+        config_label = "$CASE_DIR/%s.conf" % self.case.name
         return [
             "测试拓扑: %s" % getattr(self.case, "topology", "-"),
             "控制台命令端口: %s" % self.listen_port,
-            "手动启动命令: %s %s --console --log_to_stdout" % (
-                shlex.quote(str(self.process.binary)),
-                shlex.quote(str(self.active_conf or (self.workdir / (self.case.name + ".conf")))),
-            ),
+            "手动启动命令: %s %s --console --log_to_stdout" % (binary_label, config_label),
         ] + datasource_lines + group_lines
 
     def collect_failure_steps(self, status):

@@ -14,7 +14,7 @@ def register(app, settings, store):
         acknowledge_change: bool = False
 
     def workbench():
-        return Workbench(settings, store, app.state.orchestrator)
+        return Workbench(settings, store, app.state.orchestrator, app.state.monitoring)
 
     def checked(action):
         try:
@@ -37,6 +37,29 @@ def register(app, settings, store):
     @app.get('/api/v1/workload-runs/{identity}')
     def run(identity: str):
         return checked(lambda: workbench().run(identity))
+
+    @app.get('/api/v1/workload-runs/{identity}/monitoring')
+    def run_monitoring(identity: str):
+        from ..workloads.dashboard import dashboard
+        return checked(lambda: dashboard(app.state.monitoring, workbench().run(identity), store))
+
+    @app.get('/api/v1/environments/{identity}/workload-monitoring')
+    def environment_monitoring(identity: str):
+        from datetime import UTC, datetime, timedelta
+        from ..monitoring import observation_fingerprint
+        from ..workloads.dashboard import dashboard
+        from ..workloads.sql import environment_fingerprint
+        environment = checked(lambda: workbench().environment(identity))
+        try:
+            fingerprint = observation_fingerprint(settings, environment)
+        except (ValueError, OSError, KeyError):
+            fingerprint = None
+        now = datetime.now(UTC)
+        preview = {'id': None, 'environment_id': identity, 'status': 'RUNNING',
+                   'created_at': (now-timedelta(minutes=15)).isoformat(), 'updated_at': now.isoformat(),
+                   'definition': {'environment_id': identity, 'environment_fingerprint': environment_fingerprint(environment),
+                                  'monitoring_fingerprint': fingerprint}, 'tasks': [], 'task_details': []}
+        return checked(lambda: dashboard(app.state.monitoring, preview, store))
 
     @app.post('/api/v1/workload-runs/{identity}/cancel')
     def cancel(identity: str):
@@ -74,4 +97,8 @@ def register(app, settings, store):
             if (path / "result.json").is_file()
             else None
         )
+        value['proxy_monitor'] = (json.loads((path / 'proxy-monitor.json').read_text())
+                                  if (path / 'proxy-monitor.json').is_file() else None)
+        value['connection_evidence'] = (json.loads((path / 'connection-evidence.json').read_text())
+                                        if (path / 'connection-evidence.json').is_file() else None)
         return value

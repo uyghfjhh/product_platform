@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..actions import actions_for_environment
 from ..providers import provider_extensions
+from ..monitoring import observation_fingerprint
 from . import PRESETS, WorkloadInput, resolve_driver
 from .sql import environment_fingerprint
 from .defaults import PROFILES, default_jdbc_jar
@@ -34,14 +35,15 @@ def digest(value):
 
 
 def plan_digest(plan):
-    return digest({key: plan[key] for key in (
-        'environment_id', 'environment_fingerprint', 'steps', 'workloads', 'mode', 'expires_at',
+    return digest({key: plan.get(key) for key in (
+        'environment_id', 'environment_fingerprint', 'steps', 'workloads', 'mode', 'expires_at', 'monitoring_fingerprint',
     )})
 
 
 class Workbench:
-    def __init__(self, settings, store, orchestrator):
+    def __init__(self, settings, store, orchestrator, monitoring=None):
         self.settings, self.store, self.orchestrator = settings, store, orchestrator
+        self.monitoring = monitoring
 
     def environment(self, identity):
         environment = self.store.environments.get_environment(identity)
@@ -75,6 +77,11 @@ class Workbench:
         hook = provider_extensions(self.settings, environment['product_id']).workload_catalog
         if hook:
             workloads.extend(hook(self.settings, environment))
+        runtime_hook = provider_extensions(self.settings, environment['product_id']).workload_runtime
+        if runtime_hook:
+            for entry in workloads:
+                if entry['action'] in {'workload.pgbench', 'workload.jdbc'}:
+                    entry['defaults']['connection_mode'] = 'proxy'
         identifiers = [item['id'] for item in workloads]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError('负载目录包含重复标识')
@@ -84,6 +91,7 @@ class Workbench:
             )},
             'environment_fingerprint': environment_fingerprint(environment),
             'workloads': workloads, 'modes': ['sequential'], 'profiles': list(PROFILES),
+            'connection_modes': ['proxy', 'compare', 'direct'] if runtime_hook else ['direct'],
             'limitations': ['第一阶段支持顺序执行；并发场景尚未接入。',
                             '自定义脚本仅支持 SELECT，执行于只读事务；不支持 pgbench 元命令。'],
         }
@@ -108,8 +116,15 @@ class Workbench:
                 values.update(clients=1, jobs=None, duration_seconds=min(values['duration_seconds'], 10),
                               target_tps=0, minimum_tps=0, max_average_latency_ms=0)
             options = WorkloadInput.model_validate(values)
+            tested = None
             try:
                 resolve_driver(environment, definition['driver'], options)
+                hook = provider_extensions(self.settings, environment['product_id']).workload_runtime
+                if options.connection_mode != 'direct':
+                    if not hook:
+                        raise ValueError('当前产品未提供代理负载执行器')
+                    tested = hook(self.settings, environment, options.connection_mode)
+                    options.tested_build_sha256 = tested['sha256']
             except ValueError as exc:
                 issues.append(f"{selection.title or definition['title']}：{exc}")
             options.script = options.script or PRESETS[options.preset]
@@ -120,13 +135,22 @@ class Workbench:
                 'title': selection.title or definition['title'], 'driver': definition['driver'],
                 'source': definition['source'], 'script_sha256': hashlib.sha256(options.script.encode()).hexdigest(),
                 'script_modified': options.script != definition['defaults']['script'],
+                'tested_build': {key: tested.get(key) for key in ('binary', 'sha256', 'version')}
+                if tested else None,
             })
+        try:
+            monitoring_fingerprint = observation_fingerprint(self.settings, environment)
+        except (ValueError, OSError, KeyError):
+            monitoring_fingerprint = None
         row = {
+            'monitoring_fingerprint': monitoring_fingerprint,
             'title': '负载方案 · ' + environment['title'], 'workbench': True,
             'environment_id': environment['id'], 'environment': catalog['environment'],
             'environment_fingerprint': fingerprint, 'steps': steps, 'workloads': workloads,
             'mode': item.mode, 'smoke': item.smoke, 'ready': not issues, 'issues': issues,
-            'duration_seconds': sum(step['parameters']['duration_seconds'] for step in steps),
+            'duration_seconds': sum(step['parameters']['duration_seconds'] *
+                                    (2 if step['parameters']['connection_mode'] == 'compare' else 1)
+                                    for step in steps),
             'peak_clients': max(step['parameters']['clients'] for step in steps),
             'expires_at': (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
         }
@@ -149,6 +173,15 @@ class Workbench:
         for step in plan['steps']:
             options = WorkloadInput.model_validate(step['parameters'])
             resolve_driver(environment, step['action'].split('.')[1], options)
+            if options.connection_mode != 'direct':
+                hook = provider_extensions(self.settings, environment['product_id']).workload_runtime
+                if not hook:
+                    raise ValueError('当前产品未提供代理负载执行器')
+                tested = hook(self.settings, environment, options.connection_mode)
+                if options.tested_build_sha256 != tested['sha256']:
+                    raise ValueError('审阅后 fbasecman 构建文件已变化，请重新生成计划')
+        if self.monitoring and plan.get('monitoring_fingerprint'):
+            self.monitoring.enable(environment['id'], True)
         return self.orchestrator.start(identity, True, 'workload-workbench', run_id=identity)
 
     def run(self, identity):

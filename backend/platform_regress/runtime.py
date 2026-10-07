@@ -17,6 +17,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from platform_regress.evidence import EvidenceStep, StepJournal
@@ -76,7 +77,7 @@ class ReportRuntime:
         self.logs_dir = self.run_root / "logs"
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self.started_at = datetime.now()
+        self.started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
         self.finished_at = None
         self._step_order = 0
         self.steps = []
@@ -196,6 +197,11 @@ class ReportRuntime:
                     break
                 time.sleep(interval)
             step.actual_execution("$ %s" % result.command, output)
+            step.record["intent"] = "verify"
+            step.record["analysis"] = (
+                "命令返回值和输出满足声明的业务判定条件。"
+                if passed else "命令输出未满足声明的业务判定条件。"
+            )
             step.assess(expected, actual, passed)
         if not passed:
             message = (failure(title, actual, result) if failure is not None
@@ -228,15 +234,40 @@ class ReportRuntime:
                 execution=([{"label": "执行内容", "text": item["command"]}] if item["command"] else []),
                 key_expected=item["expected"], actual=item["actual"], result=item["result"],
                 checks=checks,
+                intent=next((value for label, value in item["details"]
+                             if label == "intent"), None),
             )))
         for item in self.step_journal.steps:
+            details = []
+            if item.get("analysis"):
+                details.append(("结果分析", item["analysis"]))
+            if item.get("assertion"):
+                details.append(("断言", item["assertion"]))
+            if item.get("intent"):
+                details.append(("intent", item["intent"]))
+            if item.get("node"):
+                details.append(("执行节点", item["node"]))
             timeline.append((item.get("order", 0), ReportStep(
-                item["title"], execution=item.get("execution", []),
+                item["title"], details=details, execution=item.get("execution", []),
                 intermediate=item.get("intermediate", []), evidence=item.get("evidence", []),
                 key_expected=item.get("expected"), actual=item.get("actual"),
-                result=item.get("result"),
+                result=item.get("result"), intent=item.get("intent"),
+                assertion=item.get("assertion"), raw_output=item.get("output"),
+                actual_summary=item.get("actual_summary") or item.get("actual"),
             )))
-        return [item for _, item in sorted(timeline, key=lambda value: value[0])]
+        ordered = [item for _, item in sorted(timeline, key=lambda value: value[0])]
+        merged = []
+        for item in ordered:
+            if merged and "配置文件实际 diff" in str(item.title) and item.actual:
+                previous = merged[-1]
+                previous.intermediate.append({"label": "配置文件 diff", "text": item.actual})
+                previous.details.extend(item.details)
+                if item.result != "PASS":
+                    previous.result = item.result
+                previous.coverage = "diff"
+                continue
+            merged.append(item)
+        return merged
 
     def report_config_lines(self):
         """报告"关键配置"区块的行；子类覆盖以补充产品特定配置佐证。"""
@@ -270,10 +301,15 @@ class ReportRuntime:
         else:
             items = self._timeline_steps()
             items.extend(self.collect_failure_steps(status))
+        if status == "PASS":
+            verified = [item for item in items if getattr(item, "intent", None) == "verify" or
+                        getattr(item, "assertion", None) or getattr(item, "checks", None)]
+            if verified:
+                kwargs["pass_reason"] = "业务验证 %d 项全部通过；配置、SHOW 状态和原始证据见逐步记录。" % len(verified)
         document = ReportDocument(
             self.report_spec.target, status,
-            self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
-            (self.finished_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+            self.started_at.isoformat(timespec="seconds"),
+            (self.finished_at or datetime.now(ZoneInfo("Asia/Shanghai"))).isoformat(timespec="seconds"),
             self.report_spec.summary,
             steps=items,
             **kwargs
@@ -299,7 +335,7 @@ class ReportRuntime:
 
     def finish(self, status, reason=None):
         """结束用例：写终态报告并清理资源。"""
-        self.finished_at = datetime.now()
+        self.finished_at = datetime.now(ZoneInfo("Asia/Shanghai"))
         self.write_report(status, reason)
         self.stop()
 

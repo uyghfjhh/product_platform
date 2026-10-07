@@ -23,6 +23,11 @@ public final class HaConsoleCommands {
         StringBuilder output = new StringBuilder();
         try (ResultSet result = statement.executeQuery(sql)) {
             ResultSetMetaData metadata = result.getMetaData();
+            for (int column = 1; column <= metadata.getColumnCount(); column++) {
+                if (column > 1) output.append('|');
+                output.append(metadata.getColumnLabel(column));
+            }
+            output.append('\n');
             while (result.next()) {
                 for (int column = 1; column <= metadata.getColumnCount(); column++) {
                     if (column > 1) {
@@ -35,6 +40,12 @@ public final class HaConsoleCommands {
             }
         }
         return output.toString();
+    }
+
+    private static void show(Statement statement, String label, String sql) throws Exception {
+        System.out.println("SHOW_" + label + "_BEGIN");
+        System.out.print(query(statement, sql));
+        System.out.println("SHOW_" + label + "_END");
     }
 
     private static void require(String text, String... values) {
@@ -122,53 +133,63 @@ public final class HaConsoleCommands {
              Statement statement = connection.createStatement()) {
             require(query(statement, "SHOW DATASOURCES;"), "pg_3", "active");
             System.out.println("JDBC_CONNECT=OK");
+            show(statement, "INITIAL", "SHOW DATASOURCES;");
 
             execute(statement, "SET NODE PARTED pg_3;", "SET_NODE_PARTED");
             require(query(statement, "SHOW DATASOURCES;"), "pg_3", "parted");
+            show(statement, "NODE_PARTED", "SHOW DATASOURCES;");
             snapshot(config, snapshotDirectory, "01_node_parted.conf");
             waitBackendPort(singleUrl, businessProperties,
                             "PARTED_FALLS_BACK_TO_PRIMARY", cluster1Port);
             execute(statement, "SET NODE ACTIVE pg_3;", "SET_NODE_ACTIVE");
             require(query(statement, "SHOW DATASOURCES;"), "pg_3", "active");
+            show(statement, "NODE_ACTIVE", "SHOW DATASOURCES;");
             snapshot(config, snapshotDirectory, "02_node_active.conf");
             waitBackendPort(singleUrl, businessProperties,
                             "ACTIVE_RESTORES_SINGLE_ROUTE", cluster1Port, standby1Port);
 
             execute(statement, "SET NODE WEIGHT pg_3=0;", "SET_NODE_WEIGHT");
             require(query(statement, "SHOW NODES;"), "pg_3", "0");
+            show(statement, "WEIGHT_ZERO", "SHOW NODES;");
             snapshot(config, snapshotDirectory, "03_weight_0.conf");
             waitBackendPort(singleUrl, businessProperties,
                             "ZERO_WEIGHT_FALLS_BACK_TO_PRIMARY", cluster1Port);
             execute(statement, "SET NODE WEIGHT pg_3=10;", "SET_NODE_WEIGHT_RESTORE");
             require(query(statement, "SHOW NODES;"), "pg_3", "10");
+            show(statement, "WEIGHT_RESTORE", "SHOW NODES;");
             snapshot(config, snapshotDirectory, "04_weight_10.conf");
             waitBackendPort(singleUrl, businessProperties,
                             "WEIGHT_RESTORES_SINGLE_ROUTE", cluster1Port, standby1Port);
 
             execute(statement, "SET NODE PROMOTED pg_1 IN GROUP mmr_group;", "SET_NODE_PROMOTED");
             require(query(statement, "SHOW GROUP_ROUTING mmr_group;"), "pg_cluster_1");
+            show(statement, "PROMOTED", "SHOW GROUP_ROUTING mmr_group;");
             snapshot(config, snapshotDirectory, "05_promoted_cluster_1.conf");
             waitBackendPort(businessUrl, businessProperties, cluster2Port,
                             "PROMOTED_KEEPS_WRITE_ROUTE");
 
             execute(statement, "SET NODE WRITE pg_1 IN GROUP mmr_group;", "SET_NODE_WRITE");
             require(query(statement, "SHOW GROUP_ROUTING mmr_group;"), "pg_cluster_1");
+            show(statement, "WRITE_CLUSTER_1", "SHOW GROUP_ROUTING mmr_group;");
             snapshot(config, snapshotDirectory, "06_write_cluster_1.conf");
             waitBackendPort(businessUrl, businessProperties, cluster1Port,
                             "WRITE_ROUTE_CLUSTER_1");
             execute(statement, "SET NODE WRITE pg_2 IN GROUP mmr_group;", "SET_NODE_WRITE_RESTORE");
             require(query(statement, "SHOW GROUP_ROUTING mmr_group;"), "pg_cluster_2");
+            show(statement, "WRITE_CLUSTER_2", "SHOW GROUP_ROUTING mmr_group;");
             snapshot(config, snapshotDirectory, "07_write_cluster_2.conf");
             waitBackendPort(businessUrl, businessProperties, cluster2Port,
                             "WRITE_ROUTE_CLUSTER_2");
 
             execute(statement, "SET CLUSTER PARTED pg_cluster_2;", "SET_CLUSTER_PARTED");
             require(query(statement, "SHOW DATASOURCES;"), "pg_cluster_2", "parted");
+            show(statement, "CLUSTER_PARTED", "SHOW DATASOURCES;");
             snapshot(config, snapshotDirectory, "08_cluster_2_parted.conf");
             waitBackendPort(businessUrl, businessProperties, cluster1Port,
                             "PARTED_ROUTE_PROMOTED_CLUSTER");
             execute(statement, "SET CLUSTER ACTIVE pg_cluster_2;", "SET_CLUSTER_ACTIVE");
             require(query(statement, "SHOW DATASOURCES;"), "pg_cluster_2", "active");
+            show(statement, "CLUSTER_ACTIVE", "SHOW DATASOURCES;");
             snapshot(config, snapshotDirectory, "09_cluster_2_active.conf");
             waitBackendPort(businessUrl, businessProperties, cluster2Port,
                             "ACTIVE_ROUTE_WRITE_CLUSTER");
@@ -178,6 +199,7 @@ public final class HaConsoleCommands {
             // diagnostics publish asynchronously, so probe_seq is not a
             // per-command completion counter.
             require(query(statement, "SHOW GROUP_ROUTING mmr_group;"), "pg_cluster_2");
+            show(statement, "REFRESH", "SHOW GROUP_ROUTING mmr_group;");
             snapshot(config, snapshotDirectory, "10_after_refresh.conf");
             System.out.println("ALL_HA_COMMANDS=OK");
         }

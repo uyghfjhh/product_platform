@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from pglast import parse_sql
@@ -104,6 +105,7 @@ def main(path):
     try:
         for line in process.stdout:
             print(line.rstrip(), flush=True)
+            before_count = sample_count
             if driver == "jdbc" and line.startswith("{"):
                 row = json.loads(line)
                 if row["type"] == "sample":
@@ -133,11 +135,23 @@ def main(path):
                 match = re.search(r'^number of failed transactions:\s*(\d+)', line)
                 if match:
                     summary['errors'] = int(match[1])
+            if sample_count > before_count:
+                samples[-1]['observed_at'] = datetime.now(UTC).isoformat()
+                if request.get('phase'):
+                    samples[-1]['phase'] = request['phase']
             if len(samples) > 600:
                 samples = samples[-600:]
             temporary = output / "metrics.part"
             temporary.write_text(json.dumps({'samples': samples, 'summary': summary, 'sample_count': sample_count}))
             temporary.replace(output / "metrics.json")
+            if request.get('metrics_sink'):
+                sink = Path(request['metrics_sink'])
+                sink.with_suffix('.part').write_text(json.dumps({
+                    'samples': request.get('previous_samples', []) + samples,
+                    'summary': summary, 'sample_count': sample_count + request.get('previous_sample_count', 0),
+                    'phase': request.get('phase'), 'connection_mode': request['options']['connection_mode'],
+                }))
+                sink.with_suffix('.part').replace(sink)
         code = process.wait(timeout=15)
     finally:
         if process.poll() is None:

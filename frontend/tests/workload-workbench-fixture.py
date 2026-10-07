@@ -1,6 +1,8 @@
 import json
 import sys
 import tempfile
+import time
+from datetime import UTC, datetime
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +17,9 @@ settings = replace(load_settings(), data_dir=root / 'data', output_dir=root / 'o
                    runtime_dir=root / 'runtime', logs_dir=root / 'logs')
 workloads.shutil.which = lambda name: sys.executable
 app = create_app(settings, enqueuer=lambda identity: None)
+from platform_app.workloads import workbench as workbench_module
+workbench_module.observation_fingerprint = lambda *_: 'browser-fixture'
+app.state.monitoring.tick = lambda: None
 store = app.state.store
 store.environments.put_environment({
     'id': 'workload-browser', 'product_id': 'fbasecman', 'title': '负载浏览器环境',
@@ -41,8 +46,21 @@ def finish(task_id: str):
     status = 'CANCELLED' if task['cancel_requested'] else 'SUCCEEDED'
     path = settings.artifact_dir('fbasecman', 'workload-browser') / 'runs' / task_id / 'workload'
     path.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    stamps = [now-0.2, now-0.1]
+    for index, stamp in enumerate(stamps):
+        observed = datetime.fromtimestamp(stamp, UTC).isoformat()
+        snapshot = {'observed_at': observed, 'fingerprint': 'browser-fixture',
+                    'nodes': [{'node': {'id': 'fixture-primary', 'host': '127.0.0.1', 'port': 17403},
+                               'sections': {'runtime': {'valid': True, 'rows': [{'recovery': False, 'started_at': 'fixture'}]}}}],
+                    'hosts': [{'host': '127.0.0.1', 'identity': 'fixture-host', 'observed_at': observed, 'valid': True,
+                               'raw': {'boot_id': 'fixture'}, 'metrics': {'cpu_percent': 20+index*10, 'memory_percent': 50, 'iowait_percent': 1}}],
+                    'database_metrics': [{'node_id': 'fixture-primary', 'baseline': 'fixture', 'metrics': {'active': 4, 'instance_clients': 8, 'blocked': 0, 'commit_per_second': 12}}]}
+        with app.state.monitoring.connection() as connection:
+            connection.execute('INSERT INTO samples VALUES (?,?,?,?)', ('workload-browser', stamp, 'browser-fixture', json.dumps(snapshot)))
     (path / 'metrics.json').write_text(json.dumps({
-        'samples': [{'elapsed': 1, 'tps': 12, 'latency_ms': 1.5}, {'elapsed': 2, 'tps': 15, 'latency_ms': 1.3}],
+        'samples': [{'elapsed': index+1, 'tps': 12+index*3, 'latency_ms': 1.5-index*0.2,
+                     'observed_at': datetime.fromtimestamp(stamp, UTC).isoformat()} for index, stamp in enumerate(stamps)],
         'summary': {'tps': 13.5, 'latency_ms': 1.4},
     }))
     (path / 'result.json').write_text(json.dumps({

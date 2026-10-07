@@ -50,12 +50,19 @@ HIGH_AVAILABILITY_CASES = (
     HighAvailabilityCase(
         name="core_17_mmr_write_center_failover",
         core_id="CORE-17",
-        summary="MMR 写中心切换、唯一写目标与 SET NODE WRITE 持久化",
+        summary=(
+            "验证 MMR 写中心故障切换、唯一写目标和 SET NODE WRITE 持久化："
+            "停止初始写中心后，promoted_cluster 主库应接管写路由；"
+            "恢复原写中心并执行人工切换后，组内只能存在一个有效写目标，"
+            "且切换结果在 REFRESH 后保持。"
+        ),
         notes=(
-            "qa_mmr 初始写向 site_a (A0)。",
-            "停止 site_a 当前 primary，观察按 promoted_cluster 自动选择 site_b 当前 primary 承担新写。",
-            "验证任何时刻组内只有一个有效写目标，故障中旧事务不自动重放。",
-            "恢复 site_a 后，执行 SET NODE WRITE <site_b当前主> IN GROUP qa_mmr 验证人工切换及持久化。",
+            "前置条件：qa_mmr 已配置 site_a/site_b 双 MMR 集群，A0/B0 主库和备库均健康，代理路由已收敛。",
+            "基线检查：记录 SHOW CLUSTERS、SHOW GROUP_ROUTING 和后端实际写入落点，确认 qa_mmr 初始写向 site_a A0。",
+            "故障阶段：停止 site_a 当前 primary，等待 monitor 确认故障，观察 promoted_cluster 自动选择 site_b 当前 primary 承担新写。",
+            "业务验证：核对唯一 write target、route_status=AVAILABLE、INSERT 实际落点，以及故障期间旧事务不被自动重放。",
+            "恢复阶段：恢复 site_a，重建并重新激活原节点；执行 SET NODE WRITE <site_b 当前主> IN GROUP qa_mmr，REFRESH 后再次核对唯一写目标和持久化。",
+            "清理标准：恢复 A0 为原始写中心、A1/B1 为正常备库，所有节点 ACTIVE，路由和业务写入均回到基线。",
         ),
     ),
     HighAvailabilityCase(

@@ -41,6 +41,20 @@ def test_pgbench_executes_custom_query_in_owned_readonly_cluster(tmp_path, monke
                                  capture_output=True, text=True)
         started = startup.returncode == 0
         assert started, startup.stdout + startup.stderr + (log.read_text() if log.exists() else '')
+        import time
+        from platform_app.deployment.monitoring_agent import collect as collect_host
+        from platform_app.monitoring_hosts import derive as host_metrics
+        host_before = collect_host({'paths': [str(data)]})
+        from fastapi.encoders import jsonable_encoder
+        from platform_app.postgres_monitoring import snapshot, derive
+        monitor_environment = {'database_name': 'postgres', 'database_user': 'postgres'}
+        monitor_nodes = [{'id': 'isolated', 'host': '127.0.0.1', 'port': port}]
+        first = jsonable_encoder(snapshot(monitor_environment, monitor_nodes))
+        second = jsonable_encoder(snapshot(monitor_environment, monitor_nodes))
+        assert second['nodes'][0]['sections']['runtime']['valid']
+        assert second['nodes'][0]['sections']['runtime']['rows'][0]['recovery'] is False
+        assert second['nodes'][0]['sections']['connections']['valid']
+        assert derive(second, first)[0]['metrics']['instance_clients'] is not None
         jdbc_jar = load_settings().product_regress_root('fbasecman') / 'lib_jdbc' / 'postgresql-42.7.7.jar'
         assert jdbc_jar.is_file()
         for name, driver, threshold in [('execution', 'pgbench', 0), ('threshold', 'pgbench', 1000000000), ('jdbc', 'jdbc', 0)]:
@@ -70,6 +84,12 @@ def test_pgbench_executes_custom_query_in_owned_readonly_cluster(tmp_path, monke
                 assert result['summary']['errors'] == 0
                 assert result['summary']['elapsed'] > 0
                 assert abs(result['summary']['tps'] * result['summary']['elapsed'] - result['summary']['transactions']) < 1
+        elapsed = collect_host({'paths': [str(data)]})['uptime_seconds']-host_before['uptime_seconds']
+        if elapsed < 16:
+            time.sleep(16-elapsed)
+        actual = host_metrics(collect_host({'paths': [str(data)]}), host_before)
+        assert actual['cpu_percent'] is not None and 0 <= actual['cpu_percent'] <= 100
+        assert actual['memory_percent'] is not None and 0 <= actual['memory_percent'] <= 100
     finally:
         if started:
             subprocess.run([pg_ctl, '-D', str(data), '-m', 'fast', '-w', 'stop'], check=True, capture_output=True)

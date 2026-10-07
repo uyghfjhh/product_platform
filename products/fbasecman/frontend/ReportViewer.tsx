@@ -18,6 +18,7 @@ type ReportStep = {
   command?: string;
   expected?: string;
   actual?: string;
+  actualSummary?: string;
   evidence?: string;
   state_table?: string;
 };
@@ -72,7 +73,11 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
     setSelectedNode(null);
     setFullscreen(false);
     void api<Artifact>(`/fbasecman/cases/${encodeURIComponent(target)}/artifacts${environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''}`).then((value) => {
-      if (!cancelled) { setArtifact(value); setSelectedLog(value.logs[0]?.name || ''); }
+      if (!cancelled) {
+        setArtifact(value);
+        const preferred = value.logs.find((item) => item.name === 'fbasecman.log') || value.logs[0];
+        setSelectedLog(preferred?.name || '');
+      }
     }).catch((error) => { if (!cancelled) message.error(error.message); });
     return () => { cancelled = true; };
   }, [target, environmentId, message]);
@@ -195,7 +200,7 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
       {<div className="report-header"><Typography.Text strong>测试目的</Typography.Text><Typography.Text>{parsed?.purpose || '本次未记录测试目的'}</Typography.Text>{parsed?.purpose_source === 'current_catalog' && <Typography.Text type="secondary">当前用例说明；本次执行结论以保存的断言和证据为准。</Typography.Text>}<Typography.Text type="secondary">开始：{parsed?.start_time || '-'} · 结束：{parsed?.end_time || '-'}</Typography.Text>{parsed?.reason && <Typography.Text>{parsed.reason}</Typography.Text>}</div>}
       {parsed?.execution_scope && <section className="cman-transaction-scope"><strong>连接与事务范围</strong><p>{parsed.execution_scope.connection}</p>{parsed.execution_scope_source === 'current_catalog' && <Typography.Text type="secondary">以下为当前用例设计说明；历史执行结论以当次证据为准。</Typography.Text>}<div style={{overflowX:'auto'}}><table className="case-description-table"><thead><tr><th>阶段</th><th>执行内容</th><th>事务结束方式</th></tr></thead><tbody>{parsed.execution_scope.transactions.map(row => <tr key={row.stage}><td>{row.stage}</td><td>{row.operation}</td><td>{row.boundary}</td></tr>)}</tbody></table></div><p>{parsed.execution_scope.conclusion}</p></section>}
       <Tabs items={[
-        { key: 'steps', label: `验证结果与证据 (${displaySteps.length})`, children: <ReportEvidenceSteps steps={[...displaySteps, ...displayAssertions.map(step => ({ ...step, intent: 'verify' }))]} /> },
+        { key: 'steps', label: `验证结果与证据 (${displaySteps.length})`, children: <ReportEvidenceSteps evidenceBasePath={environmentId && target ? `/api/v1/environments/${encodeURIComponent(environmentId)}/results/${encodeURIComponent(target)}/evidence` : undefined} steps={[...displaySteps, ...displayAssertions.map(step => ({ ...step, intent: 'verify' }))]} /> },
         ...(currentClusters.length ? [{ key: 'topology', label: '🪐 架构拓扑看板', children: <>
           <Alert type="info" showIcon className="report-source-note" message="拓扑快照部分由报告步骤推演；实测状态以原始命令和日志为准。" />
           <div className="report-topology-toolbar"><Segmented value={topologyMode} onChange={(value) => setTopologyMode(value as typeof topologyMode)} options={[{ label: '3D 全息拓扑', value: '3d' }, { label: '2D 架构图', value: '2d' }, { label: '详细节点卡片', value: 'cards' }]} /></div>
@@ -217,7 +222,7 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
           </div>}
         </> }] : []),
         ...(parsed?.backtrace ? [{ key: 'backtrace', label: '🚨 GDB 崩溃调用栈', children: <pre className="raw-report">{parsed.backtrace}</pre> }] : []),
-        { key: 'overview', label: '用例设计与配置', children: <div className="report-steps"><section className="report-step"><strong>测试目的</strong><p>{parsed?.purpose || '未提供'}</p></section><section className="report-step"><strong>操作步骤与逐步预期</strong><div style={{overflowX:'auto'}}><table className="case-description-table"><thead><tr><th>操作／检查</th><th>预期结果</th><th>实际结论</th></tr></thead><tbody>{displaySteps.map((s,i)=><tr key={i}><td>{s.title}</td><td>{s.expected || '当次未保存期望'}</td><td>{s.status}</td></tr>)}</tbody></table></div></section><section className="report-step"><strong>测试内容</strong>{parsed?.test_contents?.length ? parsed.test_contents.map((item, index) => <p key={index}>{item}</p>) : <p>未提供</p>}</section><section className="report-step"><strong>关键配置</strong>{parsed?.key_config ? <CodeEditor value={parsed.key_config} language="ini" readOnly height={360} /> : <p>未提供</p>}</section></div> },
+        { key: 'overview', label: '用例设计与配置', children: <div className="report-steps"><section className="report-step"><strong>测试目的</strong><p>{parsed?.purpose || '未提供'}</p></section><section className="report-step"><strong>操作步骤与逐步预期</strong><div style={{overflowX:'auto'}}><table className="case-description-table"><thead><tr><th>类型</th><th>操作／检查</th><th>预期结果</th><th>实际结果摘要</th><th>状态</th></tr></thead><tbody>{displaySteps.map((s,i)=>{ const item = s as any; const type = item.intent === 'action' ? '执行动作' : item.intent === 'cleanup' ? '清理' : item.intent === 'verify' ? '业务验证' : item.title?.includes('配置') ? '配置比对' : '步骤'; return <tr key={i}><td>{type}</td><td>{s.title}</td><td>{s.expected || '当次未保存期望'}</td><td style={{whiteSpace:'pre-wrap',maxWidth:360}}>{s.actual || s.actualSummary || '当次未保存实际结果'}</td><td>{s.status}</td></tr>; })}</tbody></table></div></section><section className="report-step"><strong>测试内容</strong>{parsed?.test_contents?.length ? parsed.test_contents.map((item, index) => <p key={index}>{item}</p>) : <p>未提供</p>}</section><section className="report-step"><strong>关键配置</strong>{parsed?.key_config ? <details><summary>展开关键配置（完整内容）</summary><CodeEditor value={parsed.key_config} language="ini" readOnly height={360} /></details> : <p>未提供</p>}</section></div> },
         { key: 'raw', label: '原始报告（report.txt）', children: artifact.report !== null ? <pre className="raw-report">{artifact.report}</pre> : <Empty description="本次执行没有生成原始报告" /> },
         { key: 'logs', label: '诊断日志', children: <><Select value={selectedLog || undefined} onChange={setSelectedLog} style={{ minWidth: 280, marginBottom: 14 }} placeholder="选择原始日志" options={artifact.logs.map((item) => ({ label: item.name, value: item.name }))} /><LogViewer lines={logLines} filename={selectedLog} /></> },
       ].sort((a, b) => {

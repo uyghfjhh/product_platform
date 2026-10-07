@@ -18,6 +18,9 @@ HA_COMMAND_CASES = (
         report_all_datasources=True,
         notes=(
             "JDBC 使用 preferQueryMode=simple 连接 console，覆盖 JDBC 初始化 application_name。",
+            "每条 SET NODE 命令后保存配置快照并计算前后配置 diff。",
+            "每条命令后执行 SHOW DATASOURCES/SHOW NODES/SHOW GROUP_ROUTING，按字段核对状态和写目标。",
+            "通过 single/MMR 业务连接核对实际后端端口，确认回退、恢复和写中心切换已经生效。",
             "覆盖 SET NODE ACTIVE/PARTED/WEIGHT/WRITE/PROMOTED。",
             "覆盖 SET CLUSTER ACTIVE/PARTED 和 REFRESH CLUSTER，并恢复初始配置。",
         ),

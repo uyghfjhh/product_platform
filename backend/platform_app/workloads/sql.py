@@ -49,7 +49,7 @@ def validate_script(script):
 
 def environment_fingerprint(environment):
     value = {key: environment.get(key) for key in (
-        'id', 'product_id', 'host', 'port', 'database_name', 'database_user', 'deployment_target',
+        'id', 'product_id', 'host', 'port', 'database_name', 'database_user', 'deployment_target', 'product_test_settings',
     )}
     for key in ('deployment_config', 'applied_deployment_config', 'resource_baseline_config'):
         path = environment.get(key)

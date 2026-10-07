@@ -30,6 +30,8 @@ class WorkloadInput(BaseModel):
     minimum_tps: float = Field(default=0, ge=0)
     max_average_latency_ms: float = Field(default=0, ge=0)
     jdbc_jar: str = ""
+    connection_mode: Literal['direct', 'proxy', 'compare'] = 'direct'
+    tested_build_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     environment_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @field_validator('script')
@@ -96,6 +98,13 @@ def command(settings, environment, action, parameters):
         from .defaults import default_jdbc_jar
         options.jdbc_jar = default_jdbc_jar(settings, environment)
     pgbench = resolve_driver(environment, driver, options)
+    from ..providers import provider_extensions
+    hook = provider_extensions(settings, environment['product_id']).workload_runtime
+    runtime = hook(settings, environment, options.connection_mode) if hook else None
+    if options.connection_mode != 'direct' and not runtime:
+        raise ValueError('当前产品未提供代理负载执行器')
+    if options.tested_build_sha256 and runtime and runtime['sha256'] != options.tested_build_sha256:
+        raise ValueError('审阅后 fbasecman 构建文件已变化，请重新生成计划')
     options.script = options.script or PRESETS[options.preset]
     identity = parameters.get("_workload_task_id")
     if not identity or not re.fullmatch(r"[a-f0-9-]{36}", identity):
@@ -116,11 +125,13 @@ def command(settings, environment, action, parameters):
         "pgbench": pgbench,
         "output": str(output),
         "execution_id": identity,
+        "product_runtime": runtime,
     }
     output.mkdir(parents=True, exist_ok=True)
     config_path = output / "request.json"
     config_path.write_text(json.dumps(context))
     return CommandSpec(
+        [sys.executable, '-m', runtime['module'], str(config_path)] if runtime else
         [sys.executable, str(Path(__file__).with_name("runner.py")), str(config_path)],
         settings.products_root.parent,
     )

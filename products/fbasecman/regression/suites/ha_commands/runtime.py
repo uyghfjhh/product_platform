@@ -37,6 +37,14 @@ class HaCommandRuntime(FbasecmanCaseRuntime):
 
     failure_class = HaCommandFailure
 
+    def report_document_kwargs(self, status, reason):
+        """Expose the case's documented test flow before raw command evidence."""
+        kwargs = super().report_document_kwargs(status, reason)
+        notes = [str(item) for item in getattr(self.case, "notes", ()) if str(item).strip()]
+        if notes:
+            kwargs["overview_steps"] = notes
+        return kwargs
+
 
 # ----------------------------------------------------------------------
 # 兼容导出：以下名字历史上定义在本模块，单测和外部代码仍在引用/patch。

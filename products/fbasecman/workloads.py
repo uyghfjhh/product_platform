@@ -1,6 +1,18 @@
 from products.fbasecman.regression.suites.stable.manifest import WORKLOADS
 
 
+def runtime_context(settings, environment, mode):
+    """Resolve product dependencies; never reinterpret the backend as a proxy."""
+    if mode == 'direct':
+        return None
+    from pathlib import Path
+    from .test_settings import resolve
+    value = resolve(settings, environment, inspect=True)
+    if not Path(value['psql']).is_file():
+        raise ValueError('本机 psql 不可用')
+    return {**value, 'module': 'products.fbasecman.workload_runtime', 'binary': value['fbasecman_bin']}
+
+
 def catalog(settings, environment):
     return [{
         'id': item.target, 'title': item.summary, 'description': item.name,

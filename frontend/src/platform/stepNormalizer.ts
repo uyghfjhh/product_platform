@@ -236,7 +236,7 @@ export function normalizeStep(rawStep: any, fallbackIndex: number): NormalizedSt
     if (!val) return;
     const trimmed = val.trim();
     if (!trimmed) return;
-    if (trimmed.startsWith('artifacts/') || trimmed.endsWith('.json') || trimmed.endsWith('.log')) {
+    if (trimmed.startsWith('artifacts/') || /\.(json|log|conf|diff)$/.test(trimmed)) {
       evidenceItems.push({ type: 'artifact', label: label.includes('工件') ? label : '工件证据', value: trimmed });
     } else if (trimmed.includes('\n') || trimmed.includes('[INFO]') || trimmed.includes('[ERROR]') || trimmed.includes('LOG:')) {
       evidenceItems.push({ type: 'log', label: label.includes('日志') ? label : '日志证据', value: trimmed });
@@ -287,12 +287,12 @@ export function normalizeStep(rawStep: any, fallbackIndex: number): NormalizedSt
     /\b(test|grep|awk|cmp|diff|wc)\b|\[\s|!\s*[\w./{]|for\s+\w+\s+in|while\b|until\b|case\b|exit\s+[1-9]|SELECT\b[^;]*?\bFROM\b|\bSHOW\b/i
       .test(rawCommand);
 
-  if (['prepare','action','cleanup'].includes(rawStep?.intent)) {
+  if (hasDiffContent) {
+    kind = 'diff';
+  } else if (['prepare','action','cleanup'].includes(rawStep?.intent)) {
     kind='action';
   } else if (rawStep?.intent==='verify') {
     kind='verify';
-  } else if (hasDiffContent) {
-    kind = 'diff';
   } else if (assertionType) {
     kind = assertionType === 'command_succeeds' && !commandHasCheck
       ? 'action'

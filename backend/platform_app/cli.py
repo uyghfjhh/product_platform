@@ -1,6 +1,7 @@
 """单机平台入口：一个命令启动 API 和本机任务 consumer。"""
 
 import argparse
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -70,9 +71,17 @@ def main() -> int:
     for task_id in queued:
         execute(task_id)
     consumer = subprocess.Popen([sys.executable, "-m", "platform_app.worker"])
-    app = create_app(settings, enqueuer=execute)
+    # Uvicorn re-raises SIGTERM after its shutdown. The default handler would
+    # terminate Python before our finally block, leaving a stale queue worker.
+    previous_terminate = signal.getsignal(signal.SIGTERM)
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate)
     try:
+        app = create_app(settings, enqueuer=execute)
         uvicorn.run(app, host=args.host, port=args.port)
+    except KeyboardInterrupt:
+        pass
     finally:
         consumer.terminate()
         try:
@@ -80,6 +89,7 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             consumer.kill()
             consumer.wait()
+        signal.signal(signal.SIGTERM, previous_terminate)
     return 0
 
 

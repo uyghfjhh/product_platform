@@ -568,7 +568,7 @@
       "name": "report_param_timezone_sql_parse",
       "title": "SQL_PARSE 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
       "core_id": "",
-      "summary": "在 SQL_PARSE 模式下验证会话参数行为：一个客户端设置并显示 TimeZone=Asia/Shanghai；另外两次新客户端 SHOW 也按当前用例要求返回 Asia/Shanghai。此实现只检查 SHOW 输出，不直接验证 ParameterStatus 协议报文。",
+      "summary": "在 SQL_PARSE 模式下验证单个客户端会话内 SET TimeZone 与 SHOW 返回值。新客户端的值只作为环境观察；若未采集后端 PID、复用关系或代理 GUC 缓存证据，则标记 BLOCKED，不据此判定同步失败。该用例不直接验证 ParameterStatus 协议报文。",
       "enabled": true,
       "tags": [],
       "execution_scope": {
@@ -601,7 +601,7 @@
       "name": "report_param_timezone_hint",
       "title": "HINT 模式下 Report 参数 TimeZone 与 ParameterStatus 报文同步测试",
       "core_id": "",
-      "summary": "在 HINT 模式下验证会话参数行为：一个客户端设置并显示 TimeZone=Asia/Shanghai；另外两次新客户端 SHOW 也按当前用例要求返回 Asia/Shanghai。此实现只检查 SHOW 输出，不直接验证 ParameterStatus 协议报文。",
+      "summary": "在 HINT 模式下验证单个客户端会话内 SET TimeZone 与 SHOW 返回值。新客户端的值只作为环境观察；若未采集后端 PID、复用关系或代理 GUC 缓存证据，则标记 BLOCKED，不据此判定同步失败。该用例不直接验证 ParameterStatus 协议报文。",
       "enabled": true,
       "tags": [],
       "execution_scope": {
@@ -682,7 +682,7 @@
       "name": "core_17_mmr_write_center_failover",
       "title": "MMR 写中心切换、唯一写目标与 SET NODE WRITE 持久化",
       "core_id": "CORE-17",
-      "summary": "MMR 写中心切换、唯一写目标与 SET NODE WRITE 持久化",
+    "summary": "验证 MMR 写中心故障切换、唯一写目标和 SET NODE WRITE 持久化：停止初始写中心后，promoted_cluster 主库应接管写路由；恢复原写中心并执行人工切换后，组内只能存在一个有效写目标，且切换结果在 REFRESH 后保持。",
       "enabled": true,
       "tags": []
     },

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,19 @@ def _displayable_command(text: str) -> str:
     stripped = (text or "").strip()
     if not stripped:
         return stripped
+    # Keep the human report readable. The exact argv and full paths remain in
+    # the archived command/evidence JSON; the report only needs stable labels.
+    import re
+    stripped = re.sub(
+        r"/home/[^\s'\"]+/output/[^\s'\"]+/cases/[^\s'\"]+/workdir/",
+        "$CASE_DIR/",
+        stripped,
+    )
+    stripped = re.sub(
+        r"/home/[^\s'\"]+/fbasecman_dev/build/sources/fbasecman",
+        "fbasecman",
+        stripped,
+    )
     try:
         argv = shlex.split(stripped)
     except ValueError:
@@ -79,11 +93,15 @@ def _event_steps(output_dir: Path) -> list[ReportStep]:
                 expected=details.get("expected") if details.get("expected") is not None else
                          ("程序输出必须同时包含以下标记：\n" + "\n".join(map(str, details["required"]))
                           if isinstance(details.get("required"), (list, tuple)) else None),
-                actual=details.get("output") or details.get("actual"),
+                # ``actual`` is the concise, check-specific observation. Keep
+                # the complete client stdout in ``raw_output``/evidence so a
+                # three-phase JDBC case does not repeat the entire transcript
+                # under every business assertion.
+                actual=details.get("actual") or details.get("output"),
                 result=payload.get("status"),
                 assertion=details.get("assertion"),
                 raw_output=details.get("output"),
-                actual_summary=details.get("actual"),
+                actual_summary=details.get("actual") or details.get("output"),
                 execution=([{"label": "执行内容", "text": _displayable_command(details["command"])}]
                            if details.get("command") else []),
                 evidence=([{"label": "证据", "text": evidence}]
@@ -163,7 +181,11 @@ def _event_bounds(output_dir: Path) -> tuple[str, str]:
                 event = json.loads(line)
             except ValueError:
                 continue
-            stamp = str(event.get("recorded_at") or "")[:19].replace("T", " ")
+            raw_stamp = str(event.get("recorded_at") or "")
+            try:
+                stamp = datetime.fromisoformat(raw_stamp).astimezone(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
+            except ValueError:
+                stamp = raw_stamp[:19].replace("T", " ")
             if not stamp:
                 continue
             if not started:
@@ -233,13 +255,23 @@ def write_case_artifacts(context, result, environment: dict,
     steps = _event_steps(output_dir)
     started, finished = _event_bounds(output_dir)
     status = _STATUS_MAP.get(result.verdict, "FAIL")
+    overview_steps = [(s['title'] + '：' + str(s.get('expected') or '未声明期望'))
+                      for s in (description or {}).get('steps', [])]
+    if not overview_steps:
+        overview_steps = [
+            (step.title + '：' + str(step.expected or '结构化业务步骤已记录实际证据'))
+            for step in steps
+            if step.intent == 'verify' or step.assertion
+        ]
     document = ReportDocument(
         target=result.target, status=status,
         started_at=started or finished,
         finished_at=finished or started,
         purpose=(description or {}).get('purpose') or purpose or result.target,
-        overview_steps=[s['title']+'：'+str(s.get('expected') or '未声明期望') for s in (description or {}).get('steps',[])],
-        pass_reason=((description or {}).get('final_state') or '各步骤已满足其声明期望，具体行为见逐步证据'
+        overview_steps=overview_steps,
+        pass_reason=((description or {}).get('final_state') or
+                     ("业务验证 %d 项全部通过；配置、SHOW 状态和原始证据见逐步记录。" %
+                      sum(1 for step in steps if step.intent == "verify" or step.assertion))
                      if result.verdict == "PASS" and steps else
                      "业务断言全部通过" if result.verdict == "PASS" else None),
         failure_reason=result.reason if result.verdict != "PASS" else None,

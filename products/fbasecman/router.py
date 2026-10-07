@@ -32,6 +32,11 @@ class ProfileInput(BaseModel):
             "FBCMAN_LICENSE_FILE", "/home/postgres/license/license.dat"))
 
 
+class TestSettingsInput(BaseModel):
+    fbasecman_bin: str = Field(min_length=1, max_length=4096)
+    license_dir: str = Field(min_length=1, max_length=4096)
+
+
 def create_router(settings, store) -> APIRouter:
     router = APIRouter()
 
@@ -40,6 +45,28 @@ def create_router(settings, store) -> APIRouter:
         if environment is None or environment["product_id"] != "fbasecman":
             raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
         return environment
+
+    @router.get('/api/v1/environments/{environment_id}/fbasecman-test-settings')
+    def test_settings(environment_id: str):
+        from products.fbasecman.test_settings import resolve
+        environment = product_environment(environment_id)
+        try:
+            return resolve(settings, environment, inspect=True)
+        except (ValueError, OSError, TimeoutError) as exc:
+            return {**resolve(settings, environment), 'error': str(exc)}
+
+    @router.put('/api/v1/environments/{environment_id}/fbasecman-test-settings')
+    def save_test_settings(environment_id: str, item: TestSettingsInput):
+        from products.fbasecman.test_settings import resolve
+        from platform_app.resources import validate_registration
+        environment = product_environment(environment_id)
+        candidate = {**environment, 'product_test_settings': item.model_dump()}
+        try:
+            value = resolve(settings, candidate, inspect=True)
+        except (ValueError, OSError, TimeoutError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        store.environments.update_environment(environment_id, candidate, validator=validate_registration)
+        return value
 
     @router.get("/api/v1/environments/{environment_id}/fbasecman-profile")
     def profile(environment_id: str):

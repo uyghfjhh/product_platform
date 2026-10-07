@@ -12,6 +12,40 @@ QUERIES = {
 }
 
 
+def snapshot(environment, nodes):
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC
+    import psycopg
+    from psycopg.rows import dict_row
+    queries = {**QUERIES,
+        'runtime': "SELECT pg_is_in_recovery() AS recovery, pg_postmaster_start_time() AS started_at, CASE WHEN pg_is_in_recovery() THEN pg_last_wal_receive_lsn() ELSE pg_current_wal_lsn() END::text AS wal_position, pg_last_wal_replay_lsn()::text AS replay_position",
+        'timeline': "SELECT timeline_id FROM pg_control_checkpoint()",
+        'senders': "SELECT pid,backend_start,application_name,state,sync_state,sent_lsn::text,write_lsn::text,flush_lsn::text,replay_lsn::text,write_lag::text,flush_lag::text,replay_lag::text FROM pg_stat_replication",
+        'receivers': "SELECT status,written_lsn::text,flushed_lsn::text,last_msg_receipt_time,sender_host,sender_port FROM pg_stat_wal_receiver",
+        'slots': "SELECT slot_name,slot_type,active,restart_lsn::text,CASE WHEN NOT pg_is_in_recovery() THEN pg_wal_lsn_diff(pg_current_wal_lsn(),restart_lsn) END AS retained_bytes FROM pg_replication_slots",
+    }
+
+    def sample(node):
+        result = {'node': node, 'observed_at': datetime.now(UTC).isoformat(), 'sections': {}}
+        try:
+            with psycopg.connect(host=node['host'], port=node['port'], dbname=environment['database_name'],
+                                 user=environment['database_user'], connect_timeout=3, row_factory=dict_row,
+                                 options='-c statement_timeout=2000 -c default_transaction_read_only=on -c application_name=platform_monitor -c client_encoding=UTF8') as connection:
+                for name, query in queries.items():
+                    try:
+                        with connection.transaction():
+                            result['sections'][name] = {'valid': True, 'rows': connection.execute(query).fetchall(),
+                                                        'observed_at': datetime.now(UTC).isoformat()}
+                    except psycopg.Error as exc:
+                        result['sections'][name] = {'valid': False, 'error': exc.diag.message_primary or '统计或权限不可用'}
+        except psycopg.Error:
+            result['error'] = '连接或认证不可用，不能判定实例状态'
+        return result
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return {'observed_at': datetime.now(UTC).isoformat(), 'nodes': list(pool.map(sample, nodes))}
+
+
 def section(node, name):
     value=node.get('sections',{}).get(name,{})
     return value, value.get('rows',[]) if value.get('valid') and not node.get('error') else []

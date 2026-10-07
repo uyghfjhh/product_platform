@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Empty } from 'antd';
 export type TrendPoint = { time: string; value: number | null; peak?: number | null };
-export default function MonitoringTrend({ points, unit, label, gapSeconds=45 }: { points: TrendPoint[]; unit: string; label: string; gapSeconds?: number }) {
+export default function MonitoringTrend({ points, unit, label, gapSeconds=45, range }: { points: TrendPoint[]; unit: string; label: string; gapSeconds?: number; range?: { start: string; end: string } }) {
   const ref=useRef<HTMLDivElement>(null);const [width,setWidth]=useState(600);
   useEffect(()=>{const element=ref.current;if(!element)return;const observer=new ResizeObserver(entries=>setWidth(Math.max(120,entries[0].contentRect.width)));observer.observe(element);return()=>observer.disconnect();},[]);
   const data=points.map(p=>({...p,t:Date.parse(p.time)}));
   const valid=data.filter(p=>p.value!==null && Number.isFinite(p.value) && Number.isFinite(p.t));
   if(valid.length<2)return <div ref={ref}><Empty description="等待至少两个有效样本" /></div>;
-  const first=data[0].t,last=data[data.length-1].t,maximum=Math.max(1,...valid.flatMap(p=>[p.value!,p.peak??0]));
+  const first=range?Date.parse(range.start):data[0].t,last=range?Date.parse(range.end):data[data.length-1].t,maximum=Math.max(1,...valid.flatMap(p=>[p.value!,p.peak??0]));
   const left=55,right=width-16,bottom=132;
   const x=(t:number)=>left+(t-first)/Math.max(1,last-first)*(right-left);
   const y=(v:number)=>bottom-v/maximum*95;

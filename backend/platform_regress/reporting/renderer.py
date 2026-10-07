@@ -3,6 +3,14 @@
 
 def _append_value(lines, prefix, value):
     rendered = str(value) if value is not None else "<empty>"
+    if any(label in prefix for label in ("执行内容", "执行命令", "手动启动命令", "配置文件")):
+        import re
+        rendered = re.sub(
+            r"/home/[^\s'\"]+/output/[^\s'\"]+/cases/[^\s'\"]+/workdir/",
+            "$CASE_DIR/", rendered)
+        rendered = re.sub(
+            r"/home/[^\s'\"]+/fbasecman_dev/build/sources/fbasecman",
+            "fbasecman", rendered)
     value_lines = rendered.splitlines() or ["<empty>"]
     if len(value_lines) == 1:
         lines.append("%s%s" % (prefix, value_lines[0]))
@@ -45,7 +53,7 @@ def _is_artifact_reference(text):
     stripped = str(text).strip()
     if not stripped or "\n" in stripped:
         return False
-    return stripped.startswith("artifacts/") or stripped.endswith((".json", ".log"))
+    return stripped.startswith("artifacts/") or stripped.endswith((".json", ".log", ".conf", ".diff"))
 
 
 def render_report(document):
@@ -62,6 +70,21 @@ def render_report(document):
         lines.append("失败原因: %s" % document.failure_reason)
 
     lines.extend(["", "验证目的:", "  %s" % document.purpose])
+    if document.steps:
+        verifies = [s for s in document.steps if s.intent == "verify" or s.assertion or s.checks]
+        actions = [s for s in document.steps if s.intent in ("action", "cleanup")]
+        diffs = [s for s in document.steps if s.coverage == "diff" or "配置文件实际 diff" in str(s.title)]
+        failed = [s for s in document.steps if s.result not in (None, "PASS")]
+        lines.extend([
+            "",
+            "执行摘要:",
+            "  业务验证: %d 项（通过 %d，失败 %d）" % (
+                len(verifies), sum(s.result == "PASS" for s in verifies),
+                sum(s.result not in (None, "PASS") for s in verifies)),
+            "  执行动作/清理: %d 项" % len(actions),
+            "  配置比对: %d 项" % len(diffs),
+            "  未通过步骤: %d 项" % len(failed),
+        ])
     if document.coverage_items:
         lines.extend(["", "%s:" % document.coverage_title])
         lines.extend(

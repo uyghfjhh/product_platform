@@ -66,6 +66,8 @@ class EnvironmentsStore:
                     raise ConflictError("环境有活动任务，不能修改登记")
                 validator(self.owner, payload)
             env.update({key: payload.get(key) for key in columns})
+            if payload.get('product_test_settings') is not None:
+                env['product_test_settings'] = payload['product_test_settings']
             for key in ("desired_deployment_plan_id", "deployment_status",
                         "resource_baseline_config"):
                 if key in payload:

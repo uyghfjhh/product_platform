@@ -19,6 +19,13 @@ from .providers import provider_for
 from .topology import configured_topology
 
 
+def observation_fingerprint(settings, environment):
+    topology = configured_topology(settings, environment)
+    path = environment.get('deployment_config')
+    config_digest = hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else ''
+    return hashlib.sha256(json.dumps([environment, topology['nodes'], config_digest], sort_keys=True, default=str).encode()).hexdigest()
+
+
 class MonitoringService:
     def __init__(self, settings, store):
         self.settings, self.store = settings, store
@@ -125,9 +132,7 @@ class MonitoringService:
                         continue
                     topology = configured_topology(self.settings, environment)
                     nodes = topology['nodes']
-                    config_path=environment.get('deployment_config')
-                    config_digest=hashlib.sha256(Path(config_path).read_bytes()).hexdigest() if config_path else ''
-                    fingerprint = hashlib.sha256(json.dumps([environment, nodes, config_digest], sort_keys=True, default=str).encode()).hexdigest()
+                    fingerprint = observation_fingerprint(self.settings, environment)
                     with self.connection() as db:
                         last = db.execute('SELECT stamp,fingerprint,payload FROM samples WHERE environment=? ORDER BY stamp DESC LIMIT 1', (identity,)).fetchone()
                     if last and last[1] == fingerprint and time.time()-last[0] < 15:

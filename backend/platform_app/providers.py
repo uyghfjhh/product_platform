@@ -191,6 +191,7 @@ class ProviderExtensions:
     after_command: Callable | None = None
     progress_observer: Callable | None = None
     workload_catalog: Callable | None = None
+    workload_runtime: Callable | None = None
 
 
 def _extensions(manifest, provider):
@@ -214,6 +215,7 @@ def _extensions(manifest, provider):
         after_command=hook("after_command"),
         progress_observer=hook("progress_observer"),
         workload_catalog=hook('workload_catalog'),
+        workload_runtime=hook('workload_runtime'),
     )
 
 

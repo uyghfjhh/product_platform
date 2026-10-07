@@ -245,7 +245,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from .reporting.case_report import write_case_artifacts
             write_case_artifacts(context, result, environment,
-                                 purpose=str(getattr(case, "title", "") or ""))
+                                 purpose=str(
+                                     getattr(case, "_catalog_summary", None)
+                                     or getattr(case, "title", "")
+                                     or getattr(case, "summary", "")
+                                     or ""))
         except Exception:  # noqa: BLE001 - report generation never fails a verdict
             pass
         # Flaky tracking: append one verdict line per executed case to the

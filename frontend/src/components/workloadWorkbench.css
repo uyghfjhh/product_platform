@@ -21,17 +21,24 @@
 .wb-library-filters .ant-select { width: 100%; }
 .wb-selection-actions { display: flex; justify-content: space-between; padding: 0 13px 9px; border-bottom: 1px solid var(--border-subtle); }
 .wb-library-list { max-height: 440px; overflow-y: auto; overscroll-behavior: contain; }
-.wb-library-row { display: flex; align-items: flex-start; gap: 11px; padding: 15px 18px; border-bottom: 1px solid var(--border-subtle); border-left: 3px solid transparent; transition: background .15s, border-color .15s; }
+.wb-library-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 12px; border-bottom: 1px solid var(--border-subtle); border-left: 3px solid transparent; transition: background .15s, border-color .15s; }
 .wb-library-row > .ant-checkbox-wrapper { margin-top: 1px; }
 .wb-library-row:hover { background: var(--bg-card-hover); }
 .wb-library-row.active { background: var(--bg-surface-elevated); border-left-color: var(--border-active); }
 .wb-library-row.unavailable .wb-library-open > strong { color: var(--text-secondary); }
 .wb-library-open { display: block; flex: 1; min-width: 0; padding: 0; color: inherit; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
 .wb-library-open:focus-visible { outline: 2px solid var(--border-active); outline-offset: 5px; border-radius: 3px; }
-.wb-library-open > strong { display: block; color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.5; }
+.wb-library-open strong { display: block; color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.5; }
 .wb-library-open > span { display: block; margin-top: 3px; font-size: 11px; line-height: 1.6; color: var(--text-muted); overflow-wrap: anywhere; }
 .wb-library-open > div { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .wb-library-open .ant-tag { margin: 0; font-size: 10px; line-height: 19px; padding-inline: 6px; }
+.wb-library-list .ant-collapse-content-box { padding: 0 !important; }
+.wb-group-label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.wb-group-label small { color: var(--text-muted); font-size: 10px; }
+.wb-group-label .ant-tag { margin: 0; font-size: 10px; }
+.wb-library-open .wb-compact-title { margin: 0; justify-content: space-between; align-items: center; flex-wrap: nowrap; }
+.wb-compact-title strong { overflow-wrap: anywhere; }
+.wb-compact-title .ant-tag { flex: none; }
 .wb-custom-button.ant-btn { width: calc(100% - 32px); margin: 15px 16px; height: 35px; border-style: dashed; }
 .wb-config { min-height: 560px; }
 .wb-config > .wb-panel-heading { padding-bottom: 12px; }

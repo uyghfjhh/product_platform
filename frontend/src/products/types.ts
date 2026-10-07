@@ -20,6 +20,7 @@ type CanvasProps = {
 };
 
 export type ProductFrontend = {
+  TestSettings?: ComponentType<{ environment: Environment; onChanged: () => Promise<void> | void }>;
   deployment?: () => DeploymentProductAdapter;
   test?: (mode?: TestMode) => TestProductAdapter;
   testMode?: (environment?: Environment) => TestMode;

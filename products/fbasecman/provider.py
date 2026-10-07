@@ -41,7 +41,8 @@ def native_case_context(settings, environment):
         raise RuntimeError("fbasecman 原生用例需要 mmr1/mmr2 两个主节点")
     runtime_file = settings.product_regress_root("fbasecman") / "regress.yaml"
     runtime = yaml.safe_load(runtime_file.read_text(encoding="utf-8"))
-    fbasecman = runtime.get("fbasecman", {})
+    from products.fbasecman.test_settings import resolve
+    tested = resolve(settings, environment)
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     proxy_port = listener.getsockname()[1]
@@ -60,10 +61,8 @@ def native_case_context(settings, environment):
                             "port": primaries["mmr2"]["port"]}},
         "local_host": os.environ.get("FBCMAN_LOCAL_HOST") or "127.0.0.1",
         "user": environment.get("database_user") or "postgres",
-        "fbasecman_bin": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_BIN")
-        or fbasecman.get("fbasecman_bin"),
-        "license_dir": os.environ.get("PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR")
-        or fbasecman.get("license_dir"),
+        "fbasecman_bin": tested['fbasecman_bin'],
+        "license_dir": tested['license_dir'],
         "proxy_port": proxy_port,
     }
     extras = {}
@@ -172,9 +171,17 @@ class FbasecmanProvider:
             raise ValueError("fbasecman 用例目录版本无效")
         return payload["cases"]
 
+    def monitoring_snapshot(self, environment, nodes):
+        from platform_app.postgres_monitoring import snapshot
+        return snapshot(environment, nodes)
+
     def workload_catalog(self, settings, environment):
         from products.fbasecman.workloads import catalog
         return catalog(settings, environment)
+
+    def workload_runtime(self, settings, environment, mode):
+        from products.fbasecman.workloads import runtime_context
+        return runtime_context(settings, environment, mode)
 
     def observe_database(self, environment):
         # The common executor checks the configured endpoint. Proxy-specific
@@ -224,6 +231,8 @@ class FbasecmanProvider:
             regress_context = settings.profile_dir(environment["id"]) / "fixture" / "test_context.yaml"
             if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")
+            from products.fbasecman.test_settings import regression_snapshot
+            tested_build_context = regression_snapshot(settings, environment)
             if target in CASE_TARGETS:
                 output = settings.artifact_dir("fbasecman", environment["id"])
                 case_context = {
@@ -235,6 +244,7 @@ class FbasecmanProvider:
                 if native_target:
                     case_context.update(
                         native_case_context(settings, environment))
+                case_context.update(tested_build_context)
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -250,6 +260,7 @@ class FbasecmanProvider:
                     "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 case_context.update(suite_case_context(settings, environment))
+                case_context.update(tested_build_context)
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -266,6 +277,7 @@ class FbasecmanProvider:
                     "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 case_context.update(suite_case_context(settings, environment))
+                case_context.update(tested_build_context)
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -281,6 +293,7 @@ class FbasecmanProvider:
                     "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
                 }
                 case_context.update(suite_case_context(settings, environment))
+                case_context.update(tested_build_context)
                 return CommandSpec([
                     sys.executable, "-m", "platform_regress.cli",
                     "--product-dir", str(Path(__file__).resolve().parent),
@@ -298,6 +311,7 @@ class FbasecmanProvider:
                 "state_root": str(settings.artifact_dir("fbasecman", environment["id"])),
             }
             case_context.update(suite_case_context(settings, environment))
+            case_context.update(tested_build_context)
             return CommandSpec([
                 sys.executable, "-m", "platform_regress.cli",
                 "--product-dir", str(Path(__file__).resolve().parent),
@@ -314,7 +328,9 @@ class FbasecmanProvider:
         if action == "stability.fbasecman":
             product = discover_products(settings.products_root)["fbasecman"]
             script = product.cli_path("stable")
-            command = [str(script), "run"]
+            from products.fbasecman.test_settings import regression_snapshot
+            snapshot = regression_snapshot(settings, environment)
+            command = [str(script), '--config', snapshot['regress_extra_configs'][0], "run"]
             if target != "all":
                 command.append(target)
             return CommandSpec(command, settings.product_regress_root("fbasecman"))

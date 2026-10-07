@@ -149,6 +149,21 @@ CASES = {item["target"]: NATIVE_CASES.get(
     item["target"], _migrating_case(item)) for item in CASE_METADATA}
 CASE_ORDER = [item["target"] for item in CASE_METADATA]
 
+# Keep execution-time descriptions attached to every case object.  The
+# platform report writer receives the case instance, while the catalog is the
+# authoritative source for the user-facing purpose.  Without this binding,
+# native cases fall back to their internal target (for example
+# ``ha_commands.sql_parse_extended_protocol``) and the generated report loses
+# the documented test objective even though the catalog contains it.
+for _definition in CASE_METADATA:
+    _case = CASES.get(_definition["target"])
+    if _case is None:
+        continue
+    _case._catalog_title = _definition.get("title") or _definition.get("summary")
+    _case._catalog_summary = _definition.get("summary") or _case._catalog_title
+    if _definition.get("execution_scope"):
+        _case.execution_scope = _definition["execution_scope"]
+
 
 # Runtime reports already declare their detailed purpose and expected outcomes.
 # Archive that purpose for native cases too, without inventing unexecuted steps.

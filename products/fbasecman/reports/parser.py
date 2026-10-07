@@ -698,8 +698,27 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
         })
 
     for step in steps:
+        clean = re.sub(r"^步骤\s*\d+[:：]\s*", "", step["title"])
         if re.sub(r"^步骤\s*\d+[:：]\s*", "", step["title"]).startswith(("执行 SQL", "执行命令")):
             step["intent"] = "action"
+        else:
+            if any(marker in clean for marker in ("启动 fbasecman", "探活初始化", "数据同步基线",
+                                                  "环境收尾", "失败现场诊断", "清理", "恢复原始")):
+                step["intent"] = "cleanup" if any(marker in clean for marker in ("环境收尾", "失败现场诊断", "清理")) else "action"
+
+        # Older ha_commands reports were written before the structured event
+        # fields (analysis/intent/assertion) were persisted. Keep those
+        # historical reports readable with explicit transport semantics rather
+        # than showing a bare PASS or an empty comparison.
+        if step.get("intent") in ("action", "cleanup") or clean.startswith(("查看", "执行 SQL", "执行命令")):
+            step["intent"] = step.get("intent") or "action"
+            step.setdefault("expected", "执行记录已保存；业务结果由后续状态验证步骤判断")
+            step.setdefault("actual", step.get("command") or "执行完成")
+            step.setdefault("analysis", "这是执行/准备记录，不单独证明产品功能通过。")
+        elif (step.get("expected") and step.get("actual")) or clean.startswith(("核对", "验证", "确认")):
+            step["intent"] = step.get("intent") or "verify"
+            # Missing historical expectations or comparison rules remain
+            # missing. A title and PASS label cannot reconstruct an assertion.
 
     # SDK 事件是同次执行的结构化证据；补回旧文本遗漏的业务步骤。
     from platform_regress.reporting.case_report import _event_steps, _steps_payload
@@ -715,6 +734,14 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
             match.update({key: value for key, value in mapped.items() if value is not None})
         elif fact.get("intent") == "verify" or fact.get("assertion") or not clean_title.startswith("执行"):
             steps.append(mapped)
+
+    # Some suite executors persist expected/actual but omit a human analysis
+    # field. Preserve the factual comparison without inventing a new verdict.
+    for step in steps:
+        if (step.get("status") in ("PASS", "FAIL") and step.get("expected") and
+                step.get("actual") and not step.get("analysis") and
+                step.get("intent") != "action"):
+            step["analysis"] = "已将本步骤保存的实际结果与声明期望进行核对。"
 
     from products.fbasecman.reports.observations import readable_jdbc_observations
     for step in steps:

@@ -1,8 +1,10 @@
 import type { ProductFrontend } from '../../frontend/src/products/types';
 import ReportViewer from './frontend/ReportViewer';
 import SceneDetails from './frontend/SceneDetails';
+import TestSettings from './frontend/TestSettings';
 
 const frontend: ProductFrontend = {
+  TestSettings,
   ReportViewer,
   sceneDetails: { kindPrefix: 'fbasecman.', component: SceneDetails },
   testMode: () => 'cman',
