@@ -1,5 +1,11 @@
 # 当前实施状态
 
+## 2026-10-08：Session 修复 review 与中文注释
+
+- review 发现 A/B 固定会话隔离检查只有参数值，未证明各自后端不变；补齐 SET 前后地址／端口／PID 相等及同时在线 A/B 物理连接不同的断言，新增三种回归覆盖正确绑定、隐式换连接和共享后端。
+- 本次产品修复新增 C 注释及配套用例新增说明改为中文。产品两处 session 修复未发现新的确定性缺陷；故障／COPY／未结束协议周期未做全量专项，不宣称覆盖完成。
+- 验证：74 项 GUC 专项通过；真机 backend_redeploy_sql_parse 任务 f97aac1c-b456-4472-b874-4b049104d158 成功，含补强的物理身份断言；产品重新编译通过；全量 702 passed、13 skipped、3 个原有无关失败；F/I 与 diff 检查通过。
+
 ## 2026-10-08：Session 固定连接与 GUC 同步职责分离
 
 - 产品规则在 session pool 下关闭有效 enable_guc_sync；GUC 交由固定后端真实执行，已有 session 后端读写请求保持原物理绑定。transaction 路径保持同步机制。产品源码两处修复位于 fbasecman_dev/sources/rules.c 和 sources/parser/fb_frontend.c；重编译带 License 的 Debug/SCRAM 构建通过。

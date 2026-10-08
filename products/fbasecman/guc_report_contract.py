@@ -1,4 +1,4 @@
-"""Business explanations for GUC checks; archived observations remain authoritative."""
+"""GUC 检查的业务说明；判定始终以归档的实测事实为准。"""
 GROUPS = {
     'extended_boundary': ('预处理 SET：解析不生效、执行才生效', '检查只解析或绑定 SET 时参数不提前改变，真正 Execute 后才生效；不同语句和 Portal 的候选值互不覆盖，关闭未执行语句后候选被清理。'),
     'transaction_sync': ('事务内 GUC：提交保留、回滚恢复与后端同步', '检查 SET、RESET、RESET ALL 在提交后保留、回滚后恢复；SET LOCAL 仅在当前事务内生效，失败事务和多语句请求不能提交错误的参数状态。'),

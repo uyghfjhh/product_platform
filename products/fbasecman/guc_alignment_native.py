@@ -431,8 +431,7 @@ class ScenarioRunner:
 
     def redeploy(self, probe, expected):
         if self.plan.pool == "session":
-            # A session pool pins the physical connection. Cross-backend
-            # deployment belongs to transaction-pool variants, not this one.
+            # session 固定物理连接；跨后端参数同步仅由事务池分支验证。
             before = probe.snapshot(expected)
             after = probe.snapshot(expected)
             self.verify("session pool 原会话后端保持且参数正确", identity(before), identity(after),
@@ -919,7 +918,7 @@ class ScenarioRunner:
         defaults = self.default_values()
         trial = '32MB' if normalize('work_mem', defaults['work_mem']) != normalize('work_mem', '32MB') else '64MB'
         with self.client('fixed-session') as probe:
-            # Allocate a real backend before SET, including the read-first path.
+            # SET 前先分配真实后端，覆盖首条请求为读查询的路径。
             probe.sql('SELECT 1', protocol='Q', tag='SELECT 1')
             origin = probe.snapshot(defaults)
             self.verify_route(origin)
@@ -946,14 +945,21 @@ class ScenarioRunner:
                     {'默认值': defaults['work_mem'], 'A 设置值': a_value, 'B 设置值': b_value},
                     len({normalize('work_mem', v) for v in (defaults['work_mem'], a_value, b_value)}) == 3)
         if self.plan.pool == "session":
-            # Session pooling cannot hand off a live client's physical backend.
+            # session 客户端连接期间不能把其物理后端交给其他客户端。
             with self.client("A") as a, self.client("B") as b:
-                a.snapshot(defaults)
-                b.snapshot(defaults)
+                a_origin = a.snapshot(defaults)
+                b_origin = b.snapshot(defaults)
                 a.sql(f"SET work_mem='{a_value}'", tag="SET")
                 b.sql(f"SET work_mem='{b_value}'", tag="SET")
-                a.snapshot({"work_mem": a_value})
-                b.snapshot({"work_mem": b_value})
+                a_after = a.snapshot({"work_mem": a_value})
+                b_after = b.snapshot({"work_mem": b_value})
+                for client, before, after in (('A', a_origin, a_after), ('B', b_origin, b_after)):
+                    self.verify(f'session 客户端 {client} 的 SET 前后保持同一物理连接',
+                                connection_facts(before), connection_facts(after), identity(before) == identity(after))
+                self.verify('同时在线的 session 客户端 A/B 绑定不同物理连接',
+                            'A/B 的地址、端口和 PID 组合不同',
+                            {'A': connection_facts(a_after), 'B': connection_facts(b_after)},
+                            identity(a_after) != identity(b_after))
                 with self.client("C") as c:
                     initial = c.snapshot()
                     expected = self.default_values()["work_mem"]

@@ -458,3 +458,32 @@ def test_session_contract_keeps_all_matrix_branches_without_claiming_sync():
     guard = [p for p in alignment.make_plan('backend_redeploy') if p.scenario == 'session_passthrough']
     assert {(p.topology, p.protocol) for p in guard} == {('mmr','Q'),('mmr','E'),('replication','Q'),('replication','E')}
     assert all(p.pool == 'session' and p.enable_sync and not p.reserve for p in guard)
+
+
+@pytest.mark.parametrize('change_pid,share_backend', [(False, False), (True, False), (False, True)])
+def test_session_isolation_requires_fixed_and_distinct_backends(tmp_path, change_pid, share_backend):
+    from contextlib import contextmanager
+    runner = alignment.ScenarioRunner(CaseContext('guc.session', tmp_path),
+        alignment.CheckPlan('mmr', 'session', False, 'Q', 'session_backend_redeploy', False), 'sql_parse', 1)
+    runner.default_values = lambda: {'work_mem': '4MB', 'statement_timeout': '0', 'TimeZone': 'UTC'}
+    class Probe:
+        def __init__(self, name):
+            self.name, self.value, self.changed = name, '4MB', False
+        def sql(self, sql, **kwargs):
+            self.value = sql.split("'")[1]
+            self.changed = True
+        def snapshot(self, expected=None):
+            pid = '1' if share_backend or self.name == 'A' else '2' if self.name == 'B' else '3'
+            if change_pid and self.changed and self.name == 'A':
+                pid = '99'
+            return {'host': '127.0.0.1', 'port': '15021', 'pid': pid, 'recovery': 'false',
+                    'client': self.name, 'work_mem': self.value}
+    @contextmanager
+    def client(name):
+        yield Probe(name)
+    runner.client = client
+    if change_pid or share_backend:
+        with pytest.raises(AssertionError):
+            runner.pool_reuse()
+    else:
+        runner.pool_reuse()
