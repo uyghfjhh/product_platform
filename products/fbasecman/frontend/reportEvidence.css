@@ -43,3 +43,8 @@
 .cman-business-table th, .cman-business-table td { border: 1px solid var(--border-subtle); padding: 12px; text-align: left; vertical-align: top; }
 .cman-business-table th { background: var(--bg-surface-elevated); }
 .cman-business-table pre { border: 0; padding: 0; margin: 6px 0; }
+
+.cman-process-step { margin: 16px 0; padding: 16px; border-left: 3px solid var(--border-subtle); background: var(--bg-surface-elevated); }
+.cman-process-step > header { margin-bottom: 16px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cman-process-step label { margin-top: 12px; }
+.cman-process-step pre { margin: 6px 0 14px; }

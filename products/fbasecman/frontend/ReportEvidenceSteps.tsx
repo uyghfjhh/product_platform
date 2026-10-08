@@ -4,7 +4,7 @@ import { normalizeStep } from '../../../frontend/src/platform/stepNormalizer';
 import './reportEvidence.css';
 
 type BusinessCheck = { operation: string; command?: string; expected: string; actual: string; analysis: string;
-  status: string; measurement_sql?: string; measurement_evidence?: string };
+  status: string; driver?: string; evidence?: string; measurement_sql?: string; measurement_evidence?: string };
 
 export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evidenceBasePath?: string }) {
   const [showActions, setShowActions] = useState(false);
@@ -12,6 +12,8 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
   const [pageSize, setPageSize] = useState(50);
   const normalized = useMemo(() => steps.map((step, index) => normalizeStep(step, index)).map((step, index) => ({
     ...step,
+    processSteps: Array.isArray((steps[index] as Record<string, unknown>)?.process_steps)
+      ? (steps[index] as { process_steps: BusinessCheck[] }).process_steps : [],
     businessChecks: Array.isArray((steps[index] as Record<string, unknown>)?.business_checks)
       ? (steps[index] as { business_checks: BusinessCheck[] }).business_checks : [],
     baselineContext: String((steps[index] as Record<string, unknown>)?.baseline_context || ''),
@@ -53,19 +55,19 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
       const content = items.map(step => <section className="cman-evidence-card" key={step.key}>
       <header><div><span className="cman-step-number">{offset + paged.indexOf(step) + 1}</span><strong>{label ? step.cleanTitle.slice(label.length + 1) : step.cleanTitle}</strong><span className="cman-step-kind">{step.kind === 'action' ? '执行动作' : step.kind === 'diff' ? '配置比对' : '结果验证'}</span></div><Tag color={step.status === 'PASS' ? 'success' : step.status === 'FAIL' ? 'error' : 'default'}>{step.status}</Tag></header>
       {step.exampleCode && <div className="cman-evidence-code"><label>关键代码（节选）</label><pre>{step.exampleCode}</pre></div>}
-      {compact && !showActions && step.businessChecks.length > 0 ? <div className="cman-business-summary">
+      {compact && !showActions && step.processSteps.length > 0 ? <div className="cman-business-summary">
         {step.expected && <><label>测试目的与通过条件</label><p>{step.expected}</p></>}
         {step.reportScope && <p className="cman-business-scope">{Object.entries(step.reportScope).map(([key, value]) => `${key}：${value}`).join(' · ')}</p>}
         {step.baselineContext && <details><summary>默认值与会话初始状态（本次实测）</summary><pre>{step.baselineContext}</pre></details>}
-        <div className="cman-business-table-wrap"><table className="cman-business-table"><thead><tr>
-          <th>执行内容</th><th>预期结果</th><th>实际结果与取值来源</th><th>分析与判定</th>
-        </tr></thead><tbody>{step.businessChecks.map((check, index) => <tr key={index}>
-          <td><strong>{check.operation}</strong>{check.command && <pre>{check.command}</pre>}</td>
-          <td><pre>{check.expected}</pre></td><td><pre>{check.actual}</pre>
-            {check.measurement_sql && <details><summary>取值 SQL 与原始响应</summary><pre>{check.measurement_sql}</pre>
-              {check.measurement_evidence && <p>响应附件：{check.measurement_evidence}</p>}</details>}</td>
-          <td><p>{check.analysis}</p><Tag color={check.status === 'PASS' ? 'success' : check.status === 'FAIL' ? 'error' : 'default'}>{check.status}</Tag></td>
-        </tr>)}</tbody></table></div>
+        <div className="cman-process-flow">{step.processSteps.map((check, index) => <section className="cman-process-step" key={index}>
+          <header><strong>{index + 1}. {check.operation}</strong><Tag>{check.driver}</Tag></header>
+          {check.command && <><label>实际执行命令／SQL</label><pre className="cman-inline-command">{check.command}</pre></>}
+          <label>执行前声明的预期</label><pre>{check.expected}</pre>
+          <label>实际返回内容</label><pre>{check.actual}</pre>
+          <div className="cman-inline-analysis"><strong>分析与判定</strong><p>{check.analysis}</p>
+            <Tag color={check.status === 'PASS' ? 'success' : check.status === 'FAIL' ? 'error' : 'default'}>{check.status}</Tag></div>
+          {check.evidence && <details><summary>原始响应附件</summary><p>{check.evidence}</p></details>}
+        </section>)}</div>
       </div> : <div className="cman-evidence-comparison"><div>{step.command && !step.exampleCode && <><label>执行内容</label><pre className="cman-actual-output cman-inline-command">{step.command}</pre></>}{step.expected && <><label>期望结果</label><p>{step.expected}</p></>}<label>实际结果</label>{step.actualPayload?.type === 'diff' ? <pre className="cman-actual-output cman-diff-output">{(step.actualPayload.raw || '').split('\n').map((line, i) => <span key={i} className={line.startsWith('+') && !line.startsWith('+++') ? 'diff-add' : line.startsWith('-') && !line.startsWith('---') ? 'diff-remove' : line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++') ? 'diff-header' : ''}>{line}{'\n'}</span>)}</pre> : <pre className="cman-actual-output">{step.actualSummary || step.actualPayload?.raw || '本次未记录实际结果'}</pre>}{step.analysis && <div className="cman-inline-analysis"><strong>分析与结论</strong><p>{step.analysis}</p></div>}</div></div>}
       {step.evidenceItems.filter(item => item.type !== 'artifact').map((item, evidenceIndex) => <details key={evidenceIndex}><summary>{item.label}</summary><pre>{item.value}</pre></details>)}
     </section>);

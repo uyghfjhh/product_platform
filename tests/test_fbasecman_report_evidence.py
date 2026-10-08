@@ -314,3 +314,27 @@ def test_guc_skipped_summary_does_not_claim_unexecuted_scope_passed():
     assert result['actual']['原因'] == '单账号范围排除'
     assert '不能视为已验证' in result['expected']
     assert '不能据此补造' in result['analysis']
+
+
+def test_guc_process_preserves_sql_response_order_and_does_not_invent_psql():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    rows = [
+        {'key': 'set', 'passed': True, 'intent': 'action', 'title': '设置 work_mem',
+         'command': "Q：SET work_mem='32MB'", 'expected': {'tags': ['SET']},
+         'actual': {'received': ['C','Z'], 'tags': ['SET'], 'rows': []}},
+        {'key': 'show', 'passed': True, 'intent': 'action', 'title': '查询参数',
+         'command': 'Q：SELECT current_setting(\'work_mem\')', 'expected': {'tags': ['SELECT 1']},
+         'actual': {'received': ['D','T','C','Z'], 'tags': ['SELECT 1'], 'rows': [['32MB']]}},
+        {'key': 'compare', 'passed': True, 'intent': 'verify', 'title': '核对参数',
+         'expected': {'work_mem': '32MB'}, 'actual': {'work_mem': '32MB'}},
+    ]
+    summary = {'title': 'mmr/hint/session_backend_redeploy 子场景结论', 'status': 'PASS',
+               'actual': {'scenario': 'session_backend_redeploy', 'topology': 'mmr', 'pool': 'transaction',
+                          'protocol': 'Q', 'status': 'PASS', 'steps': rows}}
+    result = _present_guc_alignment_steps([summary])[0]
+    process = result['process_steps']
+    assert [r['operation'] for r in process] == ['设置 work_mem', '查询参数', '核对参数']
+    assert process[0]['actual'] == '命令返回：SET'
+    assert '查询返回：\n32MB' in process[1]['actual']
+    assert process[0]['driver'] == '原始 PostgreSQL 协议客户端'
+    assert 'psql' not in str(process)

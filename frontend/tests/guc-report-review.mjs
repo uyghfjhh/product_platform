@@ -20,21 +20,21 @@ try {
   if (!(await modal.locator('.cman-scenario-group').first().getAttribute('open') !== null)) {
     await modal.locator('.cman-scenario-group > summary').first().click();
   }
-  await modal.locator('.cman-business-table').first().waitFor();
-  const firstTable = modal.locator('.cman-business-table').first();
-  assert.deepEqual(await firstTable.locator('thead th').allTextContents(), ['执行内容', '预期结果', '实际结果与取值来源', '分析与判定']);
+  await modal.locator('.cman-process-flow').first().waitFor();
+  const firstTable = modal.locator('.cman-process-flow').first();
+  await firstTable.getByText('实际返回内容', { exact: true }).first().waitFor();
   const text = await modal.locator('.cman-business-summary').first().textContent();
   assert.match(text, /work_mem/);
   assert.match(text, /32MB/);
   assert.match(text, /后端 PID|后端进程/);
-  const measurement = modal.getByText('取值 SQL 与原始响应', { exact: true }).first();
-  await measurement.click();
-  await modal.getByText(/SELECT current_setting\('work_mem'\)/).first().waitFor();
+  assert.match(await firstTable.textContent(), /实际执行命令／SQL/);
+  assert.match(await firstTable.textContent(), /SELECT current_setting/);
+  assert.match(await firstTable.textContent(), /命令返回：SET/);
   await modal.getByRole('button', { name: /查看完整步骤与协议证据/ }).click();
-  assert.equal(await modal.locator('.cman-business-table').count(), 0);
+  assert.equal(await modal.locator('.cman-process-flow').count(), 0);
   await modal.getByRole('button', { name: '只看业务验证', exact: true }).click();
   if (!(await firstTable.isVisible())) await modal.locator('.cman-scenario-group > summary').first().click();
   await firstTable.waitFor();
   assert.deepEqual(errors, []);
-  console.log('GUC report browser passed: operation/expected/measured/analysis table, SQL provenance and complete-step toggle (read-only).');
+  console.log('GUC report browser passed: ordered SQL actions, actual responses, expected values and analysis and complete-step toggle (read-only).');
 } finally { await browser.close(); }

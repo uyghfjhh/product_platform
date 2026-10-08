@@ -76,6 +76,7 @@ def _present_guc_alignment_steps(steps):
             baseline = []
             measurements = []
             business_checks = []
+            process_steps = []
             last_measurement = None
             for recorded in actual.get('steps', []):
                 item = archived_checks.get(recorded.get('key'), {})
@@ -84,6 +85,30 @@ def _present_guc_alignment_steps(steps):
                 if PROBE_SQL in str(command):
                     last_measurement = {'SQL': command, '响应附件': next(iter(item.get('evidence') or []), None)}
                 title = recorded.get('title') or item.get('title', recorded.get('key', ''))
+                observed = recorded.get('actual', item.get('actual'))
+                declared = recorded.get('expected', item.get('expected'))
+                is_wire = isinstance(observed, dict) and 'received' in observed
+                if is_wire:
+                    output = []
+                    if observed.get('rows'):
+                        output.append('查询返回：\n' + '\n'.join(' | '.join('NULL' if v is None else str(v) for v in row) for row in observed['rows']))
+                    if observed.get('tags'):
+                        output.append('命令返回：' + '；'.join(observed['tags']))
+                    if observed.get('sqlstates'):
+                        output.append('SQLSTATE：' + '；'.join(str(v) for v in observed['sqlstates']))
+                    if observed.get('parameters'):
+                        output.append('客户端收到参数通知：' + _display_report_value(observed['parameters']))
+                    actual_text = '\n'.join(output) or _display_report_value(observed)
+                else:
+                    actual_text = _display_report_value(observed)
+                process_steps.append({'operation': title, 'command': command,
+                    'expected': _display_report_value(declared), 'actual': actual_text,
+                    'analysis': recorded.get('analysis') or item.get('analysis') or
+                        ('本条仅记录命令响应；后续查询与路由检查才证明参数生效和节点正确' if is_wire else '比较本条声明期望与实测结果'),
+                    'status': 'PASS' if recorded.get('passed') is True else 'FAIL' if recorded.get('passed') is False else item.get('status', '未保存'),
+                    'driver': '原始 PostgreSQL 协议客户端' if is_wire else '实测比较',
+                    'evidence': recorded.get('evidence') or next(iter(item.get('evidence') or []), None)})
+
                 if any(label in str(title) for label in ('直连数据库读取本次 GUC 默认值', '记录物理默认值和代理会话初值')):
                     baseline.append(recorded.get('actual', item.get('actual')))
                 if intent in {'action', 'verify'} and PROBE_SQL not in str(command) and command and (not commands or commands[-1] != command):
@@ -117,6 +142,7 @@ def _present_guc_alignment_steps(steps):
             if baseline:
                 step['actual']['默认值与初始状态'] = baseline
             step['business_checks'] = business_checks
+            step['process_steps'] = process_steps
             step['baseline_context'] = _display_report_value(baseline) if baseline else ''
             step['report_scope'] = scope
             if actual.get('reason'):
