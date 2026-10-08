@@ -114,7 +114,7 @@ def test_partial_wire_is_preserved_on_disconnect(tmp_path):
 
 def test_all_design_items_and_acceptance_have_registered_scenarios():
     names = {s for values in alignment.SCENARIOS.values() for s in values}
-    assert len(names) == 25
+    assert len(names) == 26
     assert set(alignment.DESIGN_ITEMS) == set(range(1, 17))
     assert len(alignment.ACCEPTANCE) == 13
     assert all(set(v).issubset(names) for v in alignment.DESIGN_ITEMS.values())
@@ -487,3 +487,10 @@ def test_session_isolation_requires_fixed_and_distinct_backends(tmp_path, change
             runner.pool_reuse()
     else:
         runner.pool_reuse()
+
+
+def test_real_psql_matrix_preserves_both_topologies_and_pool_modes():
+    plans = [p for p in alignment.make_plan('backend_redeploy') if p.scenario == 'psql_switch_and_reuse']
+    assert {(p.topology,p.pool) for p in plans} == {('mmr','transaction'),('mmr','session'),('replication','transaction'),('replication','session')}
+    assert all(p.protocol == 'psql' and not p.reserve for p in plans)
+    assert all(p.enable_sync == (p.pool == 'transaction') for p in plans)

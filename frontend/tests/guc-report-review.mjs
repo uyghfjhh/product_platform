@@ -16,25 +16,26 @@ try {
   const row = page.locator('.case-row').filter({ has: page.locator('.case-name[title="guc.backend_redeploy_sql_parse"]') });
   await row.getByRole('button', { name: '📄 查看报告', exact: true }).click();
   const modal = page.getByRole('dialog');
-  await modal.locator('.cman-scenario-group > summary').first().waitFor();
-  if (!(await modal.locator('.cman-scenario-group').first().getAttribute('open') !== null)) {
-    await modal.locator('.cman-scenario-group > summary').first().click();
-  }
-  await modal.locator('.cman-process-flow').first().waitFor();
-  const firstTable = modal.locator('.cman-process-flow').first();
-  await firstTable.getByText('实际返回内容', { exact: true }).first().waitFor();
-  const text = await modal.locator('.cman-business-summary').first().textContent();
-  assert.match(text, /work_mem/);
+  await modal.getByText('本场景核心配置', { exact: true }).first().waitFor({ state: 'attached' });
+  const group = modal.locator('.cman-scenario-group').filter({ hasText: 'psql 读写切换与新客户端防污染' }).first();
+  await group.locator(':scope > summary').click();
+  const table = group.locator('.cman-business-table').first();
+  await table.waitFor();
+  assert.deepEqual(await table.locator('thead th').allTextContents(), ['操作／客户端', '实际后端', '参数', '预期', '实测', '判定']);
+  const text = await group.textContent();
   assert.match(text, /32MB/);
-  assert.match(text, /后端 PID|后端进程/);
-  assert.match(await firstTable.textContent(), /实际执行命令／SQL/);
-  assert.match(await firstTable.textContent(), /SELECT current_setting/);
-  assert.match(await firstTable.textContent(), /命令返回：SET/);
+  assert.match(text, /PID/);
+  assert.match(text, /连接池/);
+  assert.match(text, /读写模式/);
+  assert.match(text, /连接组/);
+  assert.match(text, /真实 psql/);
+  await table.getByText('执行详情', { exact: true }).first().click();
+  await table.getByText(/SELECT 'initial'/).first().waitFor();
   await modal.getByRole('button', { name: /查看完整步骤与协议证据/ }).click();
-  assert.equal(await modal.locator('.cman-process-flow').count(), 0);
+  assert.equal(await modal.locator('.cman-business-table').count(), 0);
   await modal.getByRole('button', { name: '只看业务验证', exact: true }).click();
-  if (!(await firstTable.isVisible())) await modal.locator('.cman-scenario-group > summary').first().click();
-  await firstTable.waitFor();
+  if (!(await table.isVisible())) await group.locator(':scope > summary').click();
+  await table.waitFor();
   assert.deepEqual(errors, []);
   console.log('GUC report browser passed: ordered SQL actions, actual responses, expected values and analysis and complete-step toggle (read-only).');
 } finally { await browser.close(); }

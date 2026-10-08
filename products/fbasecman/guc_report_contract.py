@@ -7,6 +7,7 @@ GROUPS = {
 }
 
 SCENARIO_PURPOSES = {
+    'psql_switch_and_reuse': '真实 psql：A 设置非默认 work_mem，事务池按写→读→写查询并确认不同后端；B 新连接复用原写后端查询默认值。session 只验证固定连接真实 SET 与归还清理。',
     'session_passthrough': 'session 固定客户端与后端：先分配实际后端，再 SET 非默认 work_mem 并查询，参数必须真实改变且 PID 不变；RESET 恢复实测默认值。配置即使请求启用同步，也不能伪造缓存成功。',
     'extended_parse_no_execute': '只发送 Parse，不发送 Execute；会话参数和正式缓存必须保持执行前的值。',
     'extended_bind_describe_no_execute': '发送 Bind 和 Describe 但不执行；绑定和描述成功不能使 SET 提前生效。',
@@ -44,7 +45,7 @@ def plan_scope(row):
         '请求 GUC 同步': '开启' if row.get('enable_sync', True) else '关闭',
         '连接池': {'transaction': '事务池（事务结束后可交给其他客户端）', 'session': '会话池（连接期间固定后端）'}.get(row.get('pool'), row.get('pool', '未保存')),
         '预处理语句保留': {True: '开启', False: '关闭'}.get(row.get('reserve'), '未保存'),
-        '请求方式': {'Q': '简单查询协议', 'E': '扩展协议（解析、绑定、执行）', 'product': '内部缓存与故障取证'}.get(row.get('protocol'), row.get('protocol', '未保存')),
+        '请求方式': {'psql': '真实 psql 客户端', 'Q': '简单查询协议', 'E': '扩展协议（解析、绑定、执行）', 'product': '内部缓存与故障取证'}.get(row.get('protocol'), row.get('protocol', '未保存')),
     }
 
 

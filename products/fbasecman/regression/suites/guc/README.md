@@ -67,3 +67,5 @@ transaction 池验证跨物理后端同步及 A/B/C 复用防污染；session �
 产品修复在规则创建时将 session 的有效 enable_guc_sync 关闭；已有 session 绑定的读写请求保持原后端。未开放 Hint session 或 session+reserve=yes，原配置限制仍记 SKIPPED。
 
 session 测试配置显式使用 pool_discard=yes，客户端结束后归还连接以 DISCARD ALL 清理；新客户端的默认值检查验证这一归还清理，不把它称为客户端跨后端 GUC 同步。
+
+新增真实 psql 分支 psql_switch_and_reuse：两种模式 × MMR/rep × 事务池/session，配置限制明确跳过；脚本与输出归档。报告默认核心配置和业务过程表，命令／协议证据可展开。

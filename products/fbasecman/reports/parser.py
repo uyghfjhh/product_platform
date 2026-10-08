@@ -77,15 +77,32 @@ def _present_guc_alignment_steps(steps):
             measurements = []
             business_checks = []
             process_steps = []
+            outcome_rows = []
             last_measurement = None
             for recorded in actual.get('steps', []):
                 item = archived_checks.get(recorded.get('key'), {})
                 intent = recorded.get('intent', item.get('intent'))
-                command = item.get('command') or recorded.get('command') or recorded.get('title')
+                command = recorded.get('command') or item.get('command') or recorded.get('title')
                 if PROBE_SQL in str(command):
                     last_measurement = {'SQL': command, '响应附件': next(iter(item.get('evidence') or []), None)}
                 title = recorded.get('title') or item.get('title', recorded.get('key', ''))
                 observed = recorded.get('actual', item.get('actual'))
+                if isinstance(observed, dict) and isinstance(recorded.get('expected', item.get('expected')), dict):
+                    wanted = recorded.get('expected', item.get('expected'))
+                    backend = observed.get('后端') or (observed if '端口' in observed else {})
+                    parameter_names = [name for name in ('work_mem','statement_timeout','TimeZone','application_name') if name in wanted]
+                    for parameter in parameter_names:
+                        if parameter in observed:
+                            outcome_rows.append({'operation': recorded.get('title') or item.get('title', ''),
+                                'client': observed.get('客户端') or observed.get('client') or backend.get('客户端', '当前客户端'),
+                                'parameter': parameter, 'expected': str(wanted[parameter]), 'actual': str(observed[parameter]),
+                                'host': backend.get('主机', observed.get('host', '未归档')),
+                                'port': backend.get('端口', observed.get('port', '未归档')),
+                                'pid': backend.get('后端 PID', observed.get('pid', '未归档')),
+                                'role': '备库' if backend.get('pg_is_in_recovery', observed.get('recovery')) == 'true' else '主节点' if backend.get('pg_is_in_recovery', observed.get('recovery')) == 'false' else '未归档',
+                                'status': 'PASS' if recorded.get('passed') is True else 'FAIL' if recorded.get('passed') is False else item.get('status', '未保存'),
+                                'sql': command, 'evidence': recorded.get('evidence') or next(iter(item.get('evidence') or []), None)})
+
                 declared = recorded.get('expected', item.get('expected'))
                 is_wire = isinstance(observed, dict) and 'received' in observed
                 if is_wire:
@@ -106,7 +123,7 @@ def _present_guc_alignment_steps(steps):
                     'analysis': recorded.get('analysis') or item.get('analysis') or
                         ('本条仅记录命令响应；后续查询与路由检查才证明参数生效和节点正确' if is_wire else '比较本条声明期望与实测结果'),
                     'status': 'PASS' if recorded.get('passed') is True else 'FAIL' if recorded.get('passed') is False else item.get('status', '未保存'),
-                    'driver': '原始 PostgreSQL 协议客户端' if is_wire else '实测比较',
+                    'driver': 'psql 客户端' if actual.get('protocol') == 'psql' else '原始 PostgreSQL 协议客户端' if is_wire else '实测比较',
                     'evidence': recorded.get('evidence') or next(iter(item.get('evidence') or []), None)})
 
                 if any(label in str(title) for label in ('直连数据库读取本次 GUC 默认值', '记录物理默认值和代理会话初值')):
@@ -131,6 +148,8 @@ def _present_guc_alignment_steps(steps):
                     'measurement_sql': measurement['SQL'] if measurement else None,
                     'measurement_evidence': measurement['响应附件'] if measurement else None})
             scope = plan_scope(actual)
+            scope['读写模式'] = str(step.get('title', '')).split('/')[1] if '/' in str(step.get('title', '')) else '未归档'
+            scope['连接组'] = 'mmr_group' if actual.get('topology') == 'mmr' else 'rep_group'
             mode = str(step.get('title', '')).split('/')[1] if '/' in str(step.get('title', '')) else ''
             step['title'] = f"{scope['拓扑']}／{mode}／{SCENARIO_LABELS.get(scenario, scenario or '子场景')}：{scope['连接池'].split('（')[0]} · {scope['请求方式']} 验证汇总"
             step['expected'] = scenario_purpose({**actual, 'scenario': scenario})
@@ -143,6 +162,7 @@ def _present_guc_alignment_steps(steps):
                 step['actual']['默认值与初始状态'] = baseline
             step['business_checks'] = business_checks
             step['process_steps'] = process_steps
+            step['outcome_rows'] = outcome_rows
             step['baseline_context'] = _display_report_value(baseline) if baseline else ''
             step['report_scope'] = scope
             if actual.get('reason'):

@@ -36,7 +36,7 @@ SCENARIOS = {
     "savepoint_report": ("savepoint_rollback", "savepoint_nested_release", "report_parameter_status"),
     "backend_redeploy": (
         "tx_disconnect_cleanup", "session_backend_redeploy", "routing_and_discard_boundaries",
-        "mode_owner_isolation", "local_backend_reclaim", "session_passthrough",
+        "mode_owner_isolation", "local_backend_reclaim", "session_passthrough", "psql_switch_and_reuse",
     ),
 }
 # Mandatory internal acceptance stays visible alongside executable black-box checks.
@@ -106,6 +106,10 @@ def make_plan(group):
     plans = []
     for topology in ("mmr", "replication"):
         for name in SCENARIOS[group]:
+            if name == 'psql_switch_and_reuse':
+                for pool in ('transaction', 'session'):
+                    plans.append(CheckPlan(topology, pool, False, 'psql', name, pool == 'transaction'))
+                continue
             if name == "session_passthrough":
                 for protocol in ('Q', 'E'):
                     plans.append(CheckPlan(topology, 'session', False, protocol, name, True))
@@ -168,7 +172,7 @@ SCENARIO_LABELS = {
     "savepoint_nested_release": "嵌套保存点与释放", "report_parameter_status": "客户端参数状态恢复",
     "session_backend_redeploy": "后端复用时保持会话隔离", "tx_disconnect_cleanup": "未提交断连清理",
     "routing_and_discard_boundaries": "路由与会话清理", "local_backend_reclaim": "本地参数执行后重部署",
-    "product_cache_boundaries": "内部缓存写入边界", "session_passthrough": "固定会话中的 GUC 真实透传", "local_commit_failure": "本地提交失败清理",
+    "product_cache_boundaries": "内部缓存写入边界", "session_passthrough": "固定会话中的 GUC 真实透传", "psql_switch_and_reuse": "psql 读写切换与新客户端防污染", "local_commit_failure": "本地提交失败清理",
     "execute_registration_failure": "事务预记录失败清理", "compatibility_scope": "关闭同步与透传兼容",
 }
 
@@ -488,6 +492,8 @@ class ScenarioRunner:
                 return checks.faults([("E", point) for point in ("response_construct", "apply", "response_queue")])
             return checks.faults([(protocol, point) for protocol in ("Q", "E")
                                   for point in ("pre_record", "pending", "outstanding", "forward")])
+        if name == 'psql_switch_and_reuse':
+            return self.psql_switch_and_reuse()
         if name == "session_passthrough":
             return self.session_passthrough()
         if name == "compatibility_scope":
@@ -913,6 +919,73 @@ class ScenarioRunner:
                 probe.snapshot({"work_mem": "8MB" if error else "32MB"})
             if not supported_count and limits:
                 raise BaselineLimit('; '.join(limits))
+
+    def psql_switch_and_reuse(self):
+        defaults = self.default_values()
+        trial = '32MB' if normalize('work_mem', defaults['work_mem']) != normalize('work_mem', '32MB') else '64MB'
+        def observe(stage):
+            return (f"SELECT '{stage}', current_setting('work_mem'), inet_server_addr()::text, "
+                    "inet_server_port()::text, pg_backend_pid()::text, pg_is_in_recovery()::text;")
+        def route(side):
+            if self.plan.pool == 'session':
+                return ''
+            if self.mode == 'hint':
+                return f"SET SESSION CHARACTERISTICS AS TRANSACTION READ {side};\nBEGIN;"
+            return f"BEGIN READ {side};"
+        def run_client(label, script):
+            argv = [self.context.environment.get('psql_bin', '/usr/bin/psql'), '-X', '-w',
+                    '-h', self.host, '-p', str(self.port), '-U', 'postgres', '-d', self.database,
+                    '-v', 'ON_ERROR_STOP=1', '-A', '-t', '-F', '|', '-f', '-']
+            self.context.attach_text(f'{self.plan.key}-{label}.sql', script)
+            result = self.context.command(argv, input_text=script, timeout_seconds=30)
+            self.verify(f'psql 客户端 {label} 执行脚本', '退出码 0',
+                        {'退出码': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr},
+                        result.returncode == 0, command=script, intent='action')
+            found = {}
+            for line in result.stdout.splitlines():
+                parts = line.split('|')
+                if len(parts) == 6 and parts[0] in {'initial', 'write', 'read', 'write_again', 'new_client'}:
+                    if parts[0] in found:
+                        raise AssertionError('psql 同一阶段返回多行')
+                    found[parts[0]] = dict(zip(('work_mem','host','port','pid','recovery'), parts[1:]))
+                    found[parts[0]]['client'] = label
+            return found
+        end = 'COMMIT;\n' if self.plan.pool == 'transaction' else ''
+        script = route('WRITE') + '\n' + observe('initial') + end + f"\nSET work_mem='{trial}';\n"
+        script += route('WRITE') + '\n' + observe('write') + end
+        if self.plan.pool == 'transaction':
+            script += route('ONLY') + '\n' + observe('read') + end
+            script += route('WRITE') + '\n' + observe('write_again') + end
+        first = run_client('A', script)
+        required = ['initial','write','read','write_again'] if self.plan.pool == 'transaction' else ['initial','write']
+        if any(stage not in first for stage in required):
+            raise AssertionError('psql 缺少必需查询阶段')
+        for stage in required:
+            value = first[stage]
+            expected = defaults['work_mem'] if stage == 'initial' else trial
+            stage_name = {'initial': '初次连接', 'write': 'SET 后写端查询', 'read': '切换读端后查询', 'write_again': '切回写端后查询'}[stage]
+            self.verify(f'psql 客户端 A：{stage_name} work_mem', {'work_mem': expected},
+                        {**value, '后端': connection_facts(value)}, normalize('work_mem', value['work_mem']) == normalize('work_mem', expected),
+                        command=observe(stage), analysis=f"预期 {expected}，psql 实测 {value['work_mem']}")
+            self.verify_route(value, ('read' if stage == 'read' else 'write') if self.plan.pool == 'transaction' else None)
+        if self.plan.pool == 'transaction':
+            self.verify('psql 写到读确实更换物理后端', '写读连接身份不同',
+                        {'写端': connection_facts(first['write']), '读端': connection_facts(first['read'])},
+                        identity(first['write']) != identity(first['read']))
+        else:
+            self.verify('psql session SET 前后保持固定连接', identity(first['initial']), identity(first['write']),
+                        identity(first['initial']) == identity(first['write']))
+        second = run_client('B', route('WRITE') + '\n' + observe('new_client') + end)
+        if 'new_client' not in second:
+            raise AssertionError('psql 新客户端没有返回参数')
+        value = second['new_client']
+        self.verify('psql 新客户端 B 参数恢复默认，没有 A 的旧值', {'work_mem': defaults['work_mem']},
+                    {**value, '后端': connection_facts(value)},
+                    normalize('work_mem', value['work_mem']) == normalize('work_mem', defaults['work_mem']),
+                    command=observe('new_client'), analysis=f"默认 {defaults['work_mem']}，A 曾设置 {trial}，B 实测 {value['work_mem']}")
+        if self.plan.pool == 'transaction':
+            previous = first['write_again']
+            self.verify('psql B 确实复用 A 原写后端', identity(previous), identity(value), identity(previous) == identity(value))
 
     def session_passthrough(self):
         defaults = self.default_values()
