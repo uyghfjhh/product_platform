@@ -79,11 +79,28 @@ def _present_guc_alignment_steps(steps):
             process_steps = []
             outcome_rows = []
             prior_values = {}
+            transaction_open = False
+            last_end = None
+            transaction_operations = []
             last_measurement = None
             for recorded in actual.get('steps', []):
                 item = archived_checks.get(recorded.get('key'), {})
                 intent = recorded.get('intent', item.get('intent'))
                 command = recorded.get('command') or item.get('command') or recorded.get('title')
+                sql_text = str(command).split('：', 1)[-1].strip()
+                if PROBE_SQL not in str(command) and intent in {'action', 'verify'} and isinstance(recorded.get('actual', item.get('actual')), dict) and 'received' in recorded.get('actual', item.get('actual')):
+                    upper = sql_text.upper()
+                    if upper.startswith('BEGIN'):
+                        transaction_open = True
+                        transaction_operations = [sql_text]
+                        last_end = None
+                    elif upper in {'COMMIT', 'ROLLBACK'}:
+                        transaction_operations.append(sql_text)
+                        transaction_open = False
+                        last_end = upper
+                    elif upper.startswith(('SET ', 'RESET ')):
+                        if transaction_open:
+                            transaction_operations.append(sql_text)
                 if PROBE_SQL in str(command):
                     last_measurement = {'SQL': command, '响应附件': next(iter(item.get('evidence') or []), None)}
                 title = recorded.get('title') or item.get('title', recorded.get('key', ''))
@@ -98,6 +115,8 @@ def _present_guc_alignment_steps(steps):
                             outcome_rows.append({'operation': recorded.get('title') or item.get('title', ''),
                                 'client': observed.get('客户端') or observed.get('client') or backend.get('客户端', '当前客户端'),
                                 'before': prior_values.get((client_name, parameter), '未归档'),
+                                'transaction_stage': '事务内' if transaction_open else '提交后' if last_end == 'COMMIT' else '回滚后' if last_end == 'ROLLBACK' else '事务外／基线',
+                                'transaction_commands': list(transaction_operations),
                                 'parameter': parameter, 'expected': str(wanted[parameter]), 'actual': str(observed[parameter]),
                                 'host': backend.get('主机', observed.get('host', '未归档')),
                                 'port': backend.get('端口', observed.get('port', '未归档')),
@@ -167,6 +186,11 @@ def _present_guc_alignment_steps(steps):
             step['business_checks'] = business_checks
             step['process_steps'] = process_steps
             step['outcome_rows'] = outcome_rows
+            if scenario.startswith('tx_') or scenario == 'set_local_scope':
+                step['transaction_report'] = True
+                step['local_scope'] = scenario == 'set_local_scope'
+                step['transaction_summary'] = ('SET LOCAL 只在当前事务内有效，不写入持久会话同步缓存。事务结束后应恢复会话值，再换后端确认 LOCAL 值没有残留。'
+                    if scenario == 'set_local_scope' else '先核对事务内实际修改值，再核对提交／回滚后的会话值；最后检查换后端后的参数是否正确。事务内修改不代表事务内发生了连接切换。')
             if scenario.startswith('extended_'):
                 for row in outcome_rows:
                     action = str(row.get('sql', ''))

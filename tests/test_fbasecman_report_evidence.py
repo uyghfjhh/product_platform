@@ -360,3 +360,24 @@ def test_extended_boundary_explains_prepare_and_execute_using_archived_values():
     assert executed['phase']=='真正执行已绑定的语句（Execute）'
     assert executed['before']=='8MB' and executed['actual']=='32MB'
     assert '未归档'==result['outcome_rows'][0]['before']
+
+
+def test_transaction_report_retains_actual_begin_set_commit_and_local_scope():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    def action(key, sql):
+        return {'key':key,'passed':True,'intent':'action','command':'Q：'+sql,'title':sql,
+                'actual':{'received':['C','Z'],'tags':[sql.split()[0]]}}
+    def value(key, amount):
+        return {'key':key,'passed':True,'intent':'verify','command':'Q：SELECT work_mem','title':'参数比较',
+                'expected':{'work_mem':amount},'actual':{'work_mem':amount,'客户端':'A'}}
+    rows=[value('base','8MB'),action('begin','BEGIN'),action('session',"SET SESSION work_mem='16MB'"),
+          action('local',"SET LOCAL work_mem='32MB'"),value('inside','32MB'),action('commit','COMMIT'),value('after','16MB')]
+    summary={'title':'mmr/hint/set_local_scope 子场景结论','status':'PASS',
+             'actual':{'scenario':'set_local_scope','pool':'transaction','topology':'mmr','protocol':'Q','status':'PASS','steps':rows}}
+    result=_present_guc_alignment_steps([summary])[0]
+    assert result['transaction_report'] and result['local_scope']
+    assert '不写入持久会话同步缓存' in result['transaction_summary']
+    assert result['outcome_rows'][1]['transaction_stage']=='事务内'
+    assert result['outcome_rows'][2]['transaction_stage']=='提交后'
+    assert result['outcome_rows'][2]['actual']=='16MB'
+    assert "SET LOCAL work_mem='32MB'" in result['outcome_rows'][2]['transaction_commands']

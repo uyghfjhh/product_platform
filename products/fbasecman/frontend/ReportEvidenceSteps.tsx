@@ -3,7 +3,7 @@ import { Alert, Button, Pagination, Tag } from 'antd';
 import { normalizeStep } from '../../../frontend/src/platform/stepNormalizer';
 import './reportEvidence.css';
 
-type OutcomeRow = { operation: string; before?: string; phase?: string; meaning?: string; client: string; parameter: string; expected: string; actual: string; host: string; port: string; pid: string; role: string; status: string; sql?: string; evidence?: string };
+type OutcomeRow = { operation: string; transaction_stage?: string; transaction_commands?: string[]; before?: string; phase?: string; meaning?: string; client: string; parameter: string; expected: string; actual: string; host: string; port: string; pid: string; role: string; status: string; sql?: string; evidence?: string };
 
 type BusinessCheck = { operation: string; command?: string; expected: string; actual: string; analysis: string;
   status: string; driver?: string; evidence?: string; measurement_sql?: string; measurement_evidence?: string };
@@ -14,6 +14,9 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
   const [pageSize, setPageSize] = useState(50);
   const normalized = useMemo(() => steps.map((step, index) => normalizeStep(step, index)).map((step, index) => ({
     ...step,
+    transactionReport: Boolean((steps[index] as Record<string, unknown>)?.transaction_report),
+    transactionSummary: String((steps[index] as Record<string, unknown>)?.transaction_summary || ''),
+    localScope: Boolean((steps[index] as Record<string, unknown>)?.local_scope),
     extendedBoundary: Boolean((steps[index] as Record<string, unknown>)?.extended_boundary),
     boundarySummary: String((steps[index] as Record<string, unknown>)?.boundary_summary || ''),
     outcomeRows: Array.isArray((steps[index] as Record<string, unknown>)?.outcome_rows)
@@ -73,7 +76,17 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
           <td>{row.parameter}</td><td>{row.before}</td><td>{row.expected}</td><td>{row.actual}</td>
           <td><p>{row.meaning}</p><p>预期 {row.expected}，实测 {row.actual}</p><Tag color={row.status === 'PASS' ? 'success' : row.status === 'FAIL' ? 'error' : 'default'}>{row.status}</Tag></td>
         </tr>)}</tbody></table></div>}
-        {!step.extendedBoundary && step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table"><thead><tr>
+        {step.transactionReport && <Alert type="info" showIcon message={step.localScope ? 'SET LOCAL：事务作用域与不残留' : '事务内修改 → 提交／回滚 → 后端复查'} description={step.transactionSummary} />}
+        {step.transactionReport && step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table cman-transaction-table"><thead><tr>
+          <th>阶段／实际操作</th><th>参数</th><th>前次实测</th><th>预期</th><th>实测</th><th>实际连接／判定</th>
+        </tr></thead><tbody>{step.outcomeRows.map((row, index) => <tr key={index}>
+          <td><Tag>{row.transaction_stage}</Tag><p>{row.operation}</p>
+            {row.transaction_commands?.length ? <details><summary>本事务实际执行 SQL</summary><pre>{row.transaction_commands.join(';\n')}</pre></details> : null}
+            <details><summary>本步执行详情</summary><pre>{row.sql}</pre><p>{row.evidence}</p></details></td>
+          <td>{row.parameter}</td><td>{row.before}</td><td>{row.expected}</td><td>{row.actual}</td>
+          <td>{row.client} · {row.host}:{row.port}<br />PID {row.pid} · {row.role}<br /><Tag color={row.status === 'PASS' ? 'success' : row.status === 'FAIL' ? 'error' : 'default'}>{row.status}</Tag></td>
+        </tr>)}</tbody></table></div>}
+        {!step.transactionReport && !step.extendedBoundary && step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table"><thead><tr>
           <th>操作／客户端</th><th>实际后端</th><th>参数</th><th>预期</th><th>实测</th><th>判定</th>
         </tr></thead><tbody>{step.outcomeRows.map((row, index) => <tr key={index}>
           <td><strong>{row.client}</strong><p>{row.operation}</p><details><summary>执行详情</summary><pre>{row.sql}</pre>{row.evidence && <p>响应附件：{row.evidence}</p>}</details></td>
