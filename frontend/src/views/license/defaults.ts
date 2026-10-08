@@ -3,7 +3,7 @@ export type ProductDefaults = {
   default_version: string; selected: boolean; validity: Duration | null;
 };
 export type LicenseDefaults = {
-  schema_version: 1; vendor: string; license_version: string | null; start_at: 'today';
+  schema_version: 1; vendor: string; license_version: string | null; default_password: string; start_at: 'today';
   validity: Duration; purpose: string; save_to_directory: boolean; output_directory: string; mac_addrs: string[]; products: Record<string, ProductDefaults>;
 };
 export type LicenseOptions = {

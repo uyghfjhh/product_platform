@@ -1,0 +1,9 @@
+.license-keys-layout { display: grid; grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.15fr); gap: 20px; align-items: start; }
+.license-keys-layout .ant-table-row { cursor: pointer; }
+.license-keys-layout .license-key-selected > td { background: rgba(22, 119, 255, 0.12) !important; }
+.license-key-detail { margin-bottom: 24px; }
+.license-key-detail .ant-typography { overflow-wrap: anywhere; }
+.license-key-detail code { white-space: normal; }
+.license-key-actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
+.license-key-actions .ant-typography { margin: 12px 0 0; }
+@media (max-width: 1000px) { .license-keys-layout { grid-template-columns: minmax(0, 1fr); } }

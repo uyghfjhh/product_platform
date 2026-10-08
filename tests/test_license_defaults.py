@@ -16,8 +16,9 @@ def test_defaults_roundtrip_and_new_version_signing(tmp_path):
     settings, client = client_for(tmp_path)
     _, password = legacy_key_fixture(tmp_path)
     defaults = client.get('/api/v1/licenses/defaults').json()
+    assert defaults['default_password'] == '123456'
     assert defaults['validity'] == {'years': 10, 'months': 0, 'days': 0}
-    defaults.update(vendor='自定义厂商', purpose='生产环境', license_version='1.1',
+    defaults.update(vendor='自定义厂商', purpose='生产环境', license_version='1.1', default_password='custom-default',
                     mac_addrs=['02:42:8e:0f:0b:1b'])
     defaults['products']['fbasecman'].update(default_version='2.0',
                                            selected=False, validity={'years': 2, 'months': 3, 'days': 4})

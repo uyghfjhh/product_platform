@@ -29,6 +29,7 @@ try {
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'License 默认设置' }).waitFor();
   await page.locator('label').filter({ hasText: /^厂商名称$/ }).locator('input').fill('浏览器测试厂商');
+  await page.locator('label').filter({ hasText: /^默认密钥口令/ }).locator('input').fill('browser-test-default');
   await page.locator('label').filter({ hasText: /^用途$/ }).locator('input').fill('浏览器测试用途');
   await page.locator('label').filter({ hasText: /^默认保存目录/ }).locator('input').fill('/tmp/browser-license-output');
   const productBlock = page.locator('.form-surface > div').filter({ has: page.getByText('fbasecman', { exact: true }) });
@@ -41,11 +42,13 @@ try {
   assert.equal(saved.products.fbasecman.validity.years, 2);
   assert(!('allowed_versions' in saved.products.fbasecman));
   assert(!('password' in saved));
+  assert.equal(saved.default_password, 'browser-test-default');
   assert.equal(saved.output_directory, '/tmp/browser-license-output');
   await page.locator('.platform-sidebar .ant-menu-title-content').filter({ hasText: /^License 生成$/ }).click();
   await page.getByRole('heading', { name: 'License 生成', exact: true }).waitFor();
   const cman = page.locator('.license-product-row').filter({ hasText: 'fbasecman' });
   assert.equal(await cman.locator('input:not([role="combobox"]):not([type="date"])').inputValue(), '2.0');
+  assert.equal(await page.locator('#password').inputValue(), 'browser-test-default');
   assert.equal(await page.locator('#purpose').inputValue(), '浏览器测试用途');
   assert.equal(Number((await cman.locator('input[type="date"]').inputValue()).slice(0, 4)), new Date().getFullYear() + 2);
   assert.equal(await page.locator('#output_directory').inputValue(), '/tmp/browser-license-output');

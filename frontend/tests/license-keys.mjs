@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const browser = await chromium.launch({ headless: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const base = process.env.PLATFORM_URL || 'http://127.0.0.1:8080';
+  const options = await (await page.request.get(`${base}/api/v1/licenses/options`)).json();
+  Object.assign(options, { key_versions: ['1.1', '1.2', '1.3'], usable_key_versions: ['1.1', '1.3'] });
+  options.defaults.license_version = '1.1'; options.defaults.default_password = '123456';
+  const metadata = (version) => ({ version, public_key: 'a'.repeat(64), fingerprint: 'b'.repeat(64), revoked: version === '1.2' });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.route('**/api/v1/licenses/options', (route) => route.fulfill({ json: options }));
+  await page.route(/\/api\/v1\/licenses\/keys\/1\.\d+$/, (route) => {
+    assert.equal(route.request().method(), 'GET');
+    return route.fulfill({ json: metadata(route.request().url().split('/').at(-1)) });
+  });
+  let created;
+  await page.route('**/api/v1/licenses/keys', (route) => {
+    assert.equal(route.request().method(), 'POST');
+    created = route.request().postDataJSON();
+    options.key_versions.push(created.version); options.usable_key_versions.push(created.version);
+    return route.fulfill({ json: metadata(created.version) });
+  });
+  await page.addInitScript(() => localStorage.setItem('platform-page', 'license:keys'));
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: '密钥管理', exact: true }).waitFor();
+  const rows = page.locator('.ant-table-tbody tr');
+  await rows.filter({ hasText: '1.2' }).getByText('已撤销', { exact: true }).waitFor();
+  await page.locator('.license-key-detail').first().waitFor();
+  await rows.filter({ hasText: '1.2' }).locator('td').first().click();
+  await page.getByText('已停止使用此版本签发新的 License').waitFor();
+  assert(await page.locator('.license-key-actions').getByRole('button', { name: '撤销签发', exact: true }).isDisabled());
+  await rows.filter({ hasText: '1.1' }).getByRole('button', { name: '修改口令', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('修改版本 1.1 的口令', { exact: true }).waitFor();
+  assert.equal(await dialog.locator('input').first().inputValue(), '123456');
+  await dialog.locator('.ant-modal-close').click();
+  await page.getByRole('button', { name: /生成新密钥/ }).click();
+  assert.equal(await page.getByRole('dialog').locator('input').first().inputValue(), '1.4');
+  assert.equal(await page.getByRole('dialog').locator('input').nth(1).inputValue(), '123456');
+  await page.getByRole('dialog').getByRole('button', { name: '生成密钥', exact: true }).click();
+  await rows.filter({ hasText: '1.4' }).waitFor();
+  assert.deepEqual(created, { version: '1.4', password: '123456' });
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await rows.filter({ hasText: '1.3' }).getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '撤销签发', exact: true }).click();
+  await page.getByRole('dialog').getByText('撤销密钥版本 1.3', { exact: true }).waitFor();
+  await page.getByRole('dialog').locator('.ant-modal-close').click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await rows.filter({ hasText: '1.1' }).getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '删除版本', exact: true }).click();
+  await page.getByRole('dialog').getByText('删除密钥版本 1.1', { exact: true }).waitFor();
+  await page.getByRole('dialog').locator('.ant-modal-close').click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.screenshot({ path: '/tmp/license-keys-redesign.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  assert.deepEqual(errors, []);
+  console.log('Key management browser passed: status, selection, dialogs, default password, creation, mobile layout (writes isolated).');
+} finally { await browser.close(); }

@@ -35,6 +35,7 @@ class LicenseDefaults(BaseModel):
     schema_version: Literal[1] = 1
     vendor: str = Field(min_length=1, max_length=255)
     license_version: str | None = None
+    default_password: str = Field(default="123456", max_length=1024)
     start_at: Literal['today'] = 'today'
     validity: Duration = Field(default_factory=Duration)
     purpose: str = Field(default='测试', max_length=1000)

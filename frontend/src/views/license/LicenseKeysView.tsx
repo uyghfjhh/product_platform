@@ -1,14 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Alert, App, Button, Empty, Form, Input, Modal, Space, Table, Tag, Typography } from 'antd';
-import { KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, App, Button, Card, Dropdown, Empty, Form, Input, Modal, Space, Table, Tag, Typography } from 'antd';
+import { KeyOutlined, PlusOutlined } from '@ant-design/icons';
 
 import { api } from '../../platform/api';
 
-type Options = {
-  vendor: string;
-  products: { name: string; version: string }[];
-  key_versions: string[];
-};
+import type { LicenseOptions as Options } from './defaults';
+import './LicenseKeysView.css';
+
 type KeyMetadata = {
   version: string;
   public_key: string;
@@ -28,13 +26,17 @@ export default function LicenseKeysView() {
   const [rotateForm] = Form.useForm<{ old_password: string; new_password: string }>();
   const [deleteForm] = Form.useForm<{ password: string }>();
   const [revokeForm] = Form.useForm<{ password: string }>();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const selectionSequence = useRef(0);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
 
   useEffect(() => {
     void api<Options>('/licenses/options').then((data) => {
       setOptions(data);
-      const latest = data.key_versions.at(-1) || '';
+      const latest = data.key_versions.includes(data.defaults.license_version || '')
+        ? data.defaults.license_version! : data.key_versions.at(-1) || '';
       setKeyVersion(latest);
       if (latest) void refreshKey(latest);
     }).catch((cause) => message.error(cause.message));
@@ -43,12 +45,19 @@ export default function LicenseKeysView() {
 
   async function refreshKey(version: string) {
     if (!version) return;
+    const sequence = ++selectionSequence.current;
     setKeyVersion(version);
+    setKeyInfo(null);
     try {
-      setKeyInfo(await api<KeyMetadata>(`/licenses/keys/${encodeURIComponent(version)}`));
+      const info = await api<KeyMetadata>(`/licenses/keys/${encodeURIComponent(version)}`);
+      if (sequence !== selectionSequence.current) return false;
+      setKeyInfo(info);
+      return true;
     } catch (cause) {
+      if (sequence !== selectionSequence.current) return;
       setKeyInfo(null);
       message.error((cause as Error).message);
+      return false;
     }
   }
 
@@ -60,6 +69,7 @@ export default function LicenseKeysView() {
       });
       setKeyInfo(info);
       setKeyVersion(info.version);
+      setCreateOpen(false);
       keyForm.resetFields();
       setOptions(await api<Options>('/licenses/options'));
       message.success(`密钥版本 ${info.version} 已生成`);
@@ -76,6 +86,7 @@ export default function LicenseKeysView() {
         `/licenses/keys/${encodeURIComponent(keyVersion)}/password`,
         { method: 'POST', body: JSON.stringify(values) });
       setKeyInfo(info);
+      setRotateOpen(false);
       rotateForm.resetFields();
       message.success('密钥口令已修改');
     } catch (cause) {
@@ -93,7 +104,9 @@ export default function LicenseKeysView() {
       const refreshed = await api<Options>('/licenses/options');
       setOptions(refreshed);
       setKeyInfo(null);
-      setKeyVersion(refreshed.key_versions.at(-1) || '');
+      const next = refreshed.key_versions.at(-1) || '';
+      setKeyVersion(next);
+      if (next) await refreshKey(next);
       setDeleteOpen(false);
       deleteForm.resetFields();
       message.success('密钥版本已删除');
@@ -110,6 +123,7 @@ export default function LicenseKeysView() {
         `/licenses/keys/${encodeURIComponent(keyVersion)}/revoke`,
         { method: 'POST', body: JSON.stringify({ password }) });
       setKeyInfo(info);
+      setOptions(await api<Options>('/licenses/options'));
       setRevokeOpen(false);
       revokeForm.resetFields();
       message.success('密钥版本已撤销，不能继续签发');
@@ -118,87 +132,99 @@ export default function LicenseKeysView() {
     } finally { setKeyLoading(false); }
   }
 
+  async function rowAction(version: string, action: string) {
+    if (!await refreshKey(version)) return;
+    if (action === 'rotate') openRotate();
+    if (action === 'revoke') {
+      revokeForm.setFieldValue('password', options?.defaults.default_password || '');
+      setRevokeOpen(true);
+    }
+    if (action === 'delete') {
+      deleteForm.setFieldValue('password', options?.defaults.default_password || '');
+      setDeleteOpen(true);
+    }
+  }
+
+  function openCreate() {
+    const next = Math.max(0, ...(options?.key_versions || []).map((v) => Number(v.split('.')[1]))) + 1;
+    keyForm.setFieldsValue({ version: `1.${next}`, password: options?.defaults.default_password || '' });
+    setCreateOpen(true);
+  }
+
+  function openRotate() {
+    rotateForm.setFieldsValue({ old_password: options?.defaults.default_password || '', new_password: options?.defaults.default_password || '' });
+    setRotateOpen(true);
+  }
+
   return (
     <>
       <div className="page-heading">
-        <div>
-          <Typography.Title level={3}>密钥管理</Typography.Title>
-          <Typography.Text type="secondary">
-            {options?.vendor ? `${options.vendor} 签名密钥版本与生命周期` : '签名密钥版本与生命周期'}
-          </Typography.Text>
-        </div>
+        <div><Typography.Title level={3}>密钥管理</Typography.Title>
+          <Typography.Text type="secondary">{options?.vendor || ''} · 管理签名密钥、口令与签发状态</Typography.Text></div>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={!options || keyLoading}>生成新密钥</Button>
       </div>
-      {options && options.key_versions.length === 0 && (
-        <Alert type="warning" showIcon message="尚未发现可用密钥"
-          description="可在下方生成第一个密钥版本。" />
-      )}
-      {!options ? <Empty description="正在读取密钥配置" /> : (
-        <div className="form-surface license-key-manager">
-          <Typography.Title level={5}><KeyOutlined /> 密钥版本</Typography.Title>
-          <Table
-            size="small"
-            rowKey="version"
-            pagination={false}
-            dataSource={options.key_versions.map((version) => ({ version }))}
+      {!options ? <Empty description="正在读取密钥配置" /> : <div className="license-keys-layout">
+        <Card title={<Space><KeyOutlined />密钥版本<Tag>{options.key_versions.length}</Tag></Space>}>
+          <Table size="middle" rowKey="version" pagination={{ pageSize: 6, hideOnSinglePage: true }}
+            rowClassName={(row) => row.version === keyVersion ? 'license-key-selected' : ''}
+            dataSource={[...options.key_versions].reverse().map((version) => ({ version }))}
+            onRow={(row) => ({ onClick: () => { if (!keyLoading) void refreshKey(row.version); } })}
             columns={[
-              { title: '版本', dataIndex: 'version' },
-              {
-                title: '状态', key: 'status',
-                render: (_: unknown, row: { version: string }) => (
-                  row.version === keyVersion && keyInfo?.revoked
-                    ? <Tag color="error">已撤销</Tag>
-                    : <Tag color="success">可用</Tag>
-                ),
-              },
-              {
-                title: '', key: 'select',
-                render: (_: unknown, row: { version: string }) => (
-                  <Button type="link" onClick={() => void refreshKey(row.version)}>
-                    查看
-                  </Button>
-                ),
-              },
-            ]}
-          />
-          {keyInfo && (
-            <Typography.Paragraph copyable={{ text: keyInfo.public_key }} style={{ marginTop: 12 }}>
-              <strong>版本：</strong>{keyInfo.version}<br />
-              <strong>公钥：</strong>{keyInfo.public_key}<br />
-              <strong>SHA256 指纹：</strong>{keyInfo.fingerprint}<br />
-              <strong>状态：</strong>{keyInfo.revoked ? `已撤销 ${keyInfo.revoked_at || ''}` : '可签发'}
-            </Typography.Paragraph>
-          )}
-          <Form<{ version: string; password: string }> form={keyForm} layout="inline"
-            onFinish={(values) => void createKey(values)} style={{ marginTop: 16 }}>
-            <Form.Item label="新版本" name="version"
-              rules={[{ required: true, pattern: /^1\.[1-9][0-9]*$/, message: '格式应为 1.<数字>' }]}>
-              <Input placeholder="1.2" />
-            </Form.Item>
-            <Form.Item label="新口令" name="password" rules={[{ required: true }]}>
-              <Input.Password autoComplete="new-password" />
-            </Form.Item>
-            <Button htmlType="submit" icon={<SafetyCertificateOutlined />} loading={keyLoading}>
-              生成密钥
-            </Button>
-          </Form>
-          {keyVersion && (
-            <Form form={rotateForm} layout="inline" style={{ marginTop: 12 }}
-              onFinish={(values) => void rotateKey(values)}>
-              <Form.Item name="old_password" rules={[{ required: true }]}>
-                <Input.Password placeholder="旧口令" />
-              </Form.Item>
-              <Form.Item name="new_password" rules={[{ required: true }]}>
-                <Input.Password placeholder="新口令" />
-              </Form.Item>
-              <Button htmlType="submit" loading={keyLoading}>修改口令</Button>
-              <Button danger loading={keyLoading} onClick={() => setDeleteOpen(true)}>删除版本</Button>
-              {!keyInfo?.revoked && (
-                <Button loading={keyLoading} onClick={() => setRevokeOpen(true)}>撤销签发</Button>
-              )}
-            </Form>
-          )}
-        </div>
-      )}
+              { title: '版本', dataIndex: 'version', render: (version: string) => <Space>
+                <Typography.Text strong>{version}</Typography.Text>
+                {version === options.defaults.license_version && <Tag color="blue">默认</Tag>}</Space> },
+              { title: '签发状态', render: (_, row) => options.usable_key_versions.includes(row.version)
+                ? <Tag color="success">可签发</Tag> : <Tag color="error">已撤销</Tag> },
+              { title: '操作', render: (_, row) => <Space size={0}>
+                <Button type="link" disabled={keyLoading} onClick={(event) => {
+                  event.stopPropagation(); void rowAction(row.version, 'rotate');
+                }}>修改口令</Button>
+                <Dropdown trigger={['click']} menu={{ items: [
+                  { key: 'revoke', label: '撤销签发', disabled: !options.usable_key_versions.includes(row.version) },
+                  { key: 'delete', label: '删除版本', danger: true, disabled: options.key_versions.length <= 1 },
+                ], onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); void rowAction(row.version, key); } }}>
+                  <Button type="text" disabled={keyLoading} onClick={(event) => event.stopPropagation()}>更多</Button>
+                </Dropdown>
+              </Space> },
+            ]} />
+        </Card>
+        <Card title={keyVersion ? `版本 ${keyVersion}` : '密钥详情'}
+          extra={keyInfo && <Tag color={keyInfo.revoked ? 'error' : 'success'}>{keyInfo.revoked ? '已撤销' : '可签发'}</Tag>}>
+          {!keyInfo ? <Empty description={keyVersion ? '正在读取密钥详情' : '生成新密钥以开始签发'} /> : <>
+            <div className="license-key-detail"><Typography.Text type="secondary">公钥</Typography.Text>
+              <Typography.Paragraph copyable={{ text: keyInfo.public_key }} code>{keyInfo.public_key}</Typography.Paragraph></div>
+            <div className="license-key-detail"><Typography.Text type="secondary">SHA256 指纹</Typography.Text>
+              <Typography.Paragraph copyable={{ text: keyInfo.fingerprint }} code>{keyInfo.fingerprint}</Typography.Paragraph></div>
+            {keyInfo.revoked && <Alert type="warning" showIcon message="已停止使用此版本签发新的 License"
+              description={keyInfo.revoked_at ? `撤销时间：${keyInfo.revoked_at}` : undefined} />}
+            <div className="license-key-actions"><Space wrap>
+              <Button disabled={keyLoading} onClick={openRotate}>修改口令</Button>
+              <Button disabled={keyLoading || keyInfo.revoked} onClick={() => {
+                revokeForm.setFieldValue('password', options.defaults.default_password); setRevokeOpen(true);
+              }}>撤销签发</Button>
+              <Button danger disabled={keyLoading || options.key_versions.length <= 1} onClick={() => {
+                deleteForm.setFieldValue('password', options.defaults.default_password); setDeleteOpen(true);
+              }}>删除版本</Button>
+            </Space><Typography.Paragraph type="secondary">平台至少保留一个密钥版本。修改口令不改变全局默认口令。</Typography.Paragraph></div>
+          </>}
+        </Card>
+      </div>}
+      <Modal title="生成新密钥" open={createOpen} footer={null} destroyOnHidden
+        onCancel={() => { if (!keyLoading) { setCreateOpen(false); keyForm.resetFields(); } }}>
+        <Form form={keyForm} layout="vertical" onFinish={(values) => void createKey(values)}>
+          <Form.Item label="新版本" name="version" rules={[{ required: true, pattern: /^1\.[1-9][0-9]*$/, message: '格式应为 1.<数字>' }]}><Input /></Form.Item>
+          <Form.Item label="密钥口令" name="password" rules={[{ required: true }]}><Input.Password autoComplete="new-password" /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={keyLoading}>生成密钥</Button>
+        </Form>
+      </Modal>
+      <Modal title={`修改版本 ${keyVersion} 的口令`} open={rotateOpen} footer={null} destroyOnHidden
+        onCancel={() => { if (!keyLoading) { setRotateOpen(false); rotateForm.resetFields(); } }}>
+        <Form form={rotateForm} layout="vertical" onFinish={(values) => void rotateKey(values)}>
+          <Form.Item label="当前口令" name="old_password" rules={[{ required: true }]}><Input.Password autoComplete="current-password" /></Form.Item>
+          <Form.Item label="新口令" name="new_password" rules={[{ required: true }]}><Input.Password autoComplete="new-password" /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={keyLoading}>确认修改</Button>
+        </Form>
+      </Modal>
       <Modal title={`删除密钥版本 ${keyVersion || ''}`} open={deleteOpen}
         onCancel={() => { setDeleteOpen(false); deleteForm.resetFields(); }}
         footer={null} destroyOnHidden>

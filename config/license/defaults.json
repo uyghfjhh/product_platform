@@ -9,6 +9,8 @@
     "days": 0
   },
   "purpose": "测试",
+  "save_to_directory": true,
+  "output_directory": "/home/postgres/lic",
   "mac_addrs": [
     "00:0c:29:7e:50:9d"
   ],
@@ -39,6 +41,5 @@
       "validity": null
     }
   },
-  "save_to_directory": true,
-  "output_directory": "/home/postgres/lic"
+  "default_password": "123456"
 }

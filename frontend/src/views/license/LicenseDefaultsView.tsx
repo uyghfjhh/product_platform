@@ -50,6 +50,8 @@ export default function LicenseDefaultsView() {
         <label>密钥版本<Select style={{ width: '100%' }} allowClear placeholder="自动选择最新有效密钥"
           value={settings.license_version ?? undefined} options={keys.map((key) => ({ label: key, value: key }))}
           onChange={(value) => setSettings({ ...settings, license_version: value ?? null })} /></label>
+        <label>默认密钥口令<Input.Password autoComplete="off" value={settings.default_password}
+          onChange={(e) => setSettings({ ...settings, default_password: e.target.value })} /></label>
         <label>生效日期<Input value="当天（每次打开生成页重新计算）" readOnly /></label>
         <label>用途<Input value={settings.purpose} onChange={(e) => setSettings({ ...settings, purpose: e.target.value })} /></label>
       </div>

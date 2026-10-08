@@ -85,6 +85,7 @@ export default function LicenseGenerateView() {
               })),
               start_at: localDate(new Date()),
               purpose: options.defaults.purpose,
+              password: options.defaults.default_password,
               macs: options.defaults.mac_addrs.join('\n'),
               save_to_directory: options.defaults.save_to_directory,
               output_directory: options.defaults.output_directory,
