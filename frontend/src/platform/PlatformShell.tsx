@@ -22,12 +22,13 @@ const DatabasePage = lazy(() => import('../views/DatabasePage'));
 const TestsPage = lazy(() => import('../views/TestsPage'));
 const StabilityPage = lazy(() => import('../views/StabilityPage'));
 const LicenseKeysView = lazy(() => import('../views/license/LicenseKeysView'));
+const LicenseDefaultsView = lazy(() => import('../views/license/LicenseDefaultsView'));
 const LicenseGenerateView = lazy(() => import('../views/license/LicenseGenerateView'));
 
 const { Sider, Content } = Layout;
 
 type Page = 'deployment' | 'database' | 'monitoring' | 'operations' | 'workloads'
-  | 'license:keys' | 'license:generate'
+  | 'license:keys' | 'license:generate' | 'license:defaults'
   | `tests:${string}` | `stability:${string}`;
 export type ThemeName = 'cman' | 'dark' | 'soft' | 'warm';
 
@@ -223,6 +224,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
       label: 'License 授权管理',
       children: [
         { key: 'license:keys', icon: <KeyOutlined />, label: '密钥管理' },
+        { key: 'license:defaults', icon: <SettingOutlined />, label: '默认设置' },
         { key: 'license:generate', icon: <FileProtectOutlined />, label: 'License 生成' },
       ],
     },
@@ -241,6 +243,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     if (page === 'database') return <DatabasePage {...common} initialNodeId={databaseTarget?.environmentId === environment?.id ? databaseTarget?.nodeId : undefined} onSelectNode={(id) => setDatabaseTarget(id && environment ? { environmentId: environment.id, nodeId: id } : null)} onBackToDeployment={() => setPage('deployment')} />;
     if (page === 'operations') return <OperationsPage products={products} environments={environments} openTask={setTaskId} />;
     if (page === 'workloads') return <WorkloadsPage environment={environment} onSelectEnvironment={setEnvironmentId} environments={environments.filter((e) => products.some((p) => p.id === e.product_id && p.capabilities.includes('database')))} openTask={setTaskId} />;
+    if (page === 'license:defaults') return <LicenseDefaultsView />;
     if (page === 'license:keys') return <LicenseKeysView />;
     if (page === 'license:generate') return <LicenseGenerateView />;
     if (page.startsWith('stability:')) {

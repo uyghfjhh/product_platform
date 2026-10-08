@@ -25,6 +25,7 @@ setup 需要网络，会准备 uv、Python 3.12 和项目 `.venv`；前端依赖
 backend/platform_app/       公共服务、应用服务、文件控制面与任务执行
 backend/platform_regress/   产品无关回归 SDK
 frontend/                  公共界面与浏览器验收
+config/                    纳入 Git 的可编辑默认配置
 products/<产品>/           产品声明、模板、领域用例与前端扩展
 cli/                       平台 CLI 和验证入口
 tests/                     公共服务和 SDK 测试
@@ -78,3 +79,9 @@ git diff --check
 
 回归用例开发和报告 review 请遵循[回归用例编写规范](docs/regression-case-authoring.md)。
 测试页公共准备与用例自身准备的边界见[回归测试准备](docs/regression-preparation.md)。
+
+## License 默认设置
+
+在「License 授权管理 → 默认设置」维护厂商、默认密钥、有效期、用途、常用 MAC，以及每个产品的默认授权、版本和独立有效期。设置保存到 `config/license/defaults.json`，生成页下次打开时预填；日期保存为相对规则，默认当天生效、十年到期。单次签发修改不覆盖默认设置，密钥口令不保存。产品版本可填写新版本，需与实际二进制匹配。
+
+生成页可勾选「同时保存到服务器目录」，默认目录 `/home/postgres/lic`；目录与开关也保存在 `config/license/defaults.json`。保存文件为 `license.dat`，同名文件会替换，浏览器仍可下载。配置根目录可通过 `PRODUCT_PLATFORM_CONFIG_DIR` 指定。

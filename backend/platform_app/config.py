@@ -26,11 +26,12 @@ class Settings:
     output_dir: Path | None = None
     runtime_dir: Path | None = None
     logs_dir: Path | None = None
+    config_dir: Path | None = None
 
     def __post_init__(self):
-        for name in ('output_dir', 'runtime_dir', 'logs_dir'):
+        for name in ('output_dir', 'runtime_dir', 'logs_dir', 'config_dir'):
             if getattr(self, name) is None:
-                directory = {'output_dir': 'output', 'runtime_dir': 'runtime', 'logs_dir': 'logs'}[name]
+                directory = {'output_dir': 'output', 'runtime_dir': 'runtime', 'logs_dir': 'logs', 'config_dir': 'config'}[name]
                 object.__setattr__(self, name, self.data_dir.parent / directory)
 
     @property
@@ -75,6 +76,7 @@ def load_settings():
     data = directory('PRODUCT_PLATFORM_DATA_DIR', ROOT / 'data')
     return Settings(
         data_dir=data,
+        config_dir=directory('PRODUCT_PLATFORM_CONFIG_DIR', data.parent / 'config'),
         pgcluster_root=directory('PRODUCT_PLATFORM_PGCLUSTER_ROOT', ROOT.parent / 'pgcluster'),
         license_key_dir=directory('PRODUCT_PLATFORM_LICENSE_KEYS', data / 'license' / 'keys'),
         license_vendor=os.environ.get('PRODUCT_PLATFORM_LICENSE_VENDOR', '飞象'),

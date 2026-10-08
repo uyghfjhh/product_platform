@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "vendor": "飞象",
+  "license_version": "1.1",
+  "start_at": "today",
+  "validity": {
+    "years": 10,
+    "months": 0,
+    "days": 0
+  },
+  "purpose": "测试",
+  "mac_addrs": [
+    "00:0c:29:7e:50:9d"
+  ],
+  "products": {
+    "fbase": {
+      "default_version": "2.0",
+      "selected": true,
+      "validity": null
+    },
+    "fmmr": {
+      "default_version": "2.0",
+      "selected": true,
+      "validity": null
+    },
+    "fbase_db_ent": {
+      "default_version": "1.8.1",
+      "selected": true,
+      "validity": null
+    },
+    "fd_logical": {
+      "default_version": "1.7",
+      "selected": true,
+      "validity": null
+    },
+    "fbasecman": {
+      "default_version": "2.0",
+      "selected": true,
+      "validity": null
+    }
+  },
+  "save_to_directory": true,
+  "output_directory": "/home/postgres/lic"
+}

@@ -1,5 +1,7 @@
 """License management routes."""
 
+from urllib.parse import quote
+
 from fastapi import HTTPException
 from fastapi.responses import Response
 
@@ -13,7 +15,9 @@ from ..license import (
     key_metadata,
     options,
     revoke_key,
+    save_generated_license,
 )
+from ..license_defaults import LicenseDefaults, save_defaults
 from .schemas import (
     LicenseKeyCreateInput,
     LicenseKeyDeleteInput,
@@ -26,6 +30,17 @@ def register(app, settings: Settings) -> None:
     @app.get("/api/v1/licenses/options")
     def license_options():
         return options(settings)
+
+    @app.get("/api/v1/licenses/defaults")
+    def license_defaults():
+        return options(settings)['defaults']
+
+    @app.put("/api/v1/licenses/defaults")
+    def license_defaults_save(payload: LicenseDefaults):
+        try:
+            return save_defaults(settings, payload).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/v1/licenses/keys/{version}")
     def license_key_metadata(version: str):
@@ -67,8 +82,11 @@ def register(app, settings: Settings) -> None:
     def generate_license(request: LicenseInput):
         try:
             content, license_id = generate(settings, request)
+            saved_path = save_generated_license(settings, content, request.output_directory) if request.save_to_directory else None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=422, detail=f"License 保存失败，请检查目录权限：{exc}") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         return Response(
@@ -77,5 +95,6 @@ def register(app, settings: Settings) -> None:
             headers={
                 "Content-Disposition": 'attachment; filename="license.dat"',
                 "X-License-Id": license_id,
+                **({"X-License-Saved-Path": quote(str(saved_path), safe="/")} if saved_path else {}),
             },
         )

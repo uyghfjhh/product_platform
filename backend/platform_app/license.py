@@ -30,7 +30,6 @@ except ImportError:
 from pydantic import BaseModel, Field, model_validator
 
 from .config import Settings
-from .product_catalog import discover_products
 
 KEY_VERSION = re.compile(r"^1\.([1-9][0-9]*)$")
 MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
@@ -42,6 +41,12 @@ class LicenseProduct(BaseModel):
     version: str = Field(min_length=1, max_length=63)
     expiration_at: date
 
+    @model_validator(mode="after")
+    def validate_version(self):
+        if not self.version.strip() or self.version != self.version.strip() or any(ord(c) < 32 for c in self.version):
+            raise ValueError("产品版本不能为空、带首尾空格或控制字符")
+        return self
+
 
 class LicenseInput(BaseModel):
     license_version: str
@@ -50,9 +55,14 @@ class LicenseInput(BaseModel):
     mac_addrs: list[str] = Field(min_length=1, max_length=256)
     purpose: str = Field(default="", max_length=1000)
     password: str = Field(min_length=1, exclude=True)
+    save_to_directory: bool = False
+    output_directory: str | None = Field(default=None, min_length=1, max_length=4096)
 
     @model_validator(mode="after")
     def check_fields(self):
+        if self.output_directory is not None:
+            from .license_defaults import validate_output_directory
+            validate_output_directory(self.output_directory)
         if not KEY_VERSION.fullmatch(self.license_version):
             raise ValueError("License 版本应为 1.<密钥版本>")
         if any(product.expiration_at < self.start_at for product in self.products):
@@ -73,7 +83,7 @@ def _version_dir(key_dir: Path, version: str) -> Path:
 def options(settings: Settings) -> dict:
     """List signable products from installed packages, not legacy config.json.
 
-    The old config file still supplies the vendor name for output compatibility.
+    Persisted defaults override manifest defaults and the legacy vendor setting.
     Removing a product package immediately removes its new-signing option.
     """
     config_file = settings.license_config
@@ -83,12 +93,11 @@ def options(settings: Settings) -> dict:
     if config_file.is_file():
         data = json.loads(config_file.read_text(encoding="utf-8"))
         vendor = data.get("vendor") or vendor
-    products = [
-        {"name": descriptor.product_code, "version": descriptor.default_version}
-        for item in discover_products(settings.products_root).values()
-        if item.license is not None
-        for descriptor in (item.license, *item.license.additional_products)
-    ]
+    from .license_defaults import read_defaults
+    defaults = read_defaults(settings, vendor=vendor)
+    vendor = defaults.vendor
+    products = [{"name": name, "version": product.default_version}
+                for name, product in defaults.products.items()]
     products.sort(key=lambda item: (item["name"], item["version"]))
     versions = []
     if settings.license_key_dir.is_dir():
@@ -103,7 +112,10 @@ def options(settings: Settings) -> dict:
             ),
             key=lambda text: int(text.split(".")[1]),
         )
-    return {"vendor": vendor, "products": products, "key_versions": versions}
+    usable_versions = [v for v in versions if not _key_metadata(settings.license_key_dir, v)["revoked"]]
+    return {"vendor": vendor, "products": products, "key_versions": versions,
+            "usable_key_versions": usable_versions,
+            "defaults": defaults.model_dump()}
 
 
 def import_legacy_keys(settings: Settings, source: Path) -> list[str]:
@@ -295,17 +307,13 @@ def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
     if not SIGN_LIMIT.acquire(blocking=False):
         raise RuntimeError("当前已有两项 License 生成操作，请稍后重试")
     try:
-        allowed = {
-            descriptor.product_code: set(descriptor.allowed_versions)
-            for item in discover_products(settings.products_root).values()
-            if item.license is not None
-            for descriptor in (item.license, *item.license.additional_products)
-        }
+        signing_options = options(settings)
+        installed = signing_options['defaults']['products']
         if len({item.name for item in request.products}) != len(request.products):
             raise ValueError("同一 License 中产品不能重复")
         for item in request.products:
-            if item.name not in allowed or item.version not in allowed[item.name]:
-                raise ValueError(f"产品未安装或版本不允许签发: {item.name} {item.version}")
+            if item.name not in installed:
+                raise ValueError(f"产品未安装: {item.name}")
         if _key_metadata(settings.license_key_dir, request.license_version)["revoked"]:
             raise ValueError("所选密钥版本已撤销")
         signer = _read_legacy_key(
@@ -340,7 +348,7 @@ def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
                 _separator("END LICENSE"),
                 f"License编号: {license_id} ",
                 f"License版本: {request.license_version}",
-                f"厂商: {options(settings)['vendor']}",
+                f"厂商: {signing_options['vendor']}",
                 f"License用途: {request.purpose}",
                 f"生效时间: {request.start_at.isoformat()}",
             )
@@ -348,3 +356,17 @@ def generate(settings: Settings, request: LicenseInput) -> tuple[bytes, str]:
         return ("\n".join(lines) + "\n").encode("utf-8"), license_id
     finally:
         SIGN_LIMIT.release()
+
+
+def save_generated_license(settings, content: bytes, directory: str | None = None) -> Path:
+    """Atomically replace license.dat, retaining private permissions."""
+    from platform_regress.persistence.atomic import (
+        atomic_write_text,
+        blocking_file_lock,
+    )
+
+    from .license_defaults import read_defaults, validate_output_directory
+    destination = validate_output_directory(directory or read_defaults(settings).output_directory) / 'license.dat'
+    with blocking_file_lock(settings.runtime_dir / 'license-output.lock'):
+        atomic_write_text(destination, content.decode('utf-8'))
+    return destination
