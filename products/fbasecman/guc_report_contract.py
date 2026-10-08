@@ -7,6 +7,7 @@ GROUPS = {
 }
 
 SCENARIO_PURPOSES = {
+    'session_passthrough': 'session 固定客户端与后端：先分配实际后端，再 SET 非默认 work_mem 并查询，参数必须真实改变且 PID 不变；RESET 恢复实测默认值。配置即使请求启用同步，也不能伪造缓存成功。',
     'extended_parse_no_execute': '只发送 Parse，不发送 Execute；会话参数和正式缓存必须保持执行前的值。',
     'extended_bind_describe_no_execute': '发送 Bind 和 Describe 但不执行；绑定和描述成功不能使 SET 提前生效。',
     'extended_execute_apply': '实际 Execute 后参数才改变；随后换到另一物理后端，读取到同一客户端已设置的值。',
@@ -38,7 +39,23 @@ SCENARIO_PURPOSES = {
 def plan_scope(row):
     return {
         '拓扑': {'mmr': '多主 MMR', 'replication': '主备复制'}.get(row.get('topology'), row.get('topology', '未保存')),
+        '归还清理': 'DISCARD ALL（session 客户端结束后清理复用状态）' if row.get('pool') == 'session' else '按事务池原有参数同步策略',
+        '验证范围': '固定后端的数据库参数行为，不验证跨后端同步' if row.get('pool') == 'session' else '事务池跨后端同步及复用防污染',
+        '请求 GUC 同步': '开启' if row.get('enable_sync', True) else '关闭',
         '连接池': {'transaction': '事务池（事务结束后可交给其他客户端）', 'session': '会话池（连接期间固定后端）'}.get(row.get('pool'), row.get('pool', '未保存')),
         '预处理语句保留': {True: '开启', False: '关闭'}.get(row.get('reserve'), '未保存'),
         '请求方式': {'Q': '简单查询协议', 'E': '扩展协议（解析、绑定、执行）', 'product': '内部缓存与故障取证'}.get(row.get('protocol'), row.get('protocol', '未保存')),
     }
+
+
+def scenario_purpose(row):
+    name = row.get('scenario', '')
+    if row.get('pool') != 'session' or name == 'session_passthrough':
+        return SCENARIO_PURPOSES.get(name, '以逐项业务断言为准')
+    if name == 'session_backend_redeploy':
+        return 'A/B 各自固定后端：分别 SET 不同且非默认的 work_mem，再从各自原连接查询；C 的独立连接读取默认值。不要求 A/B/C 复用同一物理后端。'
+    if name == 'routing_and_discard_boundaries':
+        return '固定后端上 SET 测试值、读取确认；事务外 DISCARD ALL 恢复默认值，事务内拒绝 DISCARD 并回滚。全过程核对同一连接身份，不请求读写切换。'
+    if name == 'tx_disconnect_cleanup':
+        return '固定会话事务内 SET 后断连，新会话读取默认值；不要求新会话复用旧后端。'
+    return '固定后端的数据库语义检查：' + SCENARIO_PURPOSES.get(name, name).replace('换物理后端后', '在原物理后端上').replace('换后端后', '在原物理后端上').replace('再换后端', '再在原物理后端上').replace('随后换到另一物理后端', '随后在原物理后端上')

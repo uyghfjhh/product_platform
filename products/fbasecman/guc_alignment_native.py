@@ -36,7 +36,7 @@ SCENARIOS = {
     "savepoint_report": ("savepoint_rollback", "savepoint_nested_release", "report_parameter_status"),
     "backend_redeploy": (
         "tx_disconnect_cleanup", "session_backend_redeploy", "routing_and_discard_boundaries",
-        "mode_owner_isolation", "local_backend_reclaim",
+        "mode_owner_isolation", "local_backend_reclaim", "session_passthrough",
     ),
 }
 # Mandatory internal acceptance stays visible alongside executable black-box checks.
@@ -106,6 +106,10 @@ def make_plan(group):
     plans = []
     for topology in ("mmr", "replication"):
         for name in SCENARIOS[group]:
+            if name == "session_passthrough":
+                for protocol in ('Q', 'E'):
+                    plans.append(CheckPlan(topology, 'session', False, protocol, name, True))
+                continue
             if name == "compatibility_scope":
                 plans.append(CheckPlan(topology, "transaction", False, "E", name))
                 for reserve in (True, False):
@@ -119,7 +123,7 @@ def make_plan(group):
             if group != "extended_boundary" and name not in {"local_backend_reclaim", "mode_owner_isolation"}:
                 configs += [(pool, reserve, "Q") for pool in ("transaction", "session") for reserve in (True, False)]
             for pool, reserve, protocol in configs:
-                plans.append(CheckPlan(topology, pool, reserve, protocol, name))
+                plans.append(CheckPlan(topology, pool, reserve, protocol, name, pool == "transaction"))
     for topology in ("mmr", "replication"):
         plans.append(CheckPlan(topology, "transaction", True, "product", "product_cache_boundaries"))
     return sorted(plans, key=lambda p: (p.protocol == "product", p.topology, p.pool, p.reserve, p.enable_sync, p.scenario, p.protocol))
@@ -164,7 +168,7 @@ SCENARIO_LABELS = {
     "savepoint_nested_release": "嵌套保存点与释放", "report_parameter_status": "客户端参数状态恢复",
     "session_backend_redeploy": "后端复用时保持会话隔离", "tx_disconnect_cleanup": "未提交断连清理",
     "routing_and_discard_boundaries": "路由与会话清理", "local_backend_reclaim": "本地参数执行后重部署",
-    "product_cache_boundaries": "内部缓存写入边界", "local_commit_failure": "本地提交失败清理",
+    "product_cache_boundaries": "内部缓存写入边界", "session_passthrough": "固定会话中的 GUC 真实透传", "local_commit_failure": "本地提交失败清理",
     "execute_registration_failure": "事务预记录失败清理", "compatibility_scope": "关闭同步与透传兼容",
 }
 
@@ -355,16 +359,10 @@ class ScenarioRunner:
                     {'物理默认值': getattr(self, '_physical_defaults', defaults),
                      '代理会话初值': {name: initial.get(name) for name in ('work_mem', 'statement_timeout', 'TimeZone')},
                      '实际起点': connection_facts(initial)}, True, intent='prepare')
-        if self.plan.pool == "session":
-            # Session-pool setup must modify the pinned physical connection.
-            # A Q local bypass after snapshot would only seed frontend state.
-            probe.sql("BEGIN READ WRITE", tag="BEGIN", ready="T", protocol="Q")
-        ready = "T" if self.plan.pool == "session" else "I"
+        ready = 'I'
         probe.sql("SET work_mem='8MB'", tag="SET", ready=ready)
         probe.sql("SET statement_timeout='7s'", tag="SET", ready=ready)
         probe.sql("SET TimeZone='UTC'", tag="SET", ready=ready)
-        if self.plan.pool == "session":
-            probe.sql("COMMIT", tag="COMMIT", protocol="Q")
         probe.snapshot({"work_mem": "8MB", "statement_timeout": "7s", "TimeZone": "UTC"}, intent="prepare")
         return initial
 
@@ -491,6 +489,8 @@ class ScenarioRunner:
                 return checks.faults([("E", point) for point in ("response_construct", "apply", "response_queue")])
             return checks.faults([(protocol, point) for protocol in ("Q", "E")
                                   for point in ("pre_record", "pending", "outstanding", "forward")])
+        if name == "session_passthrough":
+            return self.session_passthrough()
         if name == "compatibility_scope":
             return self.compatibility()
         if name == "mode_owner_isolation":
@@ -915,6 +915,27 @@ class ScenarioRunner:
             if not supported_count and limits:
                 raise BaselineLimit('; '.join(limits))
 
+    def session_passthrough(self):
+        defaults = self.default_values()
+        trial = '32MB' if normalize('work_mem', defaults['work_mem']) != normalize('work_mem', '32MB') else '64MB'
+        with self.client('fixed-session') as probe:
+            # Allocate a real backend before SET, including the read-first path.
+            probe.sql('SELECT 1', protocol='Q', tag='SELECT 1')
+            origin = probe.snapshot(defaults)
+            self.verify_route(origin)
+            probe.sql(f"SET work_mem='{trial}'", tag='SET')
+            changed = probe.snapshot({'work_mem': trial})
+            self.verify('session 即使请求开启同步，SET 仍在原物理连接真实生效',
+                        {'后端身份': identity(origin), 'work_mem': trial},
+                        {'后端身份': identity(changed), 'work_mem': changed['work_mem']},
+                        identity(origin) == identity(changed) and normalize('work_mem', changed['work_mem']) == normalize('work_mem', trial))
+            probe.sql('RESET work_mem', tag='RESET')
+            restored = probe.snapshot({'work_mem': defaults['work_mem']})
+            self.verify('session RESET 由固定后端执行并恢复默认值',
+                        {'后端身份': identity(origin), 'work_mem': defaults['work_mem']},
+                        {'后端身份': identity(restored), 'work_mem': restored['work_mem']},
+                        identity(origin) == identity(restored))
+
     def pool_reuse(self):
         defaults = self.default_values()
         alternatives = ['32MB', '64MB', '128MB']
@@ -1012,7 +1033,7 @@ class ScenarioRunner:
             before = p.snapshot({"work_mem": "32MB"}, ready="T")
         with self.client("replacement") as p:
             current = p.snapshot({"work_mem": self.default_values()["work_mem"]})
-            if identity(before) != identity(current):
+            if self.plan.pool == "transaction" and identity(before) != identity(current):
                 raise Blocked(f"断连后取得新后端，未证明原连接清理：{identity(before)} -> {identity(current)}")
 
 
@@ -1107,6 +1128,8 @@ def render_alignment_config(context, path, plan, mode):
         start = text.index('user "postgres" {')
         end = text.index('user "admin" {', start)
         rule = text[start:end].replace('pool_size 20', f'pool_size {3 if plan.pool == "session" else 1}')
+        if plan.pool == 'session':
+            rule = rule.replace('pool_discard no', 'pool_discard yes')
         rule = rule.replace('pool_reserve_prepared_statement yes',
                             f'pool_reserve_prepared_statement {"yes" if plan.reserve else "no"}')
         return text[:start] + rule + text[end:]
@@ -1265,10 +1288,10 @@ class GucAlignmentCase:
         return True
 
     def record_plan_result(self, context, plan, row):
-        from products.fbasecman.guc_report_contract import SCENARIO_PURPOSES
+        from products.fbasecman.guc_report_contract import scenario_purpose
         context.step(plan.key, f"{plan.topology}/{self.mode}/{plan.scenario} 子场景结论",
                      status=row['status'], details={
-                         'intent': 'verify', 'expected': SCENARIO_PURPOSES.get(plan.scenario, '以逐项业务断言为准'),
+                         'intent': 'verify', 'expected': scenario_purpose(row),
                          'actual': row, 'analysis': row.get('reason', '本配置逐项验证的实际结果已归档'),
                          'assertion': {'type': 'all_steps_pass', 'passed': row['status'] == 'PASS'}})
 

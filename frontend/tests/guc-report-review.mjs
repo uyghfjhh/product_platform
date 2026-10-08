@@ -16,6 +16,10 @@ try {
   const row = page.locator('.case-row').filter({ has: page.locator('.case-name[title="guc.backend_redeploy_sql_parse"]') });
   await row.getByRole('button', { name: '📄 查看报告', exact: true }).click();
   const modal = page.getByRole('dialog');
+  await modal.locator('.cman-scenario-group > summary').first().waitFor();
+  if (!(await modal.locator('.cman-scenario-group').first().getAttribute('open') !== null)) {
+    await modal.locator('.cman-scenario-group > summary').first().click();
+  }
   await modal.locator('.cman-business-table').first().waitFor();
   const firstTable = modal.locator('.cman-business-table').first();
   assert.deepEqual(await firstTable.locator('thead th').allTextContents(), ['执行内容', '预期结果', '实际结果与取值来源', '分析与判定']);
@@ -29,6 +33,7 @@ try {
   await modal.getByRole('button', { name: /查看完整步骤与协议证据/ }).click();
   assert.equal(await modal.locator('.cman-business-table').count(), 0);
   await modal.getByRole('button', { name: '只看业务验证', exact: true }).click();
+  if (!(await firstTable.isVisible())) await modal.locator('.cman-scenario-group > summary').first().click();
   await firstTable.waitFor();
   assert.deepEqual(errors, []);
   console.log('GUC report browser passed: operation/expected/measured/analysis table, SQL provenance and complete-step toggle (read-only).');

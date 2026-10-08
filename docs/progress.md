@@ -1,5 +1,12 @@
 # 当前实施状态
 
+## 2026-10-08：Session 固定连接与 GUC 同步职责分离
+
+- 产品规则在 session pool 下关闭有效 enable_guc_sync；GUC 交由固定后端真实执行，已有 session 后端读写请求保持原物理绑定。transaction 路径保持同步机制。产品源码两处修复位于 fbasecman_dev/sources/rules.c 和 sources/parser/fb_frontend.c；重编译带 License 的 Debug/SCRAM 构建通过。
+- 原 8 个入口与全部场景矩阵保留，session 常规分支关闭同步，不声称跨后端重部署；新增 session_passthrough（MMR/rep × Q/E）检查配置请求开启同步时 SET/RESET 仍在固定 PID 的真实后端生效。session 测试归还策略明确 pool_discard=yes，新客户端默认值验收归属 DISCARD ALL 清理，不归属跨后端 GUC 同步。
+- 八入口真机复跑：前 7 项成功；最后 SQL_PARSE 初次复跑发现 pool_discard=no 导致跨客户端旧值残留，明确清理策略后复跑成功（28 PASS、22 SKIPPED），新增四个固定会话真实执行分支全部 PASS。没有放宽参数、PID或默认值断言。
+- 验证：GUC 专项 71 passed；全量 699 passed、13 skipped、3 项既有无关失败；前端构建、F/I、diff 检查通过。未触碰产品仓库原有未跟踪资产。产品原 rebase 已由用户 abort，继续在原目录实施并编译；临时工作树只保留修复草稿，没有推送。
+
 ## 2026-10-08：GUC 验收证据与报告收敛
 
 - 对照 fbasecman_dev 的最后提交 2b998038：Hint 的 P 阶段不提前应用 GUC、E 阶段才生效，以及 Hint 事务内 GUC 与 SQL_PARSE 对齐。保留原有 8 个入口、全部子场景、拓扑／连接池／Q-E／reserve 开关组合；未删减协议、事务、保存点、缓存故障及复用场景。

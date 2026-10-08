@@ -71,7 +71,7 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
     </section>);
       return label ? <details className="cman-scenario-group" key={label}
         open={items.some(step => ['FAIL', 'ERROR', 'BLOCKED'].includes(step.status))}>
-        <summary>{label}<span>{items.length} 项 · {items.filter(step => step.status === 'PASS').length} 通过 · {items.filter(step => step.status === 'SKIPPED').length} 跳过{items.some(step => ['FAIL', 'ERROR', 'BLOCKED'].includes(step.status)) ? ' · 有未通过检查' : ''}</span></summary>
+        <summary>{label}<span>{items.length} 项 · {items.filter(step => step.status === 'PASS').length} 通过 · {items.filter(step => step.status === 'SKIP').length} 跳过{items.some(step => ['FAIL', 'ERROR', 'BLOCKED'].includes(step.status)) ? ' · 有未通过检查' : ''}</span></summary>
         {content}
       </details> : <div key={label}>{content}</div>;
     })}

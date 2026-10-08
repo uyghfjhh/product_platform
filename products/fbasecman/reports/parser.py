@@ -55,7 +55,7 @@ def _present_guc_alignment_steps(steps):
         SCENARIO_LABELS,
         operation_label,
     )
-    from products.fbasecman.guc_report_contract import SCENARIO_PURPOSES, plan_scope
+    from products.fbasecman.guc_report_contract import plan_scope, scenario_purpose
     archived_checks = {}
     for item in steps:
         for evidence in item.get('evidence') or []:
@@ -108,7 +108,7 @@ def _present_guc_alignment_steps(steps):
             scope = plan_scope(actual)
             mode = str(step.get('title', '')).split('/')[1] if '/' in str(step.get('title', '')) else ''
             step['title'] = f"{scope['拓扑']}／{mode}／{SCENARIO_LABELS.get(scenario, scenario or '子场景')}：{scope['连接池'].split('（')[0]} · {scope['请求方式']} 验证汇总"
-            step['expected'] = SCENARIO_PURPOSES.get(scenario, step.get('expected', '以本次逐项断言为准'))
+            step['expected'] = scenario_purpose({**actual, 'scenario': scenario})
             step['actual'] = {**plan_scope(actual), '已记录验证': checks or ('本配置未执行，不计为通过' if actual.get('executed') is False else '未保存可关联的验证明细，请查看前面的具体检查及原始证据'),
                               '子场景结论': actual.get('status', step.get('status'))}
             if measurements:

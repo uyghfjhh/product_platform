@@ -114,7 +114,7 @@ def test_partial_wire_is_preserved_on_disconnect(tmp_path):
 
 def test_all_design_items_and_acceptance_have_registered_scenarios():
     names = {s for values in alignment.SCENARIOS.values() for s in values}
-    assert len(names) == 24
+    assert len(names) == 25
     assert set(alignment.DESIGN_ITEMS) == set(range(1, 17))
     assert len(alignment.ACCEPTANCE) == 13
     assert all(set(v).issubset(names) for v in alignment.DESIGN_ITEMS.values())
@@ -183,6 +183,7 @@ def test_replication_configuration_uses_only_selected_mode_and_existing_user(tmp
     assert text.count('group_names "rep_group"') == 1
     assert text.count('pool "session"') == 2  # postgres business rule + admin
     assert text.count('pool_reserve_prepared_statement no') == 1
+    assert 'pool_discard yes' in text
     assert 'rw_split_method "hint"' in text
 
 
@@ -325,7 +326,7 @@ def test_test_proxy_requires_build_artifacts_not_product_business_hooks(tmp_path
         build_test_proxy(context)
 
 
-def test_session_pool_baseline_uses_real_write_transaction(tmp_path):
+def test_session_pool_baseline_sets_parameters_directly_without_transaction_workaround(tmp_path):
     calls = []
     class Probe:
         def snapshot(self, expected=None, **kwargs):
@@ -338,10 +339,11 @@ def test_session_pool_baseline_uses_real_write_transaction(tmp_path):
     runner.default_values = lambda: {'work_mem': '4MB', 'statement_timeout': '0', 'TimeZone': 'UTC'}
     runner.verify_route = lambda values: None  # Route identity is checked independently below.
     runner.baseline(Probe())
-    assert calls[1][0] == 'BEGIN READ WRITE'
-    assert all(kwargs['ready'] == 'T' for sql, kwargs in calls[2:5])
-    assert calls[5][0] == 'COMMIT'
-    assert calls[6][0] == 'snapshot'
+    assert calls[1][0] == "SET work_mem='8MB'"
+    assert all(kwargs['ready'] == 'I' for sql, kwargs in calls[1:4])
+    assert calls[4][0] == 'snapshot'
+    assert not any(sql in ('BEGIN READ WRITE', 'COMMIT') for sql, _ in calls)
+
 
 
 @pytest.mark.parametrize('protocol', ['Q', 'E'])
@@ -447,3 +449,12 @@ def test_route_proof_requires_declared_endpoint_and_role(tmp_path, topology, sid
             runner.verify_route(values,side)
     assert runner.results[-1]['passed'] == passed
     assert runner.results[-1]['actual']['端口'] == port
+
+
+def test_session_contract_keeps_all_matrix_branches_without_claiming_sync():
+    for group in alignment.SCENARIOS:
+        plans = alignment.make_plan(group)
+        assert all(not p.enable_sync for p in plans if p.pool == 'session' and p.scenario != 'session_passthrough')
+    guard = [p for p in alignment.make_plan('backend_redeploy') if p.scenario == 'session_passthrough']
+    assert {(p.topology, p.protocol) for p in guard} == {('mmr','Q'),('mmr','E'),('replication','Q'),('replication','E')}
+    assert all(p.pool == 'session' and p.enable_sync and not p.reserve for p in guard)

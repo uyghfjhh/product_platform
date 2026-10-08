@@ -59,3 +59,11 @@ session pool 不要求物理后端切换；该能力由 transaction pool 分支�
 当前复跑有一个明确产品缺陷：SQL_PARSE + session + reserve=no，先查询固定后端，再事务外 SET work_mem=32MB，SET 返回成功但后续实测仍为 4MB 或 8MB，原 PID 未变；MMR、rep 均复现。对应四分支保留 FAIL。Hint 的 session 和 session+reserve=yes 按现有配置限制 SKIPPED。八个入口中七项通过，backend_redeploy_sql_parse 未通过。
 
 报告精简只改变默认展示：执行内容、预期、实测值／SQL来源、比较与原判定；全部步骤与配置限制仍可展开。源码、原始报文及历史判定不为展示而重写。
+
+## Session 与 transaction 的契约（2026-10-08 续）
+
+transaction 池验证跨物理后端同步及 A/B/C 复用防污染；session 固定绑定，GUC 命令由数据库真实执行，不维护跨后端同步。保留原配置矩阵，session 常规分支关闭同步；新增 session_passthrough 的 MMR／rep、Q／E 四分支，配置请求开启同步仍要求真实 SET/RESET，参数值与 PID 同时验证。
+
+产品修复在规则创建时将 session 的有效 enable_guc_sync 关闭；已有 session 绑定的读写请求保持原后端。未开放 Hint session 或 session+reserve=yes，原配置限制仍记 SKIPPED。
+
+session 测试配置显式使用 pool_discard=yes，客户端结束后归还连接以 DISCARD ALL 清理；新客户端的默认值检查验证这一归还清理，不把它称为客户端跨后端 GUC 同步。
