@@ -35,3 +35,11 @@
 .cman-scenario-group > summary { cursor:pointer; overflow-wrap:anywhere; line-height:1.6; }
 .cman-scenario-group > summary span { margin-left:12px; color:var(--text-secondary); font-size:12px; }
 .cman-scenario-group .cman-evidence-card { border-radius:8px; }
+
+.cman-business-summary { padding: 20px; }
+.cman-business-scope { margin: 12px 0 !important; color: var(--text-secondary); }
+.cman-business-table-wrap { overflow-x: auto; margin-top: 16px; }
+.cman-business-table { width: 100%; border-collapse: collapse; min-width: 760px; table-layout: fixed; }
+.cman-business-table th, .cman-business-table td { border: 1px solid var(--border-subtle); padding: 12px; text-align: left; vertical-align: top; }
+.cman-business-table th { background: var(--bg-surface-elevated); }
+.cman-business-table pre { border: 0; padding: 0; margin: 6px 0; }

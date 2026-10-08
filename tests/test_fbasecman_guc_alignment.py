@@ -335,6 +335,8 @@ def test_session_pool_baseline_uses_real_write_transaction(tmp_path):
             calls.append((sql, kwargs))
     context = CaseContext('guc.baseline', tmp_path)
     runner = alignment.ScenarioRunner(context, alignment.CheckPlan('mmr', 'session', False, 'Q', 'tx_set_commit'), 'sql_parse', 1)
+    runner.default_values = lambda: {'work_mem': '4MB', 'statement_timeout': '0', 'TimeZone': 'UTC'}
+    runner.verify_route = lambda values: None  # Route identity is checked independently below.
     runner.baseline(Probe())
     assert calls[1][0] == 'BEGIN READ WRITE'
     assert all(kwargs['ready'] == 'T' for sql, kwargs in calls[2:5])
@@ -421,3 +423,27 @@ def test_parameter_observation_is_one_business_step_with_precise_values(tmp_path
     assert '提交事务后' in checks[0]['title']
     assert checks[0]['details']['expected'] == {'work_mem':'32MB','statement_timeout':'7s'}
     assert '期望 32MB，实际 32MB' in checks[0]['details']['analysis']
+
+
+@pytest.mark.parametrize('topology,side,port,recovery,passed', [
+    ('mmr','write','15021','false',True), ('mmr','write','15011','false',False), ('mmr','read','15022','true',True),
+    ('mmr','read','15021','false',False),
+    ('replication','read','15012','true',True), ('replication','read','15011','false',False),
+    ('replication','write','15011','true',False), ('replication','write','15012','false',True)])
+def test_route_proof_requires_declared_endpoint_and_role(tmp_path, topology, side, port, recovery, passed):
+    context = CaseContext('guc.route', tmp_path, environment={
+        'nodes': {'mmr1': {'host': '127.0.0.1', 'port': 15011}, 'mmr2': {'host': '127.0.0.1', 'port': 15021}},
+        'extra_nodes': {'pg_3': {'host': '127.0.0.1', 'port': 15012}}})
+    runner = alignment.ScenarioRunner(context, alignment.CheckPlan(topology,'transaction',True,'E','routing_and_discard_boundaries'),'hint',12345)
+    runner.config = tmp_path / 'proxy.conf'
+    runner.config.write_text('group "mmr_group" {\n backend_clusters "c1,c2"\n write_cluster "c2"\n promoted_cluster "c1"\n}\ngroup "rep_group" {\n backend_clusters "c1"\n}\n' + ''.join(
+        f'datasources "{name}" {{\n host "127.0.0.1"\n port {node_port}\n cluster_name "{cluster}"\n}}\n'
+        for name,node_port,cluster in [('pg_1',15011,'c1'),('pg_2',15021,'c2'),('pg_3',15012,'c1'),('pg_4',15022,'c2')]))
+    values = {'host':'127.0.0.1/32','port':port,'pid':'50962','recovery':recovery,'work_mem':'8MB'}
+    if passed:
+        runner.verify_route(values,side)
+    else:
+        with pytest.raises(AssertionError):
+            runner.verify_route(values,side)
+    assert runner.results[-1]['passed'] == passed
+    assert runner.results[-1]['actual']['端口'] == port

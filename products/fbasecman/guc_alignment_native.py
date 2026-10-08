@@ -7,7 +7,10 @@ archives the full plan, per-scenario facts and wire evidence.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
+import re
+import socket
 import subprocess
 from collections import Counter
 from contextlib import contextmanager
@@ -173,8 +176,8 @@ def operation_label(operation):
     if "未 E" in operation:
         return "只解析或绑定参数语句，尚未执行"
     sql = operation.split("：", 1)[-1].strip()
-    if sql == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY": return "切换到读侧"
-    if sql == "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE": return "切换到写侧"
+    if sql == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY": return "请求切换到读侧"
+    if sql == "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE": return "请求切换到写侧"
     if sql == "COMMIT": return "提交事务"
     if sql == "ROLLBACK": return "完整回滚事务"
     if sql.startswith("ROLLBACK TO"): return "回滚到保存点"
@@ -244,6 +247,7 @@ class Probe:
                            intent=intent, differences=differences)
         if differences:
             raise AssertionError(f"{operation}: {differences}")
+        self.last_query_evidence = self.runner.results[-1].get("evidence")
         return facts
 
     def sql(self, sql, *, tag=None, ready="I", error=None, protocol=None):
@@ -262,18 +266,22 @@ class Probe:
         # Measurement is an independent Q after the operation's completed
         # Sync; it must not add a reused PreparedStatement cache contract to
         # a GUC value assertion. Named GUC statement/portal checks stay E.
+        operation_before_measurement = self.last_operation
         facts = self.sql(PROBE_SQL, ready=ready or "I", tag="SELECT 1", protocol="Q")
         if len(facts["rows"]) != 1 or len(facts["rows"][0]) != len(FIELDS):
             self.runner.verify("查询恰好一行参数及后端身份", {"rows": 1, "columns": len(FIELDS)}, facts, False)
         values = dict(zip(FIELDS, facts["rows"][0]))
+        values["client"] = self.label
+        values["observation_evidence"] = getattr(self, "last_query_evidence", None)
         if expected:
             differences = {name: {"expected": value, "actual": values[name]}
                            for name, value in expected.items()
                            if normalize(name, values[name]) != normalize(name, value)}
-            operation = getattr(self, "last_operation", "前序操作")
+            operation = operation_before_measurement
             comparison = "；".join(f"{name}：期望 {value}，实际 {values[name]}" for name, value in expected.items())
-            self.runner.verify(f"{operation_label(operation)}后，核对参数值", expected,
-                               {**{name: values[name] for name in expected}, "后端": identity(values)},
+            self.runner.verify(f"客户端 {self.label}：{operation_label(operation)}后，核对参数值", expected,
+                               {**{name: values[name] for name in expected}, "后端": connection_facts(values), "客户端": self.label, "采集 SQL": PROBE_SQL,
+                                "原始查询响应附件": getattr(self, "last_query_evidence", None)},
                                not differences, command=operation, analysis=comparison, intent=intent)
         return values
 
@@ -289,6 +297,12 @@ def extended_packet(sql, statement="", portal="", execute=True):
 
 def identity(values):
     return tuple(values[name] for name in ("host", "port", "pid"))
+
+
+def connection_facts(values):
+    return {'客户端': values.get('client', '当前客户端'), '主机': values.get('host'), '端口': values.get('port'),
+            '后端 PID': values.get('pid'), 'pg_is_in_recovery': values.get('recovery')}
+
 
 
 class ScenarioRunner:
@@ -311,7 +325,9 @@ class ScenarioRunner:
                               "analysis": analysis or ("协议执行记录；业务结果见参数、事务或缓存检查" if intent == "action" and passed else f"期望 {expected}；实测 {actual}" if passed else f"字段差异：{differences or actual}"),
                               "evidence": evidence,
                           })
-        self.results.append({"key": key, "passed": passed})
+        self.results.append({"key": key, "passed": passed, "title": operation_label(title), "evidence": evidence,
+                             "expected": expected, "actual": actual, "intent": intent,
+                             "command": command or title, "analysis": analysis,})
 
     def verify(self, title, expected, actual, passed, *, command=None, analysis=None, intent="verify"):
         self.sequence += 1
@@ -331,7 +347,14 @@ class ScenarioRunner:
                               details={"intent": "cleanup", "expected": "客户端关闭", "actual": "socket 已关闭"})
 
     def baseline(self, probe):
+        defaults = self.default_values()
         initial = probe.snapshot()
+        self.verify_route(initial)
+        self.verify('设置测试参数前，记录物理默认值和代理会话初值',
+                    '先读取默认值，再记录会话当前值；不假设 work_mem 为 4MB',
+                    {'物理默认值': getattr(self, '_physical_defaults', defaults),
+                     '代理会话初值': {name: initial.get(name) for name in ('work_mem', 'statement_timeout', 'TimeZone')},
+                     '实际起点': connection_facts(initial)}, True, intent='prepare')
         if self.plan.pool == "session":
             # Session-pool setup must modify the pinned physical connection.
             # A Q local bypass after snapshot would only seed frontend state.
@@ -345,6 +368,69 @@ class ScenarioRunner:
         probe.snapshot({"work_mem": "8MB", "statement_timeout": "7s", "TimeZone": "UTC"}, intent="prepare")
         return initial
 
+    def route_config(self):
+        path = getattr(self, 'config', None)
+        if path is None or not Path(path).is_file():
+            raise Blocked('路由确认缺少本次生成的代理配置文件')
+        text = Path(path).read_text()
+        blocks = {(kind, name): body for kind, name, body in re.findall(
+            r'(group|datasources)\s+"([^"\n]+)"\s*\{([^{}]*)\}', text)}
+        def field(body, name):
+            found = re.search(r'(?m)^\s*' + re.escape(name) + r'\s+(?:"([^"\n]*)"|([^\s]+))', body)
+            return (found[1] if found[1] is not None else found[2]) if found else None
+        group = blocks.get(('group', self.database))
+        if group is None:
+            raise Blocked(f'代理配置中缺少组 {self.database}')
+        clusters = set((field(group, 'backend_clusters') or '').split(','))
+        write_cluster, read_cluster = field(group, 'write_cluster'), field(group, 'promoted_cluster')
+        if self.plan.topology == 'mmr' and not write_cluster:
+            raise Blocked('多活配置没有声明 write_cluster')
+        nodes = []
+        for (kind, name), body in blocks.items():
+            cluster = field(body, 'cluster_name')
+            if kind != 'datasources' or cluster not in clusters:
+                continue
+            host, port = field(body, 'host'), field(body, 'port')
+            if not host or not port:
+                raise Blocked(f'配置数据源 {name} 缺少地址或端口')
+            try:
+                addresses = {str(ipaddress.ip_address(item[4][0])) for item in socket.getaddrinfo(host, None)}
+            except OSError as exc:
+                raise Blocked(f'无法解析数据源 {name} 的主机 {host}') from exc
+            nodes.append({'名称': name, '集群': cluster, '主机': sorted(addresses), '端口': int(port)})
+        if not nodes:
+            raise Blocked('配置组中没有可核对的数据源')
+        return nodes, write_cluster, read_cluster
+
+    def verify_route(self, values, side=None):
+        nodes, write_cluster, read_cluster = self.route_config()
+        try:
+            address = str(ipaddress.ip_interface(values['host']).ip)
+            port = int(values['port'])
+        except (ValueError, KeyError):
+            address, port = values.get('host'), values.get('port')
+        matches = [node for node in nodes if address in node['主机'] and port == node['端口']]
+        recovery = values.get('recovery')
+        is_write = bool(matches) and recovery == 'false' and (
+            self.plan.topology == 'replication' or any(n['集群'] == write_cluster for n in matches))
+        passed = bool(matches) and recovery in {'true', 'false'}
+        if side == 'write':
+            passed = passed and is_write
+        elif side == 'read':
+            passed = passed and (recovery == 'true' if self.plan.topology == 'replication' else
+                                not is_write)
+        title = '起点确认：按配置及实际角色识别当前节点' if side is None else f"路由确认：命中{'写' if side == 'write' else '读'}端"
+        actual = {**connection_facts(values), '采集 SQL': PROBE_SQL, '原始查询响应附件': values.get('observation_evidence'), '命中配置节点': [n['名称'] for n in matches],
+                  '命中集群': [n['集群'] for n in matches], '是否写节点': is_write}
+        if self.plan.topology == 'mmr':
+            actual['配置 write_cluster'] = write_cluster
+        self.verify(title, {'配置组': self.database, '声明节点': nodes,
+                           '角色要求': '记录实际起点，不假定默认在写端' if side is None else ('写节点' if side == 'write' else '读节点（主备须为备库；多活允许组内非写主节点）'),
+                           '判断规则': '命中配置 write_cluster 且不是备库' if self.plan.topology == 'mmr' else 'pg_is_in_recovery=false 为写，true 为读'},
+                    actual, passed,
+                    analysis='先将实际地址、端口匹配到本次代理配置的数据源；多活核对 write_cluster，主备按查询得到的 pg_is_in_recovery 判断。参数值另行核对。')
+        return actual
+
     def redeploy(self, probe, expected):
         if self.plan.pool == "session":
             # A session pool pins the physical connection. Cross-backend
@@ -354,23 +440,34 @@ class ScenarioRunner:
             self.verify("session pool 原会话后端保持且参数正确", identity(before), identity(after),
                         identity(before) == identity(after))
             return
+        origin = probe.snapshot(expected)
+        self.verify_route(origin)
         if self.mode == "hint":
             probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", protocol="Q")
             before = probe.snapshot(expected)
+            self.verify_route(before, "write")
             probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY", protocol="Q")
             after = probe.snapshot(expected)
+            self.verify_route(after, "read")
             probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", protocol="Q")
-            probe.snapshot(expected)
+            returned = probe.snapshot(expected)
+            self.verify_route(returned, "write")
         else:
             probe.sql("BEGIN READ WRITE", tag="BEGIN", ready="T")
             before = probe.snapshot(expected, ready="T")
+            self.verify_route(before, "write")
             probe.sql("COMMIT", tag="COMMIT")
             probe.sql("BEGIN READ ONLY", tag="BEGIN", ready="T")
             after = probe.snapshot(expected, ready="T")
+            self.verify_route(after, "read")
             probe.sql("COMMIT", tag="COMMIT")
         if identity(before) == identity(after):
             raise Blocked(f"未构造出物理后端切换：{identity(before)}")
-        self.verify("同一客户端切换物理后端", "身份不同且参数均匹配", {"before": identity(before), "after": identity(after)}, True)
+        self.verify("同一客户端从已确认写端切换到已确认读端，参数保持不变",
+                    "写端与读端身份不同，切换前后的参数均满足同一组期望",
+                    {'切换前起点': connection_facts(origin), '请求写路由后': connection_facts(before),
+                     '请求读路由后': connection_facts(after), '起点到写端是否换连接': identity(origin) != identity(before),
+                     '写端到读端是否换连接': identity(before) != identity(after), '已核对参数': expected}, True)
         if self.plan.topology == "replication":
             self.verify("复制组读侧为备库", "true", after["recovery"], after["recovery"] == "true")
 
@@ -383,6 +480,7 @@ class ScenarioRunner:
             probe.sql("BEGIN READ WRITE", tag="BEGIN", ready="T", protocol=protocol)
 
     def run(self):
+        self.default_values()
         name = self.plan.scenario
         if name in INTERNAL:
             from products.fbasecman.guc_instrumentation import ProductChecks
@@ -412,7 +510,15 @@ class ScenarioRunner:
             if name == "report_parameter_status":
                 return self.report(probe)
             if name == "routing_and_discard_boundaries":
-                self.redeploy(probe, {"work_mem": "8MB"})
+                default_work_mem = self.default_values()['work_mem']
+                trial = '32MB' if normalize('work_mem', default_work_mem) != normalize('work_mem', '32MB') else '64MB'
+                probe.sql(f"SET work_mem='{trial}'", tag='SET')
+                probe.snapshot({'work_mem': trial})
+                self.verify('测试值与实测默认值不同，排除 SET 未生效的假通过',
+                            'work_mem 测试值必须不同于物理默认值',
+                            {'默认值': default_work_mem, 'SET 测试值': trial},
+                            normalize('work_mem', trial) != normalize('work_mem', default_work_mem))
+                self.redeploy(probe, {'work_mem': trial})
                 if known_discard_q_registration_limit(self.plan):
                     raise BaselineLimit("既有共用问题 DISCARD-Q-NO-RESERVE：Hint/sql_parse 的 Q 不入 outstanding，DISCARD 打标失败导致 OD_STOP；仅排除此 DISCARD 配置分支，路由及其他 reserve=no Q 仍验证")
                 # Success and rejected cleanup are independent contracts.
@@ -489,14 +595,23 @@ class ScenarioRunner:
         raise ValueError(f"未实现检查 {name}")
 
     def default_values(self):
-        nodes = self.context.environment.get("nodes") or {}
-        values = []
-        for node in ("mmr1", "mmr2"):
-            if node in nodes:
-                values.append(clean_backend_defaults(self.context, node))
-        if len(values) != 2 or values[0] != values[1]:
-            raise Blocked("两个物理后端的 RESET 默认基线缺失或不一致")
-        return values[0]
+        if hasattr(self, '_physical_defaults'):
+            return self._physical_defaults['mmr1']['参数值']
+        nodes = self.context.environment.get('nodes') or {}
+        extra = self.context.environment.get('extra_nodes') or {}
+        captured = {}
+        for name in ('mmr1', 'mmr2', 'pg_3', 'pg_4'):
+            endpoint = (nodes if name.startswith('mmr') else extra).get(name)
+            if endpoint:
+                captured[name] = {'配置地址': endpoint['host'], '配置端口': endpoint['port'],
+                                  '参数值': clean_backend_defaults(self.context, name)}
+        self.verify('直连数据库读取本次 GUC 默认值',
+                    '使用相同账号、无额外启动 options 的新连接读取各节点默认值',
+                    captured, True, intent='prepare')
+        if 'mmr1' not in captured or 'mmr2' not in captured or captured['mmr1']['参数值'] != captured['mmr2']['参数值']:
+            raise Blocked('两个物理主节点的 RESET 默认基线缺失或不一致')
+        self._physical_defaults = captured
+        return captured['mmr1']['参数值']
 
     def batches(self, probe):
         # Each entire string is one Q, never split into separate client requests.
@@ -801,13 +916,23 @@ class ScenarioRunner:
                 raise BaselineLimit('; '.join(limits))
 
     def pool_reuse(self):
+        defaults = self.default_values()
+        alternatives = ['32MB', '64MB', '128MB']
+        trials = [value for value in alternatives if normalize('work_mem', value) != normalize('work_mem', defaults['work_mem'])]
+        a_value, b_value = trials[:2]
+        self.verify('为客户端 A/B 选择互不相同且不同于默认值的参数',
+                    'A 测试值、B 测试值、物理默认值三者不同',
+                    {'默认值': defaults['work_mem'], 'A 设置值': a_value, 'B 设置值': b_value},
+                    len({normalize('work_mem', v) for v in (defaults['work_mem'], a_value, b_value)}) == 3)
         if self.plan.pool == "session":
             # Session pooling cannot hand off a live client's physical backend.
             with self.client("A") as a, self.client("B") as b:
-                a.sql("SET work_mem='32MB'", tag="SET")
-                b.sql("SET work_mem='64MB'", tag="SET")
-                a.snapshot({"work_mem": "32MB"})
-                b.snapshot({"work_mem": "64MB"})
+                a.snapshot(defaults)
+                b.snapshot(defaults)
+                a.sql(f"SET work_mem='{a_value}'", tag="SET")
+                b.sql(f"SET work_mem='{b_value}'", tag="SET")
+                a.snapshot({"work_mem": a_value})
+                b.snapshot({"work_mem": b_value})
                 with self.client("C") as c:
                     initial = c.snapshot()
                     expected = self.default_values()["work_mem"]
@@ -819,24 +944,26 @@ class ScenarioRunner:
                 if self.mode == "hint":
                     p.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", protocol="Q")
                 p.sql("BEGIN READ WRITE" if self.mode == "sql_parse" else "BEGIN", tag="BEGIN", ready="T")
-                return p.snapshot(expected, ready="T")
-            first = enter(a, {})
-            a.sql("SET work_mem='32MB'", tag="SET", ready="T")
+                observed = p.snapshot(expected, ready="T")
+                self.verify_route(observed, "write")
+                return observed
+            first = enter(a, defaults)
+            a.sql(f"SET work_mem='{a_value}'", tag="SET", ready="T")
             a.sql("COMMIT", tag="COMMIT")
-            second = enter(b, {})
+            second = enter(b, defaults)
             if identity(first) != identity(second):
                 raise Blocked(f"B 未复用 A 原后端：{identity(first)} -> {identity(second)}")
-            b.sql("SET work_mem='64MB'", tag="SET", ready="T")
+            b.sql(f"SET work_mem='{b_value}'", tag="SET", ready="T")
             b.sql("COMMIT", tag="COMMIT")
-            third = enter(a, {"work_mem": "32MB"})
+            third = enter(a, {**defaults, "work_mem": a_value})
             self.verify("A 再次复用同一物理后端", identity(first), identity(third), identity(first) == identity(third))
             a.sql("COMMIT", tag="COMMIT")
-            fourth = enter(b, {"work_mem": "64MB"})
+            fourth = enter(b, {**defaults, "work_mem": b_value})
             self.verify("B 会话参数隔离", identity(first), identity(fourth), identity(first) == identity(fourth))
             b.sql("COMMIT", tag="COMMIT")
         with self.client("C") as c:
             defaults = self.default_values()
-            current = c.snapshot({"work_mem": defaults["work_mem"]})
+            current = c.snapshot(defaults)
             self.verify("新客户端 C 复用原后端且无旧值", identity(first), identity(current), identity(first) == identity(current))
 
     def mode_isolation(self):
@@ -892,7 +1019,9 @@ class ScenarioRunner:
 def clean_backend_defaults(context, node):
     """No SDK/startup timeout: startup options also change pg_settings.reset_val."""
     import psycopg
-    endpoint = context.environment['nodes'][node]
+    endpoint = (context.environment.get('nodes') or {}).get(node) or (context.environment.get('extra_nodes') or {}).get(node)
+    if not endpoint:
+        raise Blocked(f'默认值采集缺少节点 {node}')
     user = context.environment.get('user', 'postgres')
     password = (context.environment.get('users') or {}).get(user, {}).get('password')
     sql = ("SELECT current_setting('work_mem'), current_setting('statement_timeout'), "
@@ -1014,8 +1143,10 @@ class GucAlignmentCase:
         if group not in SCENARIOS or mode not in {"hint", "sql_parse"}:
             raise ValueError((group, mode))
         self.group, self.mode = group, mode
-        self.title = f"{mode} GUC {group} 对齐回归"
-        self.summary = "验证 GUC 执行边界、事务作用域、协议响应和后端重部署；内部缓存/失败清理以产品侧证据独立验收。"
+        from products.fbasecman.guc_report_contract import GROUPS
+        label, purpose = GROUPS[group]
+        self.title = f"{mode.upper()}：{label}"
+        self.summary = purpose
         self.coverage = []
 
     def run(self, context: CaseContext):
@@ -1053,6 +1184,7 @@ class GucAlignmentCase:
                 self.coverage.append(row)
                 if (selected is not None and plan.scenario not in selected) or plan.topology not in selected_topologies:
                     row.update(status="BLOCKED", reason="选择复跑，本计划项未执行")
+                    self.record_plan_result(context, plan, row)
                     continue
                 config_key = (plan.topology, plan.pool, plan.reserve, plan.enable_sync, plan.protocol == "product")
                 if config_key != current_config:
@@ -1092,6 +1224,7 @@ class GucAlignmentCase:
                             startup_failure = ("ERROR", str(exc))
                 if startup_failure:
                     row.update(status=startup_failure[0], reason=startup_failure[1])
+                    self.record_plan_result(context, plan, row)
                     continue
                 runner = ScenarioRunner(context, plan, self.mode, port)
                 runner.config, runner.binary = path, tested
@@ -1111,11 +1244,7 @@ class GucAlignmentCase:
                 except Exception as exc:  # noqa: BLE001 - isolate independent scenarios after saving evidence
                     row.update(status="ERROR", reason=str(exc))
                 row["steps"] = runner.results
-                context.step(plan.key, f"{plan.topology}/{self.mode}/{plan.scenario} 子场景结论",
-                             status=row["status"], details={
-                                 "intent": "verify", "expected": "本子场景所有必需检查与清理通过",
-                                 "actual": row, "analysis": row.get("reason", "分项断言全部通过"),
-                                 "assertion": {"type": "all_steps_pass", "passed": row["status"] == "PASS"}})
+                self.record_plan_result(context, plan, row)
         finally:
             context.stop_processes()
             for path in (context.output_dir / "configs").glob("*/fbasecman.log"):
@@ -1134,6 +1263,14 @@ class GucAlignmentCase:
             reasons = list(dict.fromkeys(row.get("reason", "未执行") for row in self.coverage if row["status"] in {"BLOCKED", "CANCELLED"}))
             raise Blocked("GUC 必需检查未完成：" + "；".join(reasons[:3] or ["没有支持范围内的通过检查"]))
         return True
+
+    def record_plan_result(self, context, plan, row):
+        from products.fbasecman.guc_report_contract import SCENARIO_PURPOSES
+        context.step(plan.key, f"{plan.topology}/{self.mode}/{plan.scenario} 子场景结论",
+                     status=row['status'], details={
+                         'intent': 'verify', 'expected': SCENARIO_PURPOSES.get(plan.scenario, '以逐项业务断言为准'),
+                         'actual': row, 'analysis': row.get('reason', '本配置逐项验证的实际结果已归档'),
+                         'assertion': {'type': 'all_steps_pass', 'passed': row['status'] == 'PASS'}})
 
     def finish(self, context):
         counts = Counter(row["status"] for row in self.coverage)

@@ -1,5 +1,15 @@
 # 当前实施状态
 
+## 2026-10-08：GUC 验收证据与报告收敛
+
+- 对照 fbasecman_dev 的最后提交 2b998038：Hint 的 P 阶段不提前应用 GUC、E 阶段才生效，以及 Hint 事务内 GUC 与 SQL_PARSE 对齐。保留原有 8 个入口、全部子场景、拓扑／连接池／Q-E／reserve 开关组合；未删减协议、事务、保存点、缓存故障及复用场景。
+- 实测各物理节点的 work_mem／statement_timeout／TimeZone 默认值，使用相同账号和无额外启动 options 的独立连接。设置参数前记录代理起点、地址、端口、PID；多活按本次配置 write_cluster 与实际角色识别写节点，rep 按 pg_is_in_recovery 判主备。多活读端允许组内非写主节点，包括写集群的备库。
+- A/B/C 复用验证增加新客户端初值核对，并选择互不相同且非默认的 work_mem；换后端验证要求目标角色、实际连接变化与参数值同时匹配。查询取值保存客户端身份、采集 SQL 及原始响应附件；请求切换与实际路由确认分别记证。
+- 报告默认按场景／配置汇总，以执行内容、预期、实测及来源、分析与判定四列表格展示；完整步骤可展开。启动不支持／选择未执行项单列，历史展示仅关联原归档步骤和覆盖记录，不补造新的路由或参数检查。
+- 真实八入口复跑：7 项 SUCCEEDED；guc.backend_redeploy_sql_parse FAIL，4 个失败分支均为 session pool + reserve=no 的 Q：后端已分配后 SET 32MB 返回成功，后续 SELECT current_setting 仍返回 4MB 或 8MB，PID 不变，分别在 MMR／rep 的路由清理与 A/B/C 复用场景复现。保留 FAIL，未修改产品代码。
+- 根因：fb_simple_query_pr_try_intercept_guc 仅本地应答并更新 client GUC cache；已有 session backend 未执行 SET，后续绑定复用不触发 attach/deploy。该 Q 拦截函数在最后提交前后相同；尚未用旧二进制复跑，不将缺陷断言为本次提交引入。
+- 验证：GUC 报告与驱动专项 70 passed；全量 698 passed、13 skipped、3 个既有无关失败（两项 catalog 数量、一项辅助实例发现）。前端构建、只读浏览器四列表格／采集 SQL／完整步骤切换、F/I 和 diff 检查通过。
+
 ## 2026-10-08：套件失败重跑的结果发布修复
 
 - `guc.failed` 已执行 26 PASS，却被结果发布按 `guc.failed.*` 前缀过滤，造成“没有本次结果”的假 FAILED。公共发布器将已知套件的 `<suite>.failed` 按 `<suite>.*` 匹配，仍严格校验 catalog、operation_id 和产物边界；无失败项的复跑不制造 PASS。

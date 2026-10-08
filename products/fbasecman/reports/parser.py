@@ -43,13 +43,24 @@ def _display_report_value(value):
                   "passed": "通过", "failed": "失败", "blocked": "阻塞", "unexecuted": "未执行"}
         return "\n".join(f"{labels.get(str(key), str(key))}：{_display_report_value(item)}" for key, item in value.items())
     if isinstance(value, (list, tuple)):
-        return "；".join(_display_report_value(item) for item in value) if value else "（无）"
+        separator = "\n" if any(isinstance(item, str) and len(item) > 80 for item in value) else "；"
+        return separator.join(_display_report_value(item) for item in value) if value else "（无）"
     return str(value)
 
 
 def _present_guc_alignment_steps(steps):
     """Old/new GUC archives share the existing report UI with business labels."""
-    from products.fbasecman.guc_alignment_native import PROBE_SQL, SCENARIO_LABELS, operation_label
+    from products.fbasecman.guc_alignment_native import (
+        PROBE_SQL,
+        SCENARIO_LABELS,
+        operation_label,
+    )
+    from products.fbasecman.guc_report_contract import SCENARIO_PURPOSES, plan_scope
+    archived_checks = {}
+    for item in steps:
+        for evidence in item.get('evidence') or []:
+            if str(evidence).endswith('-wire.json'):
+                archived_checks[Path(str(evidence)).name.removesuffix('-wire.json')] = item
     last_operation = "前序操作"
     parameters = {"work_mem", "statement_timeout", "TimeZone", "application_name"}
     for step in steps:
@@ -59,9 +70,60 @@ def _present_guc_alignment_steps(steps):
         actual = step.get("actual")
         expected = step.get("expected")
         if "子场景结论" in str(step.get("title", "")) and isinstance(actual, dict):
-            step["actual"] = {key: actual[key] for key in
-                              ("pool", "reserve", "protocol", "status", "reason") if key in actual}
-            step["command"] = ""
+            scenario = actual.get('scenario') or next((name for name in SCENARIO_LABELS if name in step.get('title', '')), '')
+            checks = []
+            commands = []
+            baseline = []
+            measurements = []
+            business_checks = []
+            last_measurement = None
+            for recorded in actual.get('steps', []):
+                item = archived_checks.get(recorded.get('key'), {})
+                intent = recorded.get('intent', item.get('intent'))
+                command = item.get('command') or recorded.get('command') or recorded.get('title')
+                if PROBE_SQL in str(command):
+                    last_measurement = {'SQL': command, '响应附件': next(iter(item.get('evidence') or []), None)}
+                title = recorded.get('title') or item.get('title', recorded.get('key', ''))
+                if any(label in str(title) for label in ('直连数据库读取本次 GUC 默认值', '记录物理默认值和代理会话初值')):
+                    baseline.append(recorded.get('actual', item.get('actual')))
+                if intent in {'action', 'verify'} and PROBE_SQL not in str(command) and command and (not commands or commands[-1] != command):
+                    commands.append(str(command))
+                if intent != 'verify':
+                    continue
+                title = recorded.get('title') or item.get('title', recorded.get('key'))
+                expected_value = recorded.get('expected', item.get('expected'))
+                actual_value = recorded.get('actual', item.get('actual'))
+                if isinstance(actual_value, dict) and actual_value.get('采集 SQL'):
+                    last_measurement = {'SQL': actual_value['采集 SQL'], '响应附件': actual_value.get('原始查询响应附件')}
+                    measurements.append(last_measurement)
+                    actual_value = {k: v for k, v in actual_value.items() if k not in {'采集 SQL', '原始查询响应附件'}}
+                checks.append(f"{title}：期望 {_display_report_value(expected_value)}；实测 {_display_report_value(actual_value)}")
+                measurement = last_measurement if (isinstance(expected_value, dict) and set(expected_value).issubset(parameters)) or (isinstance(actual_value, dict) and 'pg_is_in_recovery' in actual_value) else None
+                business_checks.append({'operation': title, 'command': command,
+                    'expected': _display_report_value(expected_value), 'actual': _display_report_value(actual_value),
+                    'analysis': recorded.get('analysis') or item.get('analysis') or '以本条记录的预期与实测比较为依据',
+                    'status': 'PASS' if recorded.get('passed') is True else 'FAIL' if recorded.get('passed') is False else item.get('status', '未保存'),
+                    'measurement_sql': measurement['SQL'] if measurement else None,
+                    'measurement_evidence': measurement['响应附件'] if measurement else None})
+            scope = plan_scope(actual)
+            mode = str(step.get('title', '')).split('/')[1] if '/' in str(step.get('title', '')) else ''
+            step['title'] = f"{scope['拓扑']}／{mode}／{SCENARIO_LABELS.get(scenario, scenario or '子场景')}：{scope['连接池'].split('（')[0]} · {scope['请求方式']} 验证汇总"
+            step['expected'] = SCENARIO_PURPOSES.get(scenario, step.get('expected', '以本次逐项断言为准'))
+            step['actual'] = {**plan_scope(actual), '已记录验证': checks or ('本配置未执行，不计为通过' if actual.get('executed') is False else '未保存可关联的验证明细，请查看前面的具体检查及原始证据'),
+                              '子场景结论': actual.get('status', step.get('status'))}
+            if measurements:
+                step['actual']['参数与后端身份采集 SQL'] = PROBE_SQL
+                step['actual']['原始查询响应附件'] = [m['响应附件'] for m in measurements if m['响应附件']]
+            if baseline:
+                step['actual']['默认值与初始状态'] = baseline
+            step['business_checks'] = business_checks
+            step['baseline_context'] = _display_report_value(baseline) if baseline else ''
+            step['report_scope'] = scope
+            if actual.get('reason'):
+                step['actual']['原因'] = actual['reason']
+            step['analysis'] = (f"本配置记录了 {len(checks)} 项具体验证；子场景结论为 {actual.get('status', step.get('status'))}。"
+                                if checks else '归档仅保留子场景结论，不能据此补造参数值或连接复用证据。')
+            step["command"] = "\n".join(commands) if commands else "归档未保存可关联的操作明细"
         if isinstance(actual, dict) and "received" in actual:
             if PROBE_SQL not in command:
                 last_operation = command
@@ -120,6 +182,8 @@ def _present_guc_alignment_steps(steps):
                 step["analysis"] = "不匹配：" + "；".join(differences)
             elif step.get("status") == "PASS":
                 step["analysis"] = "参数值与期望一致。"
+                if "SET SESSION CHARACTERISTICS AS TRANSACTION READ" in str(step.get("command", "")):
+                    step["analysis"] += " 此项只核对参数，不证明路由正确；路由依据是独立的目标地址、端口及角色确认，历史报告未保存此检查时不能补作已验证。"
     return grouped
 
 
@@ -834,6 +898,24 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
 
     if any(target.startswith(f"guc.{group}_") for group in
            ("extended_boundary", "transaction_sync", "savepoint_report", "backend_redeploy")):
+        # Coverage is archived execution data, including configurations that
+        # could not start. Show those branches without inventing a run.
+        coverage_files = list(case_dir.glob('artifacts/*/guc-alignment-coverage.json'))
+        if len(coverage_files) == 1:
+            recorded_keys = {step.get('actual', {}).get('key') for step in steps
+                             if isinstance(step.get('actual'), dict) and '子场景结论' in step.get('title', '')}
+            try:
+                coverage = json.loads(coverage_files[0].read_text())
+            except (OSError, ValueError):
+                coverage = {}
+            mode = target.rsplit('_', 2)[-1] if target.endswith('_hint') else 'sql_parse'
+            for row in coverage.get('checks', []):
+                if not isinstance(row, dict) or row.get('key') in recorded_keys or not row.get('scenario'):
+                    continue
+                steps.append({'title': f"{row.get('topology', '')}/{mode}/{row['scenario']} 子场景结论",
+                              'intent': 'verify', 'status': row.get('status', 'UNKNOWN'),
+                              'expected': '以本次归档的检查计划为准', 'actual': row,
+                              'analysis': row.get('reason', '结论来自本次覆盖记录；具体取值见归档证据')})
         steps = _present_guc_alignment_steps(steps)
 
     # Some suite executors persist expected/actual but omit a human analysis

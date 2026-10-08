@@ -49,3 +49,13 @@ session pool 不要求物理后端切换；该能力由 transaction pool 分支�
 ## 用户确定的单账号范围
 
 同进程双模式交错专项不执行，报告明确标记 SKIPPED；不能宣称两个独立代理证明了同进程 owner 隔离。其余候选、事务、会话A/B/C、故障及重部署检查保持原断言，A/B/C是同一账号的独立连接，不是三个用户。
+
+## 本次验证与取值依据（2026-10-08）
+
+先直连采集各节点默认值，再从代理客户端查询当前参数及 `inet_server_addr()`、`inet_server_port()`、`pg_backend_pid()`、`pg_is_in_recovery()`。多活写端按本次代理配置的 `write_cluster` 识别；rep 写端要求 recovery=false。请求读写标签本身不证明路由。
+
+同一客户端必须在实际不同的物理后端上保持参数；A/B/C 复用检查则要求同一物理后端、各客户端独立值及 C 的默认值。事务提交／回滚检查之后再换后端，单独的 ROLLBACK 返回值不代替同步验收。会话池固定连接分支只证明会话内生效及隔离，不声称发生物理切换。
+
+当前复跑有一个明确产品缺陷：SQL_PARSE + session + reserve=no，先查询固定后端，再事务外 SET work_mem=32MB，SET 返回成功但后续实测仍为 4MB 或 8MB，原 PID 未变；MMR、rep 均复现。对应四分支保留 FAIL。Hint 的 session 和 session+reserve=yes 按现有配置限制 SKIPPED。八个入口中七项通过，backend_redeploy_sql_parse 未通过。
+
+报告精简只改变默认展示：执行内容、预期、实测值／SQL来源、比较与原判定；全部步骤与配置限制仍可展开。源码、原始报文及历史判定不为展示而重写。

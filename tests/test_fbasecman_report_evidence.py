@@ -73,6 +73,7 @@ def test_missing_purpose_uses_labeled_current_catalog(tmp_path):
 
 def test_jdbc_results_compare_values_and_preserve_code_examples():
     from types import SimpleNamespace
+
     from products.fbasecman.native import SqlParseExtendedProtocolCase
     class Context:
         def __init__(self):
@@ -134,6 +135,7 @@ def test_readable_observations_preserve_actual_values():
 
 def test_savepoint_failure_keeps_precise_failed_step(tmp_path):
     from platform_regress.sdk import CaseContext
+
     from products.fbasecman.native import SavepointRecoveryCase
     expected = {'begin': (None, 'T', 'BEGIN', None), 'savepoint': (None, 'T', 'SAVEPOINT', None),
                 'division': ('22012', 'E', None, None), 'aborted_select': ('25P02', 'E', None, None),
@@ -163,7 +165,9 @@ def test_savepoint_failure_keeps_precise_failed_step(tmp_path):
 
 def test_shared_query_check_records_result_not_only_telemetry(tmp_path):
     from types import SimpleNamespace
+
     from platform_regress.sdk import CaseContext
+
     from products.fbasecman.native import _expect
     context = CaseContext('guc.test', tmp_path)
     _expect(context, 'query', '读取 work_mem', '4MB', lambda out: out == '4MB',
@@ -222,6 +226,7 @@ def test_structured_guc_facts_are_readable_and_do_not_break_report_topology(tmp_
 
 def test_guc_scalar_actual_is_display_text_not_boolean(tmp_path):
     from platform_regress.sdk import CaseContext
+
     from products.fbasecman.reports import parser
     (tmp_path / 'report.txt').write_text('结论: PASS\n验证目的:\n  缓存边界\n')
     context = CaseContext('guc.extended_boundary_sql_parse', tmp_path)
@@ -280,3 +285,32 @@ def test_guc_summary_omits_nested_steps_and_success_analysis_does_not_repeat_val
     assert result[1]['expected'] == {'work_mem': '32MB'}
     assert result[1]['actual'] == {'work_mem': '32MB'}
     assert result[1]['analysis'] == '参数值与期望一致。'
+
+
+def test_guc_reuse_summary_displays_archived_values_and_backend_identity():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    check = {'title': '确认 A 复用同一后端', 'intent': 'verify', 'status': 'PASS',
+             'expected': 'host:5432:123', 'actual': 'host:5432:123',
+             'evidence': ['artifacts/run/check-1-wire.json']}
+    summary = {'title': 'mmr/hint/session_backend_redeploy 子场景结论', 'status': 'PASS',
+               'actual': {'scenario': 'session_backend_redeploy', 'topology': 'mmr',
+                          'pool': 'transaction', 'reserve': True, 'protocol': 'E', 'status': 'PASS',
+                          'steps': [{'key': 'check-1', 'passed': True}]}}
+    result = _present_guc_alignment_steps([check, summary])[-1]
+    assert '非默认' in result['expected'] and 'A/B' in result['expected']
+    assert result['actual']['请求方式'] == '扩展协议（解析、绑定、执行）'
+    assert 'host:5432:123' in result['actual']['已记录验证'][0]
+    assert '确认 A 复用同一后端' in result['actual']['已记录验证'][0]
+    assert '1 项具体验证' in result['analysis']
+    assert 'steps' not in result['actual']
+
+
+def test_guc_skipped_summary_does_not_claim_unexecuted_scope_passed():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    result = _present_guc_alignment_steps([{
+        'title': 'mmr/hint/mode_owner_isolation 子场景结论', 'status': 'SKIPPED',
+        'actual': {'scenario': 'mode_owner_isolation', 'status': 'SKIPPED', 'reason': '单账号范围排除', 'steps': []}}])[0]
+    assert result['status'] == 'SKIPPED'
+    assert result['actual']['原因'] == '单账号范围排除'
+    assert '不能视为已验证' in result['expected']
+    assert '不能据此补造' in result['analysis']
