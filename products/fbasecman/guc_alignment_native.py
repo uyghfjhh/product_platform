@@ -546,19 +546,21 @@ class ScenarioRunner:
 
     def transaction(self, probe, initial, name):
         if name in {"tx_set_commit", "tx_set_rollback"}:
-            end = "COMMIT" if name.endswith("commit") else "ROLLBACK"
-            probe.sql("BEGIN", tag="BEGIN", ready="T")
-            probe.sql("SET work_mem='32MB'", tag="SET", ready="T")
-            probe.sql(f"SET application_name='{self.mode}_tx'", tag="SET", ready="T")
-            probe.snapshot({"work_mem": "32MB", "application_name": f"{self.mode}_tx"}, ready="T")
-            probe.sql(end, tag=end)
-            expected = {"work_mem": "32MB" if end == "COMMIT" else "8MB",
-                        "application_name": f"{self.mode}_tx" if end == "COMMIT" else initial["application_name"]}
-            probe.snapshot(expected)
-            self.redeploy(probe, expected)
-            if self.plan.protocol == "Q":
-                probe.sql(f"BEGIN; SET application_name='{self.mode}_batch'; {end};", protocol="Q")
-                probe.snapshot({"application_name": f"{self.mode}_batch" if end == "COMMIT" else expected["application_name"]})
+            for set_form in ('SET', 'SET SESSION'):
+                initial = self.baseline(probe)
+                end = "COMMIT" if name.endswith("commit") else "ROLLBACK"
+                probe.sql("BEGIN", tag="BEGIN", ready="T")
+                probe.sql(f"{set_form} work_mem='32MB'", tag="SET", ready="T")
+                probe.sql(f"{set_form} application_name='{self.mode}_tx'", tag="SET", ready="T")
+                probe.snapshot({"work_mem": "32MB", "application_name": f"{self.mode}_tx"}, ready="T")
+                probe.sql(end, tag=end)
+                expected = {"work_mem": "32MB" if end == "COMMIT" else "8MB",
+                            "application_name": f"{self.mode}_tx" if end == "COMMIT" else initial["application_name"]}
+                probe.snapshot(expected)
+                self.redeploy(probe, expected)
+                if self.plan.protocol == "Q":
+                    probe.sql(f"BEGIN; {set_form} application_name='{self.mode}_batch'; {end};", protocol="Q")
+                    probe.snapshot({"application_name": f"{self.mode}_batch" if end == "COMMIT" else expected["application_name"]})
             return
         if name in {"tx_reset_commit_rollback", "tx_reset_all_commit_rollback"}:
             reset = "RESET ALL" if "all" in name else "RESET work_mem"
@@ -716,7 +718,7 @@ class ScenarioRunner:
             return wire.message("D", wire.describe_portal_payload(portal))
         if name in {"extended_parse_no_execute", "extended_bind_describe_no_execute", "extended_execute_apply"}:
             for transaction in (False, True):
-                for index, sql in enumerate(("SET work_mem='32MB'", "RESET work_mem", "RESET ALL")):
+                for index, sql in enumerate(("SET work_mem='32MB'", "SET SESSION work_mem='32MB'", "RESET work_mem", "RESET ALL")):
                     self.baseline(probe)
                     if transaction:
                         probe.sql("BEGIN", tag="BEGIN", ready="T")
@@ -749,8 +751,8 @@ class ScenarioRunner:
                         probe.snapshot({"work_mem": "8MB", "statement_timeout": "7s"}, ready=ready)
                         if name == "extended_execute_apply":
                             defaults = self.default_values()
-                            expected = {"work_mem": "32MB"} if index == 0 else {"work_mem": defaults["work_mem"]}
-                            if index == 2:
+                            expected = {"work_mem": "32MB"} if index < 2 else {"work_mem": defaults["work_mem"]}
+                            if index == 3:
                                 expected.update(statement_timeout=defaults["statement_timeout"], TimeZone=defaults["TimeZone"])
                             # New Bind is required after a transaction-ending Sync.
                             if transaction:
@@ -758,7 +760,7 @@ class ScenarioRunner:
                             else:
                                 packet = bind(stmt, portal) + execute(portal)
                             probe.exchange(packet + wire.sync_message(), f"E/Sync：{sql}",
-                                           {"sqlstates": [], "tags": ["SET" if index == 0 else "RESET"], "ready": [ready]})
+                                           {"sqlstates": [], "tags": ["SET" if index < 2 else "RESET"], "ready": [ready]})
                             probe.snapshot(expected, ready=ready)
                         probe.exchange(wire.message("C", wire.close_statement_payload(stmt)) + wire.sync_message(),
                                        f"Close Statement/Sync：{stmt}", {"sqlstates": [], "tags": [], "ready": [ready]})

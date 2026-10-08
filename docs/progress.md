@@ -1,5 +1,12 @@
 # 当前实施状态
 
+## 2026-10-09：普通 SET 与显式 SET SESSION 分别验收
+
+- 事务提交／回滚及预处理 P/B/D/E 边界分别执行 SET work_mem 与 SET SESSION work_mem，同样核对事务内值、提交／回滚后的值、实际后端切换后的值；Q 单批次 application_name 两种语法也分别覆盖。SET LOCAL 保留独立不残留分支。
+- Hint 初筛排除读写标签后调用语法解析；VariableSetStmt 抽取参数名／值／is_local，普通 SET 与 SET SESSION 都是 SESSION 作用域，不以字符串前缀代替 AST。
+- 真机四入口 extended_boundary_hint/sql_parse、transaction_sync_hint/sql_parse 全部 SUCCEEDED。核对 Hint 普通 SET 证据：事务内 32MB，提交后及写读写复查 32MB；回滚后及写读写复查 8MB。报告保留实际 SQL，不混写成 SET SESSION。
+- 专项 80 passed（新增两项语法各自完整事务链检查）；本轮全量 706 passed、13 skipped、3 项既有无关失败；F/I 与 diff 检查通过。本次无需前端构建。
+
 ## 2026-10-08：事务 GUC 报告分阶段展示
 
 - transaction_sync 两模式按归档的实际 BEGIN／SET／RESET／COMMIT／ROLLBACK 标记事务阶段，参数行展示前次实测、预期、当前实测、客户端及地址／端口／PID；本事务实际 SQL 可展开。事务后路由复查仍展示实际动作及连接，不声称事务进行中发生连接切换。

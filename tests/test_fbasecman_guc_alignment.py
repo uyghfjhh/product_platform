@@ -494,3 +494,22 @@ def test_real_psql_matrix_preserves_both_topologies_and_pool_modes():
     assert {(p.topology,p.pool) for p in plans} == {('mmr','transaction'),('mmr','session'),('replication','transaction'),('replication','session')}
     assert all(p.protocol == 'psql' and not p.reserve for p in plans)
     assert all(p.enable_sync == (p.pool == 'transaction') for p in plans)
+
+
+@pytest.mark.parametrize('scenario', ['tx_set_commit', 'tx_set_rollback'])
+def test_plain_set_and_explicit_session_each_execute_full_transaction_checks(tmp_path, scenario):
+    runner = alignment.ScenarioRunner(CaseContext('guc.syntax', tmp_path),
+        alignment.CheckPlan('mmr','transaction',False,'Q',scenario),'hint',1)
+    calls=[]; switches=[]
+    runner.baseline=lambda probe: {'application_name':'original'}
+    runner.redeploy=lambda probe, expected: switches.append(expected)
+    class Probe:
+        def sql(self, sql, **kwargs): calls.append(sql)
+        def snapshot(self, expected=None, **kwargs): return expected
+    runner.transaction(Probe(),{},scenario)
+    assert "SET work_mem='32MB'" in calls
+    assert "SET SESSION work_mem='32MB'" in calls
+    end='COMMIT' if scenario.endswith('commit') else 'ROLLBACK'
+    assert calls.count('BEGIN') == 2 and calls.count(end) == 2
+    assert len(switches)==2
+    assert all(item['work_mem']==('32MB' if end=='COMMIT' else '8MB') for item in switches)
