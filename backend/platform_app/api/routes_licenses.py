@@ -14,10 +14,14 @@ from ..license import (
     generate_key,
     key_metadata,
     options,
-    revoke_key,
     save_generated_license,
 )
-from ..license_defaults import LicenseDefaults, save_defaults
+from ..license_defaults import (
+    DefaultKeyInput,
+    LicenseDefaults,
+    save_defaults,
+    set_default_key,
+)
 from .schemas import (
     LicenseKeyCreateInput,
     LicenseKeyDeleteInput,
@@ -71,10 +75,10 @@ def register(app, settings: Settings) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.post("/api/v1/licenses/keys/{version}/revoke")
-    def license_key_revoke(version: str, payload: LicenseKeyDeleteInput):
+    @app.put("/api/v1/licenses/default-key")
+    def license_default_key(payload: DefaultKeyInput):
         try:
-            return revoke_key(settings, version, payload.password)
+            return set_default_key(settings, payload.version)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

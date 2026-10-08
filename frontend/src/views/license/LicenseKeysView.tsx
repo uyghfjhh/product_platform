@@ -15,7 +15,7 @@ type KeyMetadata = {
   revoked_at?: string | null;
 };
 
-/** 密钥管理：版本列表、生成、口令轮换、撤销、删除。 */
+/** 密钥管理：版本列表、生成、口令轮换、默认版本、删除。 */
 export default function LicenseKeysView() {
   const { message } = App.useApp();
   const [options, setOptions] = useState<Options | null>(null);
@@ -25,12 +25,10 @@ export default function LicenseKeysView() {
   const [keyForm] = Form.useForm<{ version: string; password: string }>();
   const [rotateForm] = Form.useForm<{ old_password: string; new_password: string }>();
   const [deleteForm] = Form.useForm<{ password: string }>();
-  const [revokeForm] = Form.useForm<{ password: string }>();
   const [createOpen, setCreateOpen] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const selectionSequence = useRef(0);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [revokeOpen, setRevokeOpen] = useState(false);
 
   useEffect(() => {
     void api<Options>('/licenses/options').then((data) => {
@@ -115,30 +113,19 @@ export default function LicenseKeysView() {
     } finally { setKeyLoading(false); }
   }
 
-  async function revokeKey(password: string) {
-    if (!keyVersion) return;
+  async function setDefaultKey(version: string) {
     setKeyLoading(true);
     try {
-      const info = await api<KeyMetadata>(
-        `/licenses/keys/${encodeURIComponent(keyVersion)}/revoke`,
-        { method: 'POST', body: JSON.stringify({ password }) });
-      setKeyInfo(info);
+      await api('/licenses/default-key', { method: 'PUT', body: JSON.stringify({ version }) });
       setOptions(await api<Options>('/licenses/options'));
-      setRevokeOpen(false);
-      revokeForm.resetFields();
-      message.success('密钥版本已撤销，不能继续签发');
-    } catch (cause) {
-      message.error((cause as Error).message);
-    } finally { setKeyLoading(false); }
+      message.success(`默认密钥已设为 ${version}`);
+    } catch (cause) { message.error((cause as Error).message); }
+    finally { setKeyLoading(false); }
   }
 
   async function rowAction(version: string, action: string) {
     if (!await refreshKey(version)) return;
     if (action === 'rotate') openRotate();
-    if (action === 'revoke') {
-      revokeForm.setFieldValue('password', options?.defaults.default_password || '');
-      setRevokeOpen(true);
-    }
     if (action === 'delete') {
       deleteForm.setFieldValue('password', options?.defaults.default_password || '');
       setDeleteOpen(true);
@@ -170,17 +157,19 @@ export default function LicenseKeysView() {
             dataSource={[...options.key_versions].reverse().map((version) => ({ version }))}
             onRow={(row) => ({ onClick: () => { if (!keyLoading) void refreshKey(row.version); } })}
             columns={[
-              { title: '版本', dataIndex: 'version', render: (version: string) => <Space>
+              { title: '版本', dataIndex: 'version', render: (version: string) => <Space wrap>
                 <Typography.Text strong>{version}</Typography.Text>
                 {version === options.defaults.license_version && <Tag color="blue">默认</Tag>}</Space> },
               { title: '签发状态', render: (_, row) => options.usable_key_versions.includes(row.version)
                 ? <Tag color="success">可签发</Tag> : <Tag color="error">已撤销</Tag> },
-              { title: '操作', render: (_, row) => <Space size={0}>
+              { title: '操作', render: (_, row) => <Space wrap size={0}>
                 <Button type="link" disabled={keyLoading} onClick={(event) => {
                   event.stopPropagation(); void rowAction(row.version, 'rotate');
                 }}>修改口令</Button>
+                <Button type="link" disabled={keyLoading || row.version === options.defaults.license_version || !options.usable_key_versions.includes(row.version)}
+                  onClick={(event) => { event.stopPropagation(); void setDefaultKey(row.version); }}>
+                  {row.version === options.defaults.license_version ? '已是默认' : '设为默认'}</Button>
                 <Dropdown trigger={['click']} menu={{ items: [
-                  { key: 'revoke', label: '撤销签发', disabled: !options.usable_key_versions.includes(row.version) },
                   { key: 'delete', label: '删除版本', danger: true, disabled: options.key_versions.length <= 1 },
                 ], onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); void rowAction(row.version, key); } }}>
                   <Button type="text" disabled={keyLoading} onClick={(event) => event.stopPropagation()}>更多</Button>
@@ -193,15 +182,15 @@ export default function LicenseKeysView() {
           {!keyInfo ? <Empty description={keyVersion ? '正在读取密钥详情' : '生成新密钥以开始签发'} /> : <>
             <div className="license-key-detail"><Typography.Text type="secondary">公钥</Typography.Text>
               <Typography.Paragraph copyable={{ text: keyInfo.public_key }} code>{keyInfo.public_key}</Typography.Paragraph></div>
-            <div className="license-key-detail"><Typography.Text type="secondary">SHA256 指纹</Typography.Text>
-              <Typography.Paragraph copyable={{ text: keyInfo.fingerprint }} code>{keyInfo.fingerprint}</Typography.Paragraph></div>
+            <div className="license-key-detail"><Typography.Text type="secondary">公钥 SHA256 指纹</Typography.Text>
+              <Typography.Paragraph copyable={{ text: keyInfo.fingerprint }} code>{keyInfo.fingerprint}</Typography.Paragraph>
+              <Typography.Text type="secondary">用于核对两处公钥是否一致。</Typography.Text></div>
             {keyInfo.revoked && <Alert type="warning" showIcon message="已停止使用此版本签发新的 License"
               description={keyInfo.revoked_at ? `撤销时间：${keyInfo.revoked_at}` : undefined} />}
             <div className="license-key-actions"><Space wrap>
               <Button disabled={keyLoading} onClick={openRotate}>修改口令</Button>
-              <Button disabled={keyLoading || keyInfo.revoked} onClick={() => {
-                revokeForm.setFieldValue('password', options.defaults.default_password); setRevokeOpen(true);
-              }}>撤销签发</Button>
+              <Button disabled={keyLoading || keyInfo.revoked || keyVersion === options.defaults.license_version}
+                onClick={() => void setDefaultKey(keyVersion)}>{keyVersion === options.defaults.license_version ? '已是默认' : '设为默认'}</Button>
               <Button danger disabled={keyLoading || options.key_versions.length <= 1} onClick={() => {
                 deleteForm.setFieldValue('password', options.defaults.default_password); setDeleteOpen(true);
               }}>删除版本</Button>
@@ -239,23 +228,6 @@ export default function LicenseKeysView() {
           <Space>
             <Button onClick={() => setDeleteOpen(false)}>取消</Button>
             <Button danger type="primary" htmlType="submit" loading={keyLoading}>确认删除</Button>
-          </Space>
-        </Form>
-      </Modal>
-      <Modal title={`撤销密钥版本 ${keyVersion || ''}`} open={revokeOpen}
-        onCancel={() => { setRevokeOpen(false); revokeForm.resetFields(); }}
-        footer={null} destroyOnHidden>
-        <Typography.Paragraph type="secondary">
-          撤销后保留公钥和历史文件，但禁止继续生成新的 License。
-        </Typography.Paragraph>
-        <Form form={revokeForm} layout="vertical"
-          onFinish={(values) => void revokeKey(values.password)}>
-          <Form.Item name="password" label="当前口令" rules={[{ required: true }]}>
-            <Input.Password autoComplete="current-password" />
-          </Form.Item>
-          <Space>
-            <Button onClick={() => setRevokeOpen(false)}>取消</Button>
-            <Button danger type="primary" htmlType="submit" loading={keyLoading}>确认撤销</Button>
           </Space>
         </Form>
       </Modal>

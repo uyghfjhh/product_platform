@@ -253,24 +253,6 @@ def generate_key(settings: Settings, version: str, password: str) -> dict:
     return _key_metadata(settings.license_key_dir, version)
 
 
-def revoke_key(settings: Settings, version: str, password: str) -> dict:
-    _read_legacy_key(settings.license_key_dir, version, password)
-    metadata = _key_metadata(settings.license_key_dir, version)
-    if metadata["revoked"]:
-        return metadata
-    revoked_file = settings.license_key_dir / "revoked.json"
-    try:
-        values = json.loads(revoked_file.read_text(encoding="utf-8")) if revoked_file.is_file() else {}
-    except (OSError, ValueError):
-        values = {}
-    values[version] = datetime.now().astimezone().isoformat(timespec="seconds")
-    revoked_file.parent.mkdir(parents=True, exist_ok=True)
-    temporary = revoked_file.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(revoked_file)
-    return _key_metadata(settings.license_key_dir, version)
-
-
 def change_key_password(settings: Settings, version: str, old_password: str,
                         new_password: str) -> dict:
     signer = _read_legacy_key(settings.license_key_dir, version, old_password)

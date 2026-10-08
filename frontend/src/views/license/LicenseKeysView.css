@@ -7,3 +7,5 @@
 .license-key-actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
 .license-key-actions .ant-typography { margin: 12px 0 0; }
 @media (max-width: 1000px) { .license-keys-layout { grid-template-columns: minmax(0, 1fr); } }
+
+@media (max-width: 600px) { .license-keys-layout .ant-card-body { padding: 16px; } .license-keys-layout .ant-table-cell { padding: 10px 6px !important; } }

@@ -90,10 +90,10 @@ def test_removed_products_are_hidden_but_saved_overrides_are_retained(tmp_path, 
 
 
 def test_revoked_default_key_cannot_be_saved_or_automatically_selected(tmp_path):
-    _, client = client_for(tmp_path)
+    settings, client = client_for(tmp_path)
     legacy_key_fixture(tmp_path)
-    # Revocation verifies a real test key; no user key material is involved.
-    assert client.post('/api/v1/licenses/keys/1.1/revoke', json={'password': 'test-password'}).status_code == 200
+    (settings.license_key_dir / "revoked.json").write_text(json.dumps({"1.1": "2026-10-08"}))
+    assert '/api/v1/licenses/keys/{version}/revoke' not in client.get('/openapi.json').json()['paths']
     defaults = client.get('/api/v1/licenses/defaults').json()
     defaults['license_version'] = '1.1'
     assert client.put('/api/v1/licenses/defaults', json=defaults).status_code == 422
@@ -137,3 +137,18 @@ def test_generated_license_saved_bytes_match_download_and_replace_existing_file(
     assert blocked.read_text() == 'keep'
     request['output_directory'] = 'relative/path'
     assert client.post('/api/v1/licenses/generate', json=request).status_code == 422
+
+
+def test_set_default_key_preserves_other_defaults_and_rejects_invalid_keys(tmp_path):
+    settings, client = client_for(tmp_path)
+    legacy_key_fixture(tmp_path)
+    defaults = client.get('/api/v1/licenses/defaults').json()
+    defaults.update(vendor='保留厂商', purpose='保留用途', output_directory=str(tmp_path / 'lic'))
+    assert client.put('/api/v1/licenses/defaults', json=defaults).status_code == 200
+    result = client.put('/api/v1/licenses/default-key', json={'version': '1.1'})
+    assert result.status_code == 200
+    defaults['license_version'] = '1.1'
+    assert client.get('/api/v1/licenses/defaults').json() == defaults
+    for invalid in ['1.99', 'bad']:
+        assert client.put('/api/v1/licenses/default-key', json={'version': invalid}).status_code == 422
+    assert client.get('/api/v1/licenses/defaults').json() == defaults

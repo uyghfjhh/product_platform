@@ -102,3 +102,21 @@ def save_defaults(settings, value):
             data['products'] = {**{name: p.model_dump() for name, p in previous.products.items()}, **data['products']}
         write_json(path, data)
     return value
+
+
+class DefaultKeyInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: str = Field(pattern=r'^1\.[1-9][0-9]*$')
+
+
+def set_default_key(settings, version):
+    from .license import options
+    if version not in options(settings)['usable_key_versions']:
+        raise ValueError('所选密钥不存在或不可签发')
+    path = defaults_path(settings)
+    with blocking_file_lock(settings.runtime_dir / 'license-defaults.lock'):
+        value = (LicenseDefaults.model_validate(json.loads(path.read_text())) if path.exists()
+                 else read_defaults(settings, vendor=options(settings)['vendor']))
+        value.license_version = version
+        write_json(path, value.model_dump())
+    return {'license_version': version}

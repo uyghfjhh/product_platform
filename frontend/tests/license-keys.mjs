@@ -17,6 +17,11 @@ try {
     return route.fulfill({ json: metadata(route.request().url().split('/').at(-1)) });
   });
   let created;
+  await page.route('**/api/v1/licenses/default-key', async (route) => {
+    assert.equal(route.request().method(), 'PUT');
+    options.defaults.license_version = route.request().postDataJSON().version;
+    await route.fulfill({ json: { license_version: options.defaults.license_version } });
+  });
   await page.route('**/api/v1/licenses/keys', (route) => {
     assert.equal(route.request().method(), 'POST');
     created = route.request().postDataJSON();
@@ -31,7 +36,7 @@ try {
   await page.locator('.license-key-detail').first().waitFor();
   await rows.filter({ hasText: '1.2' }).locator('td').first().click();
   await page.getByText('已停止使用此版本签发新的 License').waitFor();
-  assert(await page.locator('.license-key-actions').getByRole('button', { name: '撤销签发', exact: true }).isDisabled());
+  assert(await page.locator('.license-key-actions').getByRole('button', { name: '设为默认', exact: true }).isDisabled());
   await rows.filter({ hasText: '1.1' }).getByRole('button', { name: '修改口令', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByText('修改版本 1.1 的口令', { exact: true }).waitFor();
@@ -44,11 +49,10 @@ try {
   await rows.filter({ hasText: '1.4' }).waitFor();
   assert.deepEqual(created, { version: '1.4', password: '123456' });
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
-  await rows.filter({ hasText: '1.3' }).getByRole('button', { name: '更多', exact: true }).click();
-  await page.getByRole('menuitem', { name: '撤销签发', exact: true }).click();
-  await page.getByRole('dialog').getByText('撤销密钥版本 1.3', { exact: true }).waitFor();
-  await page.getByRole('dialog').locator('.ant-modal-close').click();
-  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await rows.filter({ hasText: '1.3' }).getByRole('button', { name: '设为默认', exact: true }).click();
+  await rows.filter({ hasText: '1.3' }).getByText('默认', { exact: true }).waitFor();
+  assert(await rows.filter({ hasText: '1.3' }).getByRole('button', { name: '已是默认', exact: true }).isDisabled());
+  assert.equal(await page.getByText('撤销签发', { exact: true }).count(), 0);
   await rows.filter({ hasText: '1.1' }).getByRole('button', { name: '更多', exact: true }).click();
   await page.getByRole('menuitem', { name: '删除版本', exact: true }).click();
   await page.getByRole('dialog').getByText('删除密钥版本 1.1', { exact: true }).waitFor();
@@ -57,6 +61,10 @@ try {
   await page.screenshot({ path: '/tmp/license-keys-redesign.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('.platform-sidebar .ant-menu-title-content').filter({ hasText: /^License 生成$/ }).click();
+  await page.locator('#license_version').waitFor();
+  await page.locator('.ant-select').filter({ has: page.locator('#license_version') }).getByText('1.3', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log('Key management browser passed: status, selection, dialogs, default password, creation, mobile layout (writes isolated).');
 } finally { await browser.close(); }

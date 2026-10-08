@@ -335,7 +335,7 @@ class CaseContext(Protocol):
 - Ed25519 签名；
 - Argon2id 密钥派生；
 - XChaCha20-Poly1305 私钥保护；
-- 密钥生成、查看、口令变更、撤销和轮换；
+- 密钥生成、查看、口令变更、默认版本选择和轮换；
 - 旧 License 文件格式兼容、验证和下载。
 
 产品目录只声明 `product_code`、可授权版本和产品特殊字段/规则。

@@ -29,6 +29,10 @@ def publish_regression_results(
     root = Path(output_root or settings.artifact_dir(environment["product_id"], environment["id"]))
     targets = set(case_targets)
     target = task["target"]
+    suite_rerun = target.endswith(".failed") and any(
+        case.startswith(target[:-7] + ".") for case in targets
+    )
+    selection = target[:-7] if suite_rerun else target
     directory = root
     candidates = [(path, _read(path)) for path in root.glob("runs/*/cases/*/result.json")]
     rows = {}
@@ -38,8 +42,8 @@ def publish_regression_results(
             continue
         if (
             target not in {"all", "failed"}
-            and case != target
-            and not case.startswith(target + ".")
+            and case != selection
+            and not case.startswith(selection + ".")
         ):
             continue
         try:
@@ -51,7 +55,7 @@ def publish_regression_results(
         rows[case] = (verdict, row.get("reason"), path.parent)
     if not rows:
         # A no-op failed rerun is a successful operation, not a passing case.
-        if target == "failed" and terminal == "SUCCEEDED":
+        if (target == "failed" or suite_rerun) and terminal == "SUCCEEDED":
             return terminal, reason
         reason = "本次没有生成可归因到本次执行的回归结果"
         store.results.put_result(

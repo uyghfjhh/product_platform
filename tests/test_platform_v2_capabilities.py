@@ -577,3 +577,29 @@ def test_postgresql_log_archive_protects_open_files(tmp_path):
     assert open_log.read_text() == "open evidence"
     assert closed_log.read_text() == "closed evidence"
     assert list((logs / "archive").glob("run_node_*.tar.gz"))
+
+
+@pytest.mark.parametrize('verdict,terminal', [('PASS', 'SUCCEEDED'), ('FAIL', 'FAILED')])
+def test_suite_failed_publication_filters_suite_and_current_operation(tmp_path, verdict, terminal):
+    settings, store, env, root = publication_setup(tmp_path)
+    for case, operation, state in [('guc.one', 'new', verdict), ('guc.old', 'old', 'FAIL'),
+                                   ('other.one', 'new', 'FAIL')]:
+        folder = root / case
+        folder.mkdir()
+        (folder / 'result.json').write_text(json.dumps({
+            'target': case, 'operation_id': operation, 'verdict': state}))
+    status, _ = publish_regression_results(store, settings, env,
+        {'id': 'new', 'target': 'guc.failed'}, 'SUCCEEDED', 'done',
+        case_targets={'guc.one', 'guc.old', 'other.one'})
+    assert status == terminal
+    results = store.results.list_results('lab')
+    assert [(r['target'], r['status']) for r in results] == [('guc.one', verdict)]
+
+
+def test_suite_failed_noop_does_not_fabricate_pass(tmp_path):
+    settings, store, env, _ = publication_setup(tmp_path)
+    status, _ = publish_regression_results(store, settings, env,
+        {'id': 'new', 'target': 'guc.failed'}, 'SUCCEEDED', 'No failed cases',
+        case_targets={'guc.one'})
+    assert status == 'SUCCEEDED'
+    assert store.results.list_results('lab') == []

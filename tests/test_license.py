@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from fastapi.testclient import TestClient
 from nacl.bindings import crypto_aead_xchacha20poly1305_ietf_encrypt
 from platform_app.api import create_app
-from platform_app.license import _separator
 from platform_app.config import Settings
+from platform_app.license import _separator
 from test_api import settings_for
 
 
@@ -231,11 +231,12 @@ def test_key_management_http_contract(tmp_path):
 
 
 def test_revoked_key_cannot_sign_new_license(tmp_path):
-    from platform_app.license import revoke_key, generate_key
+    from platform_app.license import generate_key, key_metadata
 
     settings = settings_for(tmp_path)
     generate_key(settings, "1.5", "revoke-password")
-    metadata = revoke_key(settings, "1.5", "revoke-password")
+    (settings.license_key_dir / "revoked.json").write_text(json.dumps({"1.5": "2026-10-08"}))
+    metadata = key_metadata(settings, "1.5")
     assert metadata["revoked"] is True
     client = TestClient(create_app(settings, enqueuer=lambda task_id: None))
     response = client.post("/api/v1/licenses/generate", json={
