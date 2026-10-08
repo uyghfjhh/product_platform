@@ -78,6 +78,7 @@ def _present_guc_alignment_steps(steps):
             business_checks = []
             process_steps = []
             outcome_rows = []
+            prior_values = {}
             last_measurement = None
             for recorded in actual.get('steps', []):
                 item = archived_checks.get(recorded.get('key'), {})
@@ -91,10 +92,12 @@ def _present_guc_alignment_steps(steps):
                     wanted = recorded.get('expected', item.get('expected'))
                     backend = observed.get('后端') or (observed if '端口' in observed else {})
                     parameter_names = [name for name in ('work_mem','statement_timeout','TimeZone','application_name') if name in wanted]
+                    client_name = observed.get('客户端') or observed.get('client') or backend.get('客户端', '当前客户端')
                     for parameter in parameter_names:
                         if parameter in observed:
                             outcome_rows.append({'operation': recorded.get('title') or item.get('title', ''),
                                 'client': observed.get('客户端') or observed.get('client') or backend.get('客户端', '当前客户端'),
+                                'before': prior_values.get((client_name, parameter), '未归档'),
                                 'parameter': parameter, 'expected': str(wanted[parameter]), 'actual': str(observed[parameter]),
                                 'host': backend.get('主机', observed.get('host', '未归档')),
                                 'port': backend.get('端口', observed.get('port', '未归档')),
@@ -102,6 +105,7 @@ def _present_guc_alignment_steps(steps):
                                 'role': '备库' if backend.get('pg_is_in_recovery', observed.get('recovery')) == 'true' else '主节点' if backend.get('pg_is_in_recovery', observed.get('recovery')) == 'false' else '未归档',
                                 'status': 'PASS' if recorded.get('passed') is True else 'FAIL' if recorded.get('passed') is False else item.get('status', '未保存'),
                                 'sql': command, 'evidence': recorded.get('evidence') or next(iter(item.get('evidence') or []), None)})
+                            prior_values[(client_name, parameter)] = str(observed[parameter])
 
                 declared = recorded.get('expected', item.get('expected'))
                 is_wire = isinstance(observed, dict) and 'received' in observed
@@ -163,6 +167,23 @@ def _present_guc_alignment_steps(steps):
             step['business_checks'] = business_checks
             step['process_steps'] = process_steps
             step['outcome_rows'] = outcome_rows
+            if scenario.startswith('extended_'):
+                for row in outcome_rows:
+                    action = str(row.get('sql', ''))
+                    if '未 E' in action:
+                        branch = action.split('/Sync', 1)[0]
+                        row['phase'] = {'P': '只解析 SQL（Parse），未执行', 'PB': '解析并绑定（Bind），未执行',
+                                        'PDS': '解析并描述语句，未执行', 'PBDP': '解析、绑定并描述 Portal，未执行'}.get(branch, '准备语句／Portal，未执行')
+                        row['meaning'] = '参数应保持原值，不能在准备阶段提前生效'
+                    elif action.startswith('E/Sync') or 'E/Sync' in action:
+                        row['phase'] = '真正执行已绑定的语句（Execute）'
+                        row['meaning'] = '执行后才应用本条 SET／RESET 的目标值'
+                    else:
+                        row['phase'] = operation_label(action)
+                        row['meaning'] = '以本条声明的目标值和实际查询比较'
+                step['extended_boundary'] = True
+                step['boundary_summary'] = '准备阶段不改变参数；执行阶段才应用参数。以下数值来自当次客户端实际查询，不代表仅凭 SQL 值已证明内部缓存。'
+
             step['baseline_context'] = _display_report_value(baseline) if baseline else ''
             step['report_scope'] = scope
             if actual.get('reason'):

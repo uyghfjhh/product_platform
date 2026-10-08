@@ -3,7 +3,7 @@ import { Alert, Button, Pagination, Tag } from 'antd';
 import { normalizeStep } from '../../../frontend/src/platform/stepNormalizer';
 import './reportEvidence.css';
 
-type OutcomeRow = { operation: string; client: string; parameter: string; expected: string; actual: string; host: string; port: string; pid: string; role: string; status: string; sql?: string; evidence?: string };
+type OutcomeRow = { operation: string; before?: string; phase?: string; meaning?: string; client: string; parameter: string; expected: string; actual: string; host: string; port: string; pid: string; role: string; status: string; sql?: string; evidence?: string };
 
 type BusinessCheck = { operation: string; command?: string; expected: string; actual: string; analysis: string;
   status: string; driver?: string; evidence?: string; measurement_sql?: string; measurement_evidence?: string };
@@ -14,6 +14,8 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
   const [pageSize, setPageSize] = useState(50);
   const normalized = useMemo(() => steps.map((step, index) => normalizeStep(step, index)).map((step, index) => ({
     ...step,
+    extendedBoundary: Boolean((steps[index] as Record<string, unknown>)?.extended_boundary),
+    boundarySummary: String((steps[index] as Record<string, unknown>)?.boundary_summary || ''),
     outcomeRows: Array.isArray((steps[index] as Record<string, unknown>)?.outcome_rows)
       ? (steps[index] as { outcome_rows: OutcomeRow[] }).outcome_rows : [],
     processSteps: Array.isArray((steps[index] as Record<string, unknown>)?.process_steps)
@@ -63,7 +65,15 @@ export default function ReportEvidenceSteps({ steps }: { steps: unknown[]; evide
         {step.expected && <><label>测试目的与通过条件</label><p>{step.expected}</p></>}
         {step.reportScope && <><strong>本场景核心配置</strong><p className="cman-business-scope">{Object.entries(step.reportScope).map(([key, value]) => `${key}：${value}`).join(' · ')}</p></>}
         {step.baselineContext && <details><summary>默认值与会话初始状态（本次实测）</summary><pre>{step.baselineContext}</pre></details>}
-        {step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table"><thead><tr>
+        {step.extendedBoundary && <Alert type="info" showIcon message="检查重点：什么时候生效" description={step.boundarySummary} />}
+        {step.extendedBoundary && step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table cman-boundary-table"><thead><tr>
+          <th>实际动作／SQL</th><th>参数</th><th>前一次实测</th><th>本步预期</th><th>本步实测</th><th>为什么通过／失败</th>
+        </tr></thead><tbody>{step.outcomeRows.map((row, index) => <tr key={index}>
+          <td><strong>{row.phase}</strong><p>{row.sql?.split('：').slice(1).join('：') || row.sql}</p><details><summary>客户端与原始证据</summary><p>{row.client} · {row.host}:{row.port} · PID {row.pid} · {row.role}</p><pre>{row.sql}</pre><p>{row.evidence}</p></details></td>
+          <td>{row.parameter}</td><td>{row.before}</td><td>{row.expected}</td><td>{row.actual}</td>
+          <td><p>{row.meaning}</p><p>预期 {row.expected}，实测 {row.actual}</p><Tag color={row.status === 'PASS' ? 'success' : row.status === 'FAIL' ? 'error' : 'default'}>{row.status}</Tag></td>
+        </tr>)}</tbody></table></div>}
+        {!step.extendedBoundary && step.outcomeRows.length > 0 && <div className="cman-business-table-wrap"><table className="cman-business-table"><thead><tr>
           <th>操作／客户端</th><th>实际后端</th><th>参数</th><th>预期</th><th>实测</th><th>判定</th>
         </tr></thead><tbody>{step.outcomeRows.map((row, index) => <tr key={index}>
           <td><strong>{row.client}</strong><p>{row.operation}</p><details><summary>执行详情</summary><pre>{row.sql}</pre>{row.evidence && <p>响应附件：{row.evidence}</p>}</details></td>

@@ -338,3 +338,25 @@ def test_guc_process_preserves_sql_response_order_and_does_not_invent_psql():
     assert '查询返回：\n32MB' in process[1]['actual']
     assert process[0]['driver'] == '原始 PostgreSQL 协议客户端'
     assert 'psql' not in str(process)
+
+
+def test_extended_boundary_explains_prepare_and_execute_using_archived_values():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    rows = [
+        {'key':'baseline','passed':True,'intent':'prepare','title':'基线', 'command':"SET work_mem='8MB'",
+         'expected':{'work_mem':'8MB'},'actual':{'work_mem':'8MB','客户端':'A'}},
+        {'key':'parse','passed':True,'intent':'verify','title':'参数检查', 'command':"P/Sync（未 E）：SET work_mem='32MB'",
+         'expected':{'work_mem':'8MB'},'actual':{'work_mem':'8MB','客户端':'A'}},
+        {'key':'execute','passed':True,'intent':'verify','title':'参数检查', 'command':"E/Sync：SET work_mem='32MB'",
+         'expected':{'work_mem':'32MB'},'actual':{'work_mem':'32MB','客户端':'A'}},
+    ]
+    summary={'title':'mmr/hint/extended_execute_apply 子场景结论','status':'PASS',
+             'actual':{'scenario':'extended_execute_apply','topology':'mmr','pool':'transaction','protocol':'E','steps':rows,'status':'PASS'}}
+    result=_present_guc_alignment_steps([summary])[0]
+    assert result['extended_boundary']
+    prepared, executed=result['outcome_rows'][1:]
+    assert prepared['phase']=='只解析 SQL（Parse），未执行'
+    assert prepared['before']=='8MB' and prepared['actual']=='8MB'
+    assert executed['phase']=='真正执行已绑定的语句（Execute）'
+    assert executed['before']=='8MB' and executed['actual']=='32MB'
+    assert '未归档'==result['outcome_rows'][0]['before']
