@@ -1,6 +1,6 @@
 import type { DeploymentProductAdapter } from './deploymentRegistry';
 import type { TestMode, TestProductAdapter } from './testRegistry';
-import type { Environment } from '../platform/api';
+import type { Environment, Task } from '../platform/api';
 import type { ComponentType } from 'react';
 import type { TopologyData, TopologyNode } from '../platform/topology';
 
@@ -20,6 +20,7 @@ type CanvasProps = {
 };
 
 export type ProductFrontend = {
+  TestPreparation?: ComponentType<{ environment: Environment; profileId?: string; tasks: Task[]; onTask: (taskId: string) => void; onChanged: () => Promise<void> | void }>;
   TestSettings?: ComponentType<{ environment: Environment; onChanged: () => Promise<void> | void }>;
   deployment?: () => DeploymentProductAdapter;
   test?: (mode?: TestMode) => TestProductAdapter;

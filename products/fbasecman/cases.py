@@ -16,6 +16,7 @@ from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaC
                                         SetNodeWeightIdempotentCase)
 from products.fbasecman.ha_native import HaCommandsCase
 from products.fbasecman.common_native import CommonCase
+from products.fbasecman.guc_alignment_native import GucAlignmentCase, SCENARIOS
 from products.fbasecman.runtime_cases import runtime_case
 
 
@@ -50,6 +51,10 @@ def _suite_specs(source):
 
 
 NATIVE_CASES = {
+    **{
+        f"guc.{group}_{mode}": GucAlignmentCase(group, mode)
+        for group in SCENARIOS for mode in ("hint", "sql_parse")
+    },
     **{
         "common." + name: CommonCase(name)
         for name in (

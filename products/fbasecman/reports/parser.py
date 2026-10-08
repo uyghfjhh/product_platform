@@ -32,6 +32,97 @@ def _deep_merge(base, override):
     return merged
 
 
+def _display_report_value(value):
+    """Format structured facts for display without modifying stored evidence."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        labels = {"received": "响应类型", "rows": "查询结果", "sqlstates": "SQLSTATE",
+                  "errors": "错误", "tags": "命令标签", "ready": "就绪状态", "parameters": "参数状态",
+                  "transport_error": "连接异常", "planned": "计划数", "executed": "已执行",
+                  "passed": "通过", "failed": "失败", "blocked": "阻塞", "unexecuted": "未执行"}
+        return "\n".join(f"{labels.get(str(key), str(key))}：{_display_report_value(item)}" for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return "；".join(_display_report_value(item) for item in value) if value else "（无）"
+    return str(value)
+
+
+def _present_guc_alignment_steps(steps):
+    """Old/new GUC archives share the existing report UI with business labels."""
+    from products.fbasecman.guc_alignment_native import PROBE_SQL, SCENARIO_LABELS, operation_label
+    last_operation = "前序操作"
+    parameters = {"work_mem", "statement_timeout", "TimeZone", "application_name"}
+    for step in steps:
+        command = str(step.get("command") or "")
+        prefix = str(step.get("title", "")).split("：", 1)[0]
+        prefix = prefix + "：" if "/" in prefix or "／" in prefix else ""
+        actual = step.get("actual")
+        expected = step.get("expected")
+        if "子场景结论" in str(step.get("title", "")) and isinstance(actual, dict):
+            step["actual"] = {key: actual[key] for key in
+                              ("pool", "reserve", "protocol", "status", "reason") if key in actual}
+            step["command"] = ""
+        if isinstance(actual, dict) and "received" in actual:
+            if PROBE_SQL not in command:
+                last_operation = command
+            if step.get("status") == "PASS" and isinstance(expected, dict) and not expected.get("sqlstates"):
+                step["intent"] = "action"
+                step["analysis"] = "请求已完成；参数是否正确由后续参数值与缓存检查判定，原始报文保留在证据中。"
+            step["title"] = prefix + operation_label(command)
+        elif isinstance(expected, dict) and expected and set(expected).issubset(parameters) and isinstance(actual, dict):
+            step["title"] = prefix + operation_label(last_operation) + "后，核对会话参数"
+            step["command"] = last_operation
+            step["analysis"] = "；".join(f"{name}：期望 {value}，实际 {actual.get(name, '未返回')}"
+                                           for name, value in expected.items())
+            baseline = {"work_mem": "8MB", "statement_timeout": "7s", "TimeZone": "UTC"}
+            if step.get("status") == "PASS" and "SET TimeZone='UTC'" in last_operation and all(
+                    baseline.get(name) == value for name, value in expected.items()):
+                step["intent"] = "prepare"
+                step["title"] = prefix + "建立测试前的参数基线"
+        title = step.get("title", "")
+        for name, label in SCENARIO_LABELS.items():
+            title = title.replace(name, label)
+        step["title"] = title
+    grouped = []
+    for step in steps:
+        expected, actual = step.get("expected"), step.get("actual")
+        previous = grouped[-1] if grouped else None
+        merge = (previous is not None and isinstance(expected, dict) and expected and
+                 set(expected).issubset(parameters) and isinstance(actual, dict) and
+                 isinstance(previous.get("expected"), dict) and previous["expected"] and
+                 set(previous["expected"]).issubset(parameters) and
+                 not set(expected).intersection(previous["expected"]) and
+                 previous.get("command") == step.get("command") and
+                 isinstance(previous.get("actual"), dict) and
+                 previous["actual"].get("后端") == actual.get("后端"))
+        if merge:
+            if "grouped_checks" not in previous:
+                previous["grouped_checks"] = [dict(previous)]
+            previous["grouped_checks"].append(dict(step))
+            previous["expected"] = {**previous["expected"], **expected}
+            previous["actual"] = {**previous["actual"], **actual}
+            previous["analysis"] += "；" + str(step.get("analysis", ""))
+            if step.get("status") != "PASS":
+                previous["status"] = step["status"]
+            previous["assertion"] = {"type": "guc_parameters_equal", "passed": previous.get("status") == "PASS",
+                                     "checks": [item.get("assertion") for item in previous["grouped_checks"]]}
+        else:
+            grouped.append(step)
+    for step in grouped:
+        expected, actual = step.get("expected"), step.get("actual")
+        if (isinstance(expected, dict) and expected and set(expected).issubset(parameters)
+                and isinstance(actual, dict)):
+            differences = [f"{name}：期望 {value}，实际 {actual.get(name, '未返回')}"
+                           for name, value in expected.items()
+                           if str(actual.get(name)) != str(value)]
+            # Keep the archived verdict; presentation must not infer a new PASS.
+            if differences:
+                step["analysis"] = "不匹配：" + "；".join(differences)
+            elif step.get("status") == "PASS":
+                step["analysis"] = "参数值与期望一致。"
+    return grouped
+
+
 def parse_psql_tables(raw_text: str) -> List[Tuple[List[str], List[Dict[str, str]]]]:
     """Parse one or more psql aligned tables from captured command output."""
     tables = []
@@ -598,6 +689,12 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
     except (OSError, ValueError, KeyError, TypeError):
         pass
 
+    if isinstance(execution_scope, dict) and isinstance(execution_scope.get("transactions"), str):
+        execution_scope = {**execution_scope, "transactions": [{
+            "stage": "协议与事务边界", "operation": execution_scope["transactions"],
+            "boundary": "按当次记录的 BEGIN/COMMIT/ROLLBACK 与 Q/Sync 收口判定",
+        }]}
+
     test_contents = []
     cont_match = re.search(r"^测试内容:\s*\n(.*?)(?=\n\n[^\s]|\n[^\s]+:|\Z)", raw_text, re.S | re.M)
     if cont_match:
@@ -735,6 +832,10 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
         elif fact.get("intent") == "verify" or fact.get("assertion") or not clean_title.startswith("执行"):
             steps.append(mapped)
 
+    if any(target.startswith(f"guc.{group}_") for group in
+           ("extended_boundary", "transaction_sync", "savepoint_report", "backend_redeploy")):
+        steps = _present_guc_alignment_steps(steps)
+
     # Some suite executors persist expected/actual but omit a human analysis
     # field. Preserve the factual comparison without inventing a new verdict.
     for step in steps:
@@ -745,6 +846,11 @@ def parse_report(target: str, root_dir, *, config_dirs: Optional[List[Any]] = No
 
     from products.fbasecman.reports.observations import readable_jdbc_observations
     for step in steps:
+        for field in ("expected", "actual", "action", "command", "state_table", "analysis"):
+            value = step.get(field)
+            if not isinstance(value, str):
+                step[f"structured_{field}"] = value
+                step[field] = _display_report_value(value)
         step["actual"] = readable_jdbc_observations(step.get("actual"))
 
     # 若用例判定为 FAIL 但步骤中未包含 FAIL 步骤（例如执行中抛出异常提前退出导致报告中断），从 steps.json 或 reason 补全

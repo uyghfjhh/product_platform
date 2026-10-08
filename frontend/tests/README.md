@@ -104,3 +104,11 @@ PLATFORM_URL=http://127.0.0.1:18769 node tests/studio-workspace.mjs
 
 
 画布模板的无脚本标记与特殊字符检查：`node tests/deployment-canvas-events.mjs`。生成注册文件与 API 类型不跟踪，直接运行 `npm run build` 会通过 prebuild 重建。
+
+## 新增 GUC 用例真实执行
+
+`node tests/fbasecman-guc-execution.mjs` 会在实际页面逐条点击8个 GUC 对齐用例，提交真实任务，并检查报告可打开；会操作数据库测试夹具，不能当成纯只读页面冒烟。
+
+通过 `PLATFORM_URL`、`GUC_ENVIRONMENT` 指定服务/环境；`GUC_TARGETS` 可指定逗号分隔的目标，`GUC_OUTPUT` 指定证据目录。脚本顺序等待任务结束，无请求mock。已有任务事实保留，截图和任务日志独立归档。
+
+`node tests/fbasecman-guc-report.mjs` 只读取已有新增 GUC 报告，检查默认页最多50项、翻页序号、期望/实际区域、完整原始报告及已加载的诊断日志；不提交数据库任务。大报告中的准备和正常协议流水默认折叠，失败检查优先展示。

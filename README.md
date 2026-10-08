@@ -15,6 +15,10 @@
 
 依赖只声明在 pyproject.toml，uv.lock 固定解析版本；安装执行 uv sync --frozen --extra dev。前端构建同步生成产品注册和 API 类型。
 
+首次安装或更新代码后，执行 `./web.sh setup` 一键安装／同步 Python 依赖，可重复运行。
+`./web.sh start` 会检查依赖清单中的运行包，缺包时自动调用 setup。
+setup 需要网络，会准备 uv、Python 3.12 和项目 `.venv`；前端依赖与编译另执行 `./web.sh build`。
+
 ## 目录职责
 
 ```text
@@ -73,3 +77,4 @@ git diff --check
 [当前功能与验收边界](docs/current-functional-status.md)记录已实现行为、实测范围和明确限制。运营定义、知识索引、产品产物及安装计划属于 data 持久控制面；产品包安装锁和前端构建锁属于 runtime。
 
 回归用例开发和报告 review 请遵循[回归用例编写规范](docs/regression-case-authoring.md)。
+测试页公共准备与用例自身准备的边界见[回归测试准备](docs/regression-preparation.md)。

@@ -68,7 +68,20 @@ is_platform_process() {
         return 1
     fi
     if [ -f "/proc/$pid/cmdline" ]; then
-        if tr '\0' ' ' < "/proc/$pid/cmdline" | grep -qE "platform_app\.cli|product-platform"; then
+        if "$PYTHON_BIN" - "$pid" <<'PY'
+import sys
+from pathlib import Path
+try:
+    argv = Path('/proc', sys.argv[1], 'cmdline').read_bytes().decode().split('\0')
+except (OSError, UnicodeError):
+    raise SystemExit(1)
+valid = any(argv[i:i + 3] == ['-m', 'platform_app.cli', 'start']
+            for i in range(len(argv)))
+valid = valid or any(Path(arg).name == 'product-platform' and argv[i + 1:i + 2] == ['start']
+                     for i, arg in enumerate(argv))
+raise SystemExit(0 if valid else 1)
+PY
+        then
             return 0
         fi
     fi
@@ -89,7 +102,13 @@ get_running_pid() {
 
     # 兜底探测: 检查是否有 platform_app.cli start 正在运行
     local found_pid
-    found_pid="$(pgrep -f "platform_app\.cli.*start|product-platform.*start" 2>/dev/null | grep -v "$$" | head -n 1 || true)"
+    found_pid=""
+    while read -r candidate_pid; do
+        if [ "$candidate_pid" != "$$" ] && is_platform_process "$candidate_pid"; then
+            found_pid="$candidate_pid"
+            break
+        fi
+    done < <(pgrep -f "platform_app\.cli.*start|product-platform.*start" 2>/dev/null || true)
     if [ -n "$found_pid" ]; then
         echo "$found_pid" > "$PID_FILE"
         echo "$found_pid"
@@ -148,9 +167,9 @@ do_start() {
         return 0
     fi
 
-    # 检查当前 Python 解释器是否包含必需的 Web 服务依赖 (uvicorn, fastapi, psycopg)
-    if ! "$PYTHON_BIN" -c "import uvicorn, fastapi, psycopg" >/dev/null 2>&1; then
-        echo "⚠️  检测到当前运行环境依赖不完整 (如缺少 uvicorn / fastapi / psycopg 等)..."
+    # 与 setup 共用检查，避免新增依赖漏检。
+    if ! "$PYTHON_BIN" "$ROOT_DIR/scripts/check_dependencies.py"; then
+        echo "⚠️  检测到当前运行环境依赖不完整..."
         if [ -f "$ROOT_DIR/scripts/setup_env.sh" ]; then
             echo "🚀 正在自动执行 ./web.sh setup 补全环境并安装依赖..."
             bash "$ROOT_DIR/scripts/setup_env.sh"

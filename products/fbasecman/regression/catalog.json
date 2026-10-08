@@ -682,7 +682,7 @@
       "name": "core_17_mmr_write_center_failover",
       "title": "MMR 写中心切换、唯一写目标与 SET NODE WRITE 持久化",
       "core_id": "CORE-17",
-    "summary": "验证 MMR 写中心故障切换、唯一写目标和 SET NODE WRITE 持久化：停止初始写中心后，promoted_cluster 主库应接管写路由；恢复原写中心并执行人工切换后，组内只能存在一个有效写目标，且切换结果在 REFRESH 后保持。",
+      "summary": "验证 MMR 写中心故障切换、唯一写目标和 SET NODE WRITE 持久化：停止初始写中心后，promoted_cluster 主库应接管写路由；恢复原写中心并执行人工切换后，组内只能存在一个有效写目标，且切换结果在 REFRESH 后保持。",
       "enabled": true,
       "tags": []
     },
@@ -3117,6 +3117,230 @@
       "summary": "fbasecman 在 reload 关闭监控（check=none 且 monitor_enabled=no）后业务路由丢失",
       "enabled": true,
       "tags": []
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.extended_boundary_hint",
+      "name": "extended_boundary_hint",
+      "title": "HINT：P/B/D 未执行边界、E 生效及候选隔离",
+      "summary": "在 MMR/主备拓扑中验证P/B/D 未执行边界、E 生效及候选隔离，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "hint",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.extended_boundary_sql_parse",
+      "name": "extended_boundary_sql_parse",
+      "title": "SQL_PARSE：P/B/D 未执行边界、E 生效及候选隔离",
+      "summary": "在 MMR/主备拓扑中验证P/B/D 未执行边界、E 生效及候选隔离，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "sql_parse",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.transaction_sync_hint",
+      "name": "transaction_sync_hint",
+      "title": "HINT：事务 SET/RESET 提交回滚、多语句 Q 和 SET LOCAL",
+      "summary": "在 MMR/主备拓扑中验证事务 SET/RESET 提交回滚、多语句 Q 和 SET LOCAL，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "hint",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.transaction_sync_sql_parse",
+      "name": "transaction_sync_sql_parse",
+      "title": "SQL_PARSE：事务 SET/RESET 提交回滚、多语句 Q 和 SET LOCAL",
+      "summary": "在 MMR/主备拓扑中验证事务 SET/RESET 提交回滚、多语句 Q 和 SET LOCAL，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "sql_parse",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.savepoint_report_hint",
+      "name": "savepoint_report_hint",
+      "title": "HINT：保存点恢复及 ParameterStatus 事务视图",
+      "summary": "在 MMR/主备拓扑中验证保存点恢复及 ParameterStatus 事务视图，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "hint",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.savepoint_report_sql_parse",
+      "name": "savepoint_report_sql_parse",
+      "title": "SQL_PARSE：保存点恢复及 ParameterStatus 事务视图",
+      "summary": "在 MMR/主备拓扑中验证保存点恢复及 ParameterStatus 事务视图，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "sql_parse",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.backend_redeploy_hint",
+      "name": "backend_redeploy_hint",
+      "title": "HINT：后端重部署、会话隔离及安全回收",
+      "summary": "在 MMR/主备拓扑中验证后端重部署、会话隔离及安全回收，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "hint",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
+    },
+    {
+      "suite": "guc",
+      "suite_title": "GUC 规范化、多值解析与连接复用测试",
+      "suite_description": "会话 GUC、协议执行边界、事务与后端重部署验证",
+      "target": "guc.backend_redeploy_sql_parse",
+      "name": "backend_redeploy_sql_parse",
+      "title": "SQL_PARSE：后端重部署、会话隔离及安全回收",
+      "summary": "在 MMR/主备拓扑中验证后端重部署、会话隔离及安全回收，Q 覆盖预处理保留 yes/no 与两种池模式，E 对齐限定预处理保留 yes。按同次报文、参数、SQLSTATE、实际后端身份判定；产品内部缓存与故障通过测试链接拦截器执行，未符合目标报 FAIL；当前配置和 sql_parse 既有限制单列，不伪造通过。",
+      "core_id": "",
+      "enabled": true,
+      "tags": [
+        "guc",
+        "alignment",
+        "sql_parse",
+        "protocol"
+      ],
+      "execution_scope": {
+        "connection": "每个配置及子场景使用独立长连接；子场景内部复用同一客户端并记录物理后端身份。",
+        "transactions": [
+          {
+            "stage": "协议与事务边界",
+            "operation": "Q 单语句逐条发送，E 每条操作独立 Sync；多语句 Q 整段只发送一个 Q。保存点分步确认，不承诺流水线。",
+            "boundary": "按当次 BEGIN/COMMIT/ROLLBACK 和 Q/Sync 响应收口；保存点分步确认。"
+          }
+        ],
+        "conclusion": "完整通过需要所有拓扑、配置、分支及产品侧验收完成；子场景复跑不能冒充完整覆盖。"
+      }
     }
   ]
 }

@@ -134,6 +134,40 @@ def describe_portal_payload(portal):
     return b"P" + portal.encode("utf-8") + b"\0"
 
 
+def describe_statement_payload(statement):
+    return b"S" + statement.encode("utf-8") + b"\0"
+
+
+def close_statement_payload(statement):
+    return b"S" + statement.encode("utf-8") + b"\0"
+
+
+def flush_message():
+    return message("H", b"")
+
+
+def parameter_status(payload):
+    """Decode a complete ParameterStatus, rejecting malformed fields."""
+    fields = payload.split(b"\0")
+    if len(fields) != 3 or fields[-1] != b"" or not fields[0]:
+        raise RuntimeError("invalid ParameterStatus")
+    return tuple(field.decode("utf-8", "replace") for field in fields[:2])
+
+
+def read_messages_until(sock, terminal_kinds):
+    """Read a Flush phase through a declared response, preserving errors.
+
+    The socket timeout bounds reads. An ErrorResponse terminates the phase;
+    callers must send Sync instead of waiting for skipped success responses.
+    """
+    messages = []
+    while True:
+        kind, payload = read_message(sock)
+        messages.append((kind, payload))
+        if kind in terminal_kinds or kind in {"E", "Z"}:
+            return messages
+
+
 def execute_payload(portal):
     return portal.encode("utf-8") + b"\0" + struct.pack("!I", 0)
 

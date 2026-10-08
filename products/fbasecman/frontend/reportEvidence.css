@@ -29,3 +29,9 @@
 
 .cman-transaction-scope { margin:16px 0; padding:16px; border:1px solid var(--border-subtle); border-radius:8px; background:var(--bg-surface); }
 .cman-transaction-scope p { margin:8px 0; line-height:1.6; }
+
+.cman-report-pagination { display: flex; justify-content: flex-end; padding: 12px 0; flex-wrap: wrap; }
+.cman-scenario-group { border-bottom:1px solid var(--border-subtle); padding:12px 0; }
+.cman-scenario-group > summary { cursor:pointer; overflow-wrap:anywhere; line-height:1.6; }
+.cman-scenario-group > summary span { margin-left:12px; color:var(--text-secondary); font-size:12px; }
+.cman-scenario-group .cman-evidence-card { border-radius:8px; }

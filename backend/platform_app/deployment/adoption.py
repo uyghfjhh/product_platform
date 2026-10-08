@@ -56,7 +56,7 @@ def compile_inventory(host, ssh, instances):
             raise ValueError('备库未找到唯一对应主库；请包含完整主备数据目录: ' + node['data_dir'])
         config['streaming_clusters'][streams[primary['name']]]['standbys'].append({'instance': node['name']})
     mmr_clusters = {}
-    by_port = {node['port']: node for node in instances if not node['standby']}
+    by_port = {node['port']: node for node in instances}
     covered = set()
     for node in primaries.values():
         for group in node.get('mmr_groups', []):
@@ -75,6 +75,9 @@ def compile_inventory(host, ssh, instances):
                 primary = by_port.get(endpoint['port'])
                 if not primary or not local_endpoint(endpoint['host'], host):
                     raise ValueError('MMR 含未探测到的成员，请包含完整集群；跨主机接管需导入 YAML')
+                if primary['standby']:
+                    primary = primaries[primary['system_identifier']]
+                    warnings.append('MMR 成员 ' + member['node_name'] + ' 的登记端点指向备库；按实际系统标识关联当前主库，保留原 MMR 元数据')
                 peer_group = next((g for g in primary['mmr_groups'] if g['group_uuid'] == uuid), None)
                 peer_members = [m for m in primary['mmr_nodes'] if peer_group and m['group_id'] == peer_group['group_id']]
                 actual = sorted((m['node_id'], m['node_name'], m['endpoint']['port']) for m in peer_members)
@@ -89,6 +92,15 @@ def compile_inventory(host, ssh, instances):
                 mmr_clusters[uuid] = {'database': members[0]['dbname'], 'group_name': group['group_name'], 'extensions': ['fdd_mmr'], 'members': compiled}
     if mmr_clusters:
         config['mmr_clusters'] = {'discovered_' + str(index): group for index, group in enumerate(mmr_clusters.values(), 1)}
+    # An independent development instance belongs to the managed environment,
+    # but must not be represented as an MMR member or a physical standby.
+    if len(mmr_clusters) == 1:
+        auxiliary = [node['name'] for node in primaries.values()
+                     if streams[node['name']] not in covered
+                     and not config['streaming_clusters'][streams[node['name']]]['standbys']]
+        if auxiliary:
+            next(iter(config['mmr_clusters'].values()))['auxiliary_instances'] = auxiliary
+            warnings.append('独立实例作为附属实例纳入环境管理，不加入 MMR 或物理复制关系: ' + ', '.join(auxiliary))
     targets = [{'value': 'mmr.' + name, 'label': '多活 · ' + group['group_name']} for name, group in config.get('mmr_clusters', {}).items()]
     targets += [{'value': 'streaming.' + name, 'label': '主备 · ' + group['primary']} for name, group in config['streaming_clusters'].items() if name not in covered]
     return {'source_yaml': yaml.safe_dump(config, sort_keys=False, allow_unicode=True),

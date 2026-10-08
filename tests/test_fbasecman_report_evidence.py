@@ -200,3 +200,83 @@ def test_guc_script_uses_one_client_with_separate_statement_messages():
     _, _, _, predicate = guc_case('reset_all_sql_parse').actions[1]
     assert not predicate('32MB\n10s\n4MB\n10s')
     assert predicate('32MB\n10s\n4MB\n0')
+
+
+def test_structured_guc_facts_are_readable_and_do_not_break_report_topology(tmp_path):
+    from products.fbasecman.reports import parser
+    (tmp_path / 'report.txt').write_text('结论: PASS\n验证目的:\n  GUC 参数值验证\n')
+    from platform_regress.sdk import CaseContext
+    context = CaseContext('guc.extended_boundary_sql_parse', tmp_path)
+    context.step('wire', 'Q 参数观测', status='PASS', details={
+        'intent': 'verify', 'expected': {'rows': [['8MB']]},
+        'actual': {'rows': [['8MB']], 'ready': ['I']},
+        'command': 'Q：SHOW work_mem',
+    })
+    value = parser.parse_report('guc.extended_boundary_sql_parse', tmp_path)
+    step = next(s for s in value['steps'] if 'Q 参数观测' in s['title'])
+    assert isinstance(step['actual'], str)
+    assert '8MB' in step['actual']
+    assert step['structured_actual']['rows'] == [['8MB']]
+    assert isinstance(value['execution_scope']['transactions'], list)
+
+
+def test_guc_scalar_actual_is_display_text_not_boolean(tmp_path):
+    from platform_regress.sdk import CaseContext
+    from products.fbasecman.reports import parser
+    (tmp_path / 'report.txt').write_text('结论: PASS\n验证目的:\n  缓存边界\n')
+    context = CaseContext('guc.extended_boundary_sql_parse', tmp_path)
+    context.step('boolean-fact', '确认正式缓存未改变', details={
+        'intent': 'verify', 'expected': True, 'actual': True, 'command': '比较真实缓存快照'})
+    result = parser.parse_report('guc.extended_boundary_sql_parse', tmp_path)
+    step = next(s for s in result['steps'] if s['title'] == '确认正式缓存未改变')
+    assert step['actual'] == 'True'
+    assert step['structured_actual'] is True
+
+
+def test_guc_protocol_observations_are_actions_but_errors_stay_visible():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    normal = {'title': 'Q：SELECT 42::int', 'command': 'Q：SELECT 42::int', 'status': 'PASS',
+              'expected': {'sqlstates': [], 'ready': ['I'], 'tags': ['SELECT 1']},
+              'actual': {'received': ['T', 'D', 'C', 'Z'], 'rows': [['42']]}, 'intent': 'verify'}
+    failed = {**normal, 'status': 'FAIL'}
+    values = {'title': '参数匹配', 'status': 'PASS', 'expected': {'work_mem': '32MB'},
+              'actual': {'work_mem': '8MB'}, 'intent': 'verify'}
+    _present_guc_alignment_steps([normal, failed, values])
+    assert normal['intent'] == 'action'
+    assert failed['intent'] == 'verify'
+    assert '期望 32MB，实际 8MB' in values['analysis']
+
+
+def test_guc_same_query_parameter_checks_are_grouped_without_hiding_failure():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    steps = [
+        {'title':'MMR/sql_parse/tx_set_commit：Q：COMMIT', 'command':'Q：COMMIT', 'status':'PASS',
+         'expected':{'tags':['COMMIT']}, 'actual':{'received':['C','Z']}, 'intent':'verify'},
+        {'title':'MMR/sql_parse/tx_set_commit：work_mem', 'status':'PASS', 'intent':'verify',
+         'expected':{'work_mem':'32MB'}, 'actual':{'work_mem':'32MB','后端':['h','1','2']}},
+        {'title':'MMR/sql_parse/tx_set_commit：statement_timeout', 'status':'FAIL', 'intent':'verify',
+         'expected':{'statement_timeout':'7s'}, 'actual':{'statement_timeout':'0','后端':['h','1','2']}},
+    ]
+    result=_present_guc_alignment_steps(steps)
+    assert len(result)==2
+    assert result[0]['intent']=='action'
+    check=result[1]
+    assert check['status']=='FAIL'
+    assert check['expected']=={'work_mem':'32MB','statement_timeout':'7s'}
+    assert check['assertion']['passed'] is False
+    assert len(check['grouped_checks'])==2
+    assert '提交事务后' in check['title']
+
+
+def test_guc_summary_omits_nested_steps_and_success_analysis_does_not_repeat_values():
+    from products.fbasecman.reports.parser import _present_guc_alignment_steps
+    summary = {'title': 'mmr/hint/tx_set_commit 子场景结论', 'status': 'PASS',
+               'actual': {'pool': 'transaction', 'protocol': 'Q', 'status': 'PASS',
+                          'steps': [{'key': 'wire-1', 'passed': True}]}}
+    check = {'title': '参数检查', 'status': 'PASS', 'expected': {'work_mem': '32MB'},
+             'actual': {'work_mem': '32MB'}, 'analysis': '期望32MB；实际32MB'}
+    result = _present_guc_alignment_steps([summary, check])
+    assert 'steps' not in result[0]['actual']
+    assert result[1]['expected'] == {'work_mem': '32MB'}
+    assert result[1]['actual'] == {'work_mem': '32MB'}
+    assert result[1]['analysis'] == '参数值与期望一致。'

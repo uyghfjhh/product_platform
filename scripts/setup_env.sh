@@ -110,22 +110,11 @@ cd "$ROOT_DIR"
 
 # 5. 严格依赖自检与模块导入测试
 echo "🧪 正在执行依赖自检与核心应用装载验证..."
-"$VENV_DIR/bin/python3" -c "
-import fastapi
-import uvicorn
-import pydantic
-import yaml
-import huey
-import psycopg
-import cryptography
-import argon2
-import nacl
-import jinja2
-print('   -> [OK] 外部依赖库全部导入成功')
-"
+"$VENV_DIR/bin/python3" "$ROOT_DIR/scripts/check_dependencies.py"
 
 PYTHONPATH="$ROOT_DIR/backend" "$VENV_DIR/bin/python3" -c "
-from platform_app.api import app
+from platform_app.api import create_app
+from platform_app.workloads.workbench import Workbench
 print('   -> [OK] platform_app 后端 API 应用正常装载成功')
 "
 

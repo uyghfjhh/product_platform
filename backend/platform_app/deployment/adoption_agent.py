@@ -40,7 +40,8 @@ def inventory(request):
         match = re.search(r'Database system identifier:\s*(\d+)', control)
         if not match:
             raise ValueError('无法读取数据库系统标识: ' + directory)
-        standby = (path / 'standby.signal').exists() or 'in recovery' in control
+        state = re.search(r'^Database cluster state:\s*(.+)$', control, re.MULTILINE)
+        standby = (path / 'standby.signal').exists() or bool(state and 'in recovery' in state.group(1))
         port = int(setting('port'))
         node = {'data_dir': str(path.resolve()), 'home': home, 'port': port,
                 'version': (path / 'PG_VERSION').read_text().strip(),

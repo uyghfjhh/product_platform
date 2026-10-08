@@ -74,6 +74,7 @@ export default function TestsPage({
   const reportPath = adapter.reportPath || ((environmentId: string, format: 'junit' | 'html') =>
     `/environments/${encodeURIComponent(environmentId)}/reports/${format}`);
   const RegressionTerminal = testFrontend(product)?.RegressionTerminal || ExecutionTerminal;
+  const TestPreparation = testFrontend(product)?.TestPreparation;
 
   const resultByTarget = useMemo(() => new Map(results.map((item) => [item.target, item])), [results]);
 
@@ -284,6 +285,9 @@ export default function TestsPage({
         onChanged={reload}
         onOpenDeployment={onOpenEnvironment}
       />
+      {environment && TestPreparation && <TestPreparation key={environment.id}
+        environment={environment} profileId={profileId} tasks={tasks}
+        onTask={openTask} onChanged={reload} />}
       {!environment && (
         <Alert
           type="info"

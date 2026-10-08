@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Drawer, Dropdown, Empty, Input, Segmented, Space, Tag, Tooltip, Typography } from 'antd';
 import {
   CloudServerOutlined, ReloadOutlined, CopyOutlined, MoreOutlined, DatabaseOutlined,
-  PlusOutlined, SettingOutlined, EditOutlined, DeploymentUnitOutlined, ExperimentOutlined,
+  PlusOutlined, SettingOutlined, EditOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined,
 } from '@ant-design/icons';
 
@@ -25,7 +25,6 @@ type Props = {
   onOpenDatabase?: (node?: TopologyNode, view?: 'sql') => void;
 };
 
-type Profile = { generated: boolean; deployment_config: string; test_override: string; context_ready: boolean; defaults?: { data_root?: string; license_file?: string } };
 
 export default function DeploymentPage({
   product,
@@ -49,7 +48,6 @@ export default function DeploymentPage({
   const [wizardEnvironment, setWizardEnvironment] = useState<Environment | undefined>();
   const [envEditing, setEnvEditing] = useState<Environment | null>(null);
   const [terminalTaskId, setTerminalTaskId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
 
   // 单节点右侧抽屉：SQL 快速探针控制台状态与快捷诊断预设
@@ -109,11 +107,9 @@ export default function DeploymentPage({
     void Promise.all([
       api<Action[]>(`/environments/${encodeURIComponent(environment.id)}/actions`),
       api<TopologyData>(`/environments/${encodeURIComponent(environment.id)}/topology`).then((value) => { setTopologyError(''); return value; }).catch((error) => { setTopologyError(error.message); return null; }),
-      productAdapter.profilePath ? api<Profile>(productAdapter.profilePath(environment.id)).catch(() => null) : Promise.resolve(null),
-    ]).then(([list, graph, currentProfile]) => {
+    ]).then(([list, graph]) => {
       setActions(list.filter((item) => item.capability === 'deployment'));
       setTopology(graph);
-      setProfile(currentProfile);
     }).catch((error) => message.error(error.message));
   }, [environment, productAdapter.profilePath, message]);
 
@@ -246,13 +242,6 @@ export default function DeploymentPage({
                     label: '配置部署方案',
                     onClick: () => { setWizardEnvironment(environment); setWizardOpen(true); },
                   },
-                  ...(productAdapter.hasProfileWizard && productAdapter.fixtureAction ? [{
-                    key: 'fixture',
-                    icon: <ExperimentOutlined />,
-                    label: '准备测试夹具',
-                    disabled: !profile?.generated || loading,
-                    onClick: () => void run(productAdapter.fixtureAction!),
-                  }] : []),
                 ],
               }}
             >

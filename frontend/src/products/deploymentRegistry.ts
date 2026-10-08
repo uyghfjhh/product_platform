@@ -6,7 +6,6 @@ export type DeploymentProductAdapter = {
   productId: string;
   hasProfileWizard: boolean;
   profilePath?: (environmentId: string) => string;
-  fixtureAction?: { id: string; title: string; capability: string; changes_environment: boolean };
   workspaceClass?: string;
 };
 

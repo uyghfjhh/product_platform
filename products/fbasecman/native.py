@@ -21,7 +21,7 @@ from platform_regress.clients import jdbc as jdbc_client
 
 
 def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse",
-                  transform=None) -> int:
+                  transform=None, mmr_group_name: str = "g1") -> int:
     env = context.environment
     binary = env.get("fbasecman_bin")
     license_dir = env.get("license_dir")
@@ -35,9 +35,10 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse",
     second = next((name for name in ("mmr2", "node2") if name in nodes), None)
     if not first or not second:
         raise Blocked("pgcluster 拓扑缺少两个 MMR 主节点")
-    group_uuid_rows = context.sql(first, "SELECT group_uuid::text FROM fdd.mmr_group WHERE group_name='g1'").rows
+    group_literal = mmr_group_name.replace("'", "''")
+    group_uuid_rows = context.sql(first, "SELECT group_uuid::text FROM fdd.mmr_group WHERE group_name='%s'" % group_literal).rows
     if not group_uuid_rows or not group_uuid_rows[0][0]:
-        raise Blocked("数据库没有可用的 MMR g1 group UUID")
+        raise Blocked("数据库没有可用的 MMR %s group UUID" % mmr_group_name)
     group_uuid = group_uuid_rows[0][0]
     selected_nodes = {"pg_1": nodes[first], "pg_2": nodes[second]}
     selected_nodes.update(env.get("extra_nodes") or {})
@@ -74,7 +75,7 @@ def render_config(context: CaseContext, path: Path, *, mode: str = "sql_parse",
         'group "mmr_group" {', '    group_mode "mmr"',
         '    storage_db "postgres"', '    backend_clusters "pg_cluster_1,pg_cluster_2"',
         '    write_cluster "pg_cluster_2"', '    promoted_cluster "pg_cluster_1"',
-        '    real_group_name "g1"', f'    group_uuid "{group_uuid}"',
+        '    real_group_name %s' % json.dumps(mmr_group_name), f'    group_uuid "{group_uuid}"',
         '    check "auto"', '}',
         'group "rep_group" {', '    group_mode "replication"',
         '    storage_db "postgres"', '    backend_clusters "pg_cluster_1"',
