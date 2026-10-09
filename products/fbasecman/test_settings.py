@@ -1,4 +1,4 @@
-"""One visible tested build selection shared by regression and soak runs."""
+"""Named tested build selections shared by regression and soak runs."""
 import hashlib
 import os
 import subprocess
@@ -15,12 +15,20 @@ def resolve(settings, environment, *, inspect=False):
             values = yaml.safe_load(override.read_text()) or {}
             for section in ('fbasecman', 'local'):
                 config.setdefault(section, {}).update(values.get(section) or {})
-    selected = environment.get('product_test_settings') or {}
+    selection = environment.get('product_test_settings') or {}
+    builds = selection.get('builds')
+    if builds is not None:
+        selected = next((item for item in builds if item['id'] == selection.get('active_build_id')), None)
+        if selected is None:
+            raise ValueError('请选择一个有效的当前被测版本')
+    else:
+        selected = selection
     binary = selected.get('fbasecman_bin') or os.environ.get('PRODUCT_PLATFORM_FBASECMAN_BIN') or config['fbasecman']['fbasecman_bin']
     license_dir = selected.get('license_dir') or os.environ.get('PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR') or config['fbasecman']['license_dir']
     result = {'fbasecman_bin': binary, 'license_dir': license_dir,
               'psql': str(Path(config['local']['postgres_dir']) / 'bin/psql'),
               'source': '执行环境配置' if selected.get('fbasecman_bin') else '服务器默认配置（尚未在页面保存）'}
+    result.update(build_id=selected.get('id', 'legacy'), build_name=selected.get('name', '默认版本'))
     if inspect:
         path = Path(binary)
         if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
@@ -55,3 +63,17 @@ def regression_snapshot(settings, environment):
     override.write_text(yaml.safe_dump({'fbasecman': {key: value[key] for key in ('fbasecman_bin', 'license_dir')}}))
     return {'regress_extra_configs': [str(override)], 'tested_build': value,
             'fbasecman_bin': value['fbasecman_bin'], 'license_dir': value['license_dir']}
+
+
+def describe(settings, environment):
+    """Keep legacy response fields while exposing the saved choices."""
+    try:
+        value = resolve(settings, environment, inspect=True)
+    except (ValueError, OSError, TimeoutError) as exc:
+        value = {**resolve(settings, environment), 'error': str(exc)}
+    selection = environment.get('product_test_settings') or {}
+    builds = selection.get('builds')
+    if builds is None:
+        builds = [{'id': 'legacy', 'name': '默认版本',
+                   'fbasecman_bin': value['fbasecman_bin'], 'license_dir': value['license_dir']}]
+    return {**value, 'builds': builds, 'active_build_id': selection.get('active_build_id', 'legacy')}

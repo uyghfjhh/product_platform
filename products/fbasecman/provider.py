@@ -123,6 +123,14 @@ def suite_case_context(settings, environment):
         return {}
 
 
+def native_regression_target(target, native_cases, case_targets):
+    if target in native_cases:
+        return True
+    suite = target[:-7] if target.endswith('.failed') else target
+    members = [name for name in case_targets if name.startswith(suite + '.')]
+    return bool(members) and all(name in native_cases for name in members)
+
+
 class FbasecmanProvider:
     """Product rules and commands; task lifecycle belongs to the platform."""
 
@@ -227,7 +235,7 @@ class FbasecmanProvider:
             if not profile.is_file() or not override.is_file():
                 raise RuntimeError("请先生成 pgcluster 回归部署方案")
             from products.fbasecman.cases import NATIVE_CASES
-            native_target = target in NATIVE_CASES
+            native_target = native_regression_target(target, NATIVE_CASES, CASE_TARGETS)
             regress_context = settings.profile_dir(environment["id"]) / "fixture" / "test_context.yaml"
             if not native_target and not regress_context.is_file():
                 raise RuntimeError("pgcluster 部署后仍需准备 fbasecman 测试夹具和 test_context.yaml")

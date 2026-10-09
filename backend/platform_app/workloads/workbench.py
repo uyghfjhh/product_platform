@@ -135,7 +135,7 @@ class Workbench:
                 'title': selection.title or definition['title'], 'driver': definition['driver'],
                 'source': definition['source'], 'script_sha256': hashlib.sha256(options.script.encode()).hexdigest(),
                 'script_modified': options.script != definition['defaults']['script'],
-                'tested_build': {key: tested.get(key) for key in ('binary', 'sha256', 'version')}
+                'tested_build': {key: tested.get(key) for key in ('build_id', 'build_name', 'binary', 'sha256', 'version')}
                 if tested else None,
             })
         try:

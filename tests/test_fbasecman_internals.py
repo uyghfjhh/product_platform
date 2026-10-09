@@ -170,3 +170,14 @@ class DeploymentInvalidationTest(unittest.TestCase):
                 )
                 provider.after_command(None, settings, environment, "t", action, True)
                 self.assertTrue(context.exists(), action)
+
+
+def test_native_guc_suite_and_failed_rerun_do_not_require_legacy_fixture():
+    from products.fbasecman.provider import native_regression_target
+    native = {'guc.one': object(), 'guc.two': object()}
+    targets = {'guc.one', 'guc.two', 'global_cache.runtime'}
+    assert native_regression_target('guc', native, targets)
+    assert native_regression_target('guc.failed', native, targets)
+    assert native_regression_target('guc.one', native, targets)
+    assert not native_regression_target('global_cache', native, targets)
+    assert not native_regression_target('missing', native, targets)

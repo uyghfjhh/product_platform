@@ -34,3 +34,9 @@ MMR 多节点路由、读写切换、HA 并发变更、PreparedStatement 泄漏�
 保存 request.json、fbasecman.conf、fbasecman.log、connection-evidence.json、proxy-monitor.json、直连/代理各自原始采样和 result.json。
 页面分别展示直连与代理曲线、百分比、代理 PID/端点、RSS 与 CPU（100% 为一个核）。
 环境数据库/主机采样与代理进程采样分别展示，不将数据库主机 CPU 冒充代理 CPU。
+
+被测构建支持保存多个具名版本，每个版本分别配置可执行文件和 License 目录。
+选择“当前生效”并保存后，回归与常稳的新任务共用该版本；旧单项配置自动显示为“默认版本”。
+保存时检查当前版本的文件、License、版本输出和 SHA256。其他版本可先保存路径，切换生效时再检查。
+任务快照和负载证据保留版本 ID、名称、路径和文件指纹，切换配置不会改写已创建的执行快照。
+修改版本配置后，常稳负载计划需要重新审阅。

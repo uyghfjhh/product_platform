@@ -9,7 +9,7 @@ import os
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from platform_app.topology import configured_topology
 from products.fbasecman.deployment.profile import profile_paths, save_profile
@@ -32,9 +32,31 @@ class ProfileInput(BaseModel):
             "FBCMAN_LICENSE_FILE", "/home/postgres/license/license.dat"))
 
 
-class TestSettingsInput(BaseModel):
+class BuildInput(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
     fbasecman_bin: str = Field(min_length=1, max_length=4096)
     license_dir: str = Field(min_length=1, max_length=4096)
+
+
+class TestSettingsInput(BaseModel):
+    fbasecman_bin: str | None = Field(default=None, min_length=1, max_length=4096)
+    license_dir: str | None = Field(default=None, min_length=1, max_length=4096)
+    builds: list[BuildInput] | None = Field(default=None, min_length=1, max_length=50)
+    active_build_id: str | None = None
+
+    @model_validator(mode='after')
+    def valid_selection(self):
+        if self.builds is None:
+            if not self.fbasecman_bin or not self.license_dir:
+                raise ValueError('请填写可执行文件和 License 目录')
+        else:
+            ids = [item.id for item in self.builds]
+            if len(set(ids)) != len(ids) or self.active_build_id not in ids:
+                raise ValueError('版本 ID 必须唯一，且必须选择一个当前版本')
+            if any(not item.name.strip() for item in self.builds):
+                raise ValueError('版本名称不能为空')
+        return self
 
 
 def create_router(settings, store) -> APIRouter:
@@ -48,25 +70,22 @@ def create_router(settings, store) -> APIRouter:
 
     @router.get('/api/v1/environments/{environment_id}/fbasecman-test-settings')
     def test_settings(environment_id: str):
-        from products.fbasecman.test_settings import resolve
-        environment = product_environment(environment_id)
-        try:
-            return resolve(settings, environment, inspect=True)
-        except (ValueError, OSError, TimeoutError) as exc:
-            return {**resolve(settings, environment), 'error': str(exc)}
+        from products.fbasecman.test_settings import describe
+        return describe(settings, product_environment(environment_id))
 
     @router.put('/api/v1/environments/{environment_id}/fbasecman-test-settings')
     def save_test_settings(environment_id: str, item: TestSettingsInput):
         from products.fbasecman.test_settings import resolve
         from platform_app.resources import validate_registration
         environment = product_environment(environment_id)
-        candidate = {**environment, 'product_test_settings': item.model_dump()}
+        candidate = {**environment, 'product_test_settings': item.model_dump(exclude_none=True)}
         try:
             value = resolve(settings, candidate, inspect=True)
         except (ValueError, OSError, TimeoutError) as exc:
             raise HTTPException(422, str(exc)) from exc
         store.environments.update_environment(environment_id, candidate, validator=validate_registration)
-        return value
+        from products.fbasecman.test_settings import describe
+        return describe(settings, candidate)
 
     @router.get("/api/v1/environments/{environment_id}/fbasecman-profile")
     def profile(environment_id: str):

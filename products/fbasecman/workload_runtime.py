@@ -120,7 +120,7 @@ def main(request_path):
     route_sql = "SELECT inet_server_port(), current_database(), system_identifier::text FROM pg_control_system()"
     evidence = {'mode': mode, 'backend': backend, 'phases': {}, 'proxy_started': False,
                 'tested_build': {key: runtime.get(key) for key in
-                                 ('binary', 'resolved_path', 'sha256', 'version', 'license_dir', 'source')}}
+                                 ('build_id', 'build_name', 'binary', 'resolved_path', 'sha256', 'version', 'license_dir', 'source')}}
     def interrupted(_signum, _frame):
         raise InterruptedError('负载已取消')
     signal.signal(signal.SIGTERM, interrupted)

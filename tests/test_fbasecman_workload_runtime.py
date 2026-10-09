@@ -150,3 +150,37 @@ def test_failed_comparison_report_never_displays_a_loss_percentage(tmp_path):
     assert '测量无效' in report
     assert '吞吐损失' not in report
     assert '未验证' in report
+
+
+def test_multiple_builds_switch_and_snapshot_keep_original_selection(configured):
+    from fastapi.testclient import TestClient
+    from platform_app.api import create_app
+    settings, environment, binary = configured
+    alternate = binary.with_name('alternate')
+    alternate.write_text('#!/bin/sh\nprintf "alternate build\\n"\n')
+    alternate.chmod(0o755)
+    app = create_app(settings, enqueuer=lambda _identity: None)
+    app.state.store.environments.put_environment(environment)
+    client = TestClient(app)
+    path = '/api/v1/environments/lab/fbasecman-test-settings'
+    assert client.get(path).json()['builds'][0]['name'] == '默认版本'
+    payload = {'builds': [
+        {'id': 'baseline', 'name': '基线', **environment['product_test_settings']},
+        {'id': 'hint', 'name': 'Hint 修改版', **environment['product_test_settings'], 'fbasecman_bin': str(alternate)},
+    ], 'active_build_id': 'baseline'}
+    assert client.put(path, json=payload).status_code == 200
+    snapshot = regression_snapshot(settings, app.state.store.environments.get_environment('lab'))
+    payload['active_build_id'] = 'hint'
+    response = client.put(path, json=payload)
+    assert response.status_code == 200
+    assert response.json()['build_name'] == 'Hint 修改版'
+    assert response.json()['version'] == 'alternate build'
+    assert snapshot['tested_build']['build_id'] == 'baseline'
+    assert snapshot['fbasecman_bin'] == str(binary)
+    assert client.get(path).json()['active_build_id'] == 'hint'
+    assert client.put(path, json={**payload, 'active_build_id': 'missing'}).status_code == 422
+    payload['builds'][1]['fbasecman_bin'] = '/missing/binary'
+    assert client.put(path, json=payload).status_code == 422
+    assert client.get(path).json()['fbasecman_bin'] == str(alternate)
+    payload['builds'][1]['id'] = 'baseline'
+    assert client.put(path, json=payload).status_code == 422

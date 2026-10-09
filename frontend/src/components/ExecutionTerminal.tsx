@@ -145,7 +145,7 @@ export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClo
       {expanded && (
         <div className="regression-terminal-body" ref={body}>
           {error && <div className="terminal-error">{error}</div>}
-          <pre>{lines.length ? lines.join('\n') : '等待任务输出...'}</pre>
+          <pre>{lines.length ? lines.join('\n') : task && finished.has(task.status) ? (task.reason || `任务已结束（${task.status}），未产生进程日志。`) : '等待任务输出...'}</pre>
         </div>
       )}
     </aside>
