@@ -1,5 +1,14 @@
 # 当前实施状态
 
+## 2026-10-15：真实 psql 保存点、读写切换与旧连接复用防污染
+
+- `backend_redeploy_hint/sql_parse` 新增 `psql_savepoint_switch`、`psql_client_reuse`，覆盖事务池、MMR/主备、预处理保留开/关。保留现有用例，未重跑此前其他失败专项。
+- 保存点场景按小写 SET application_name、保存点后 SET extra_float_digits 执行，分别验证保存点回滚后提交为 123/1，直接提交为 321/3；每条路径提交后实际写→读→写，逐节点核对参数。
+- 查询使用 `SELECT pg_catalog.inet_server_addr(), pg_catalog.inet_server_port();`，另查 PID 和 recovery。按实际配置及角色验证读写节点，再比较地址/端口是否真的变化；只换 PID 不算读写切换。
+- 防污染场景先用相同 psql 启动方式直连采集干净基线，A 提交两个非默认参数并正常退出，B 新登录必须复用 A 的相同地址、端口、PID，且两个参数恢复基线。未复用时不冒充清理成功。
+- `report.txt` 直接保留真实 psql SQL 回显、aligned 表格及命令标签，后接参数、读写切换、连接复用的实测分析；脚本及 stdout/stderr 原文另存附件，不以 JSON 字符串转义或网页报告代替文本输出。
+- 验证：96 项专项单测通过，包含实际生成 report.txt 的内容断言。真实数据库新增 16 个配置组合全部通过；Hint/MMR/reserve=yes 实测 11021→11011→11021，A/B 复用 11021 上相同 PID，B 为 extra_float_digits=1、application_name=psql。文本报告在 `output/fbasecman/psql-savepoint-20261015-text/{hint,sql_parse}/report.txt`。选择复跑未执行项保留分母，综合入口仍标记部分检查未完成，不声称全量通过。
+
 ## 2026-10-09：普通 SET 与显式 SET SESSION 分别验收
 
 - 事务提交／回滚及预处理 P/B/D/E 边界分别执行 SET work_mem 与 SET SESSION work_mem，同样核对事务内值、提交／回滚后的值、实际后端切换后的值；Q 单批次 application_name 两种语法也分别覆盖。SET LOCAL 保留独立不残留分支。

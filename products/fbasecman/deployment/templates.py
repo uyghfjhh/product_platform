@@ -10,6 +10,7 @@ from .profile import _merge, build_profile
 
 def templates(settings):
     return [
+        {"id": "cman-four", "title": "fbasecman：本机两组多活，各一个备库", "nodes": 4, "base_port": 15432, "target": "mmr.mmr_group"},
         {
             "id": "cman",
             "title": "fbasecman：两组多活，各六个备库",
@@ -21,6 +22,8 @@ def templates(settings):
 
 
 def compile_template(settings, spec, environment_id):
+    if spec.template_id == 'cman-four':
+        return compile_four_node(spec)
     environment = {"id": environment_id, "host": spec.host}
     config, regression = build_profile(
         settings,
@@ -193,3 +196,43 @@ def import_files(settings, facts, target, environment_id=None):
         "regress.override.yaml": yaml.safe_dump(regression, allow_unicode=True),
         "regress.yaml": yaml.safe_dump(merged, allow_unicode=True),
     }
+
+
+def compile_four_node(spec):
+    """Small managed MMR topology, independent of the fixed regression fixture."""
+    if spec.host not in {'127.0.0.1', 'localhost'} or spec.hosts:
+        raise ValueError('本机四节点模板使用 127.0.0.1，不需要 SSH 主机资源')
+    root = spec.data_root.rstrip('/')
+    instances = {name: {'host': 'local_host', 'installation': 'mmr', 'port': port,
+                        'data_dir': f'{root}/{name}'} for name, port in (
+        ('pg_1', spec.base_port), ('pg_3', spec.base_port+1),
+        ('pg_2', spec.base_port+10000), ('pg_4', spec.base_port+10001))}
+    overrides = {node.name: node for node in spec.nodes}
+    if overrides and set(overrides) != set(instances):
+        raise ValueError('四节点模板需要 pg_1、pg_2、pg_3、pg_4')
+    for name, node in overrides.items():
+        instances[name].update(port=node.port, data_dir=node.data_dir)
+    config = {
+        'hosts': {'local_host': {'address': spec.host}},
+        'postgresql_installations': {'mmr': {'provider': 'fbase', 'home': spec.home,
+            'license': {'source_file': spec.license_file, 'data_file': 'license.dat'},
+            'plugins': {'fdd_mmr': {'required': True, 'extension': 'fdd_mmr', 'preload_library': 'fdd_mmr'}}}},
+        'postgresql_config': {'parameters': {'wal_level': 'logical', 'hot_standby': 'on',
+            'shared_preload_libraries': ['fdd_mmr'], 'track_commit_timestamp': 'on',
+            'fdd.running_databases': 'postgres', 'fdd.exclude_schema': 'fdd,pg_catalog,information_schema',
+            'max_prepared_transactions': 200, 'logging_collector': 'on', 'log_directory': 'pg_log',
+            **spec.parameters},
+            'replication_capacity': {'wal_senders': 'auto', 'replication_slots': 'auto'},
+            'hba': [{'type': 'local', 'database': 'all', 'user': 'all', 'auth_method': 'trust'},
+                    {'type': 'host', 'database': 'all', 'user': 'postgres', 'address': '127.0.0.1/32', 'auth_method': 'trust'},
+                    {'type': 'host', 'database': 'replication', 'user': 'all', 'address': '127.0.0.1/32', 'auth_method': 'trust'}]},
+        'instances': instances,
+        'streaming_clusters': {f'pg_cluster_{i}': {'primary': primary,
+            'standbys': [{'instance': standby, 'application_name': standby, 'slot': f'local_{standby}'}],
+            'replication': {'mode': 'async'}} for i,primary,standby in ((1,'pg_1','pg_3'),(2,'pg_2','pg_4'))},
+        'mmr_clusters': {'mmr_group': {'database': 'postgres', 'group_name': 'my_test_group',
+            'extensions': ['fdd_mmr'], 'members': {
+                'node1': {'node_name': 'node1', 'streaming_cluster': 'pg_cluster_1', 'mmr_node': {'streaming': 'off', 'two_phase': False}},
+                'node2': {'node_name': 'node2', 'streaming_cluster': 'pg_cluster_2', 'mmr_node': {'streaming': 'off', 'two_phase': False},
+                          'join': {'synchronize_structure': 'data-only'}}}}}}
+    return config, 'mmr.mmr_group', {}

@@ -155,18 +155,31 @@ class ProductChecks:
 
         # Batch Q is a separate recording path; preserve ordered mutation
         # events through segment commit/rollback instead of testing only Q1.
-        with self.runner.client('batch_cache') as p:
-            self.stage('prepare')
-            self.runner.baseline(p)
-            self.stage('batch')
-            p.sql("BEGIN; SET work_mem='16MB'; COMMIT; SET work_mem='64MB'; SELECT 1/0;",
-                  protocol='Q', error='22012')
-            records = self.events('batch')
-            promotions = [r for r in records if r['event'] == 'cache_copy' and r['cache'] == 'frontend']
-            self.verify('多语句 Q 前段提升且失败后段不提升', '16MB 的提交，不提升64MB', promotions,
-                        bool(promotions) and all('64MB' not in r['value'] for r in promotions))
-            self.stage('observe')
-            p.snapshot({'work_mem': '16MB'})
+        if self.runner.mode != 'hint':
+            with self.runner.client('batch_cache') as p:
+                self.stage('prepare')
+                self.runner.baseline(p)
+                self.stage('batch')
+                p.sql("BEGIN; SET work_mem='16MB'; COMMIT; SET work_mem='64MB'; SELECT 1/0;",
+                      protocol='Q', error='22012')
+                records = self.events('batch')
+                promotions = [r for r in records if r['event'] == 'cache_copy' and r['cache'] == 'frontend']
+                self.verify('多语句 Q 前段提升且失败后段不提升', '16MB 的提交，不提升64MB', promotions,
+                            bool(promotions) and all('64MB' not in r['value'] for r in promotions))
+                self.stage('observe')
+                p.snapshot({'work_mem': '16MB'})
+        else:
+            self.runner.context.step(
+                f'{self.runner.plan.key}-hint-batch-q-limit',
+                '已排除 Hint 模式多语句 Q 缓存提升检查',
+                status='SKIPPED',
+                details={
+                    'intent': 'verify',
+                    'expected': 'Hint 模式仅按首词初筛 GUC，多语句 Q 不做支持',
+                    'actual': '跳过多语句 Q 前段提升与失败后段回滚缓存断言',
+                    'analysis': 'Hint 模式不开启多语句 Q 完整语法解析，仅 sql_parse 模式验证该项',
+                },
+            )
         # A real old backend is present in session mode; transaction mode
         # uses the reset/detach events to distinguish it from a new attach.
         with self.runner.client('reclaim_cache') as p:

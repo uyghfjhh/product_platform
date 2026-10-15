@@ -74,6 +74,7 @@ def create_plan(workbench, spec=None):
         ("fbase-database", "mac", 7000, 3),
         ("fbase-database", "mmr", 7100, 6),
         ("fbasecman", "cman", 7200, 14),
+        ("fbasecman", "cman-four", 7400, 4),
     ],
 )
 def test_three_templates_generate_and_validate(
@@ -1235,3 +1236,18 @@ def test_existing_discovery_api_passes_validated_paths_and_ssh(workbench, monkey
     assert captured["ssh"] == {"user": "postgres"}
     response = client.post("/api/v1/deployment/discover-existing", json={"host": "localhost", "data_dirs": ["/"]})
     assert response.status_code == 422
+
+
+def test_four_node_mmr_template_keeps_two_streaming_groups(workbench):
+    _, service, original, _ = workbench
+    spec = DeploymentSpec(**{**original, 'product_id': 'fbasecman',
+                             'template_id': 'cman-four', 'base_port': 16432})
+    config, target, _ = compile_spec(service.settings, spec, 'local-mmr')
+    assert target == 'mmr.mmr_group'
+    assert set(config['instances']) == {'pg_1','pg_2','pg_3','pg_4'}
+    assert {k:v['port'] for k,v in config['instances'].items()} == {
+        'pg_1':16432,'pg_3':16433,'pg_2':26432,'pg_4':26433}
+    assert config['streaming_clusters']['pg_cluster_1']['standbys'][0]['instance'] == 'pg_3'
+    assert config['streaming_clusters']['pg_cluster_2']['standbys'][0]['instance'] == 'pg_4'
+    assert config['postgresql_config']['parameters']['fdd.exclude_schema'].startswith('fdd,')
+    assert config['postgresql_installations']['mmr']['plugins']['fdd_mmr']['required']

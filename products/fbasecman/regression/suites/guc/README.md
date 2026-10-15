@@ -69,3 +69,22 @@ transaction 池验证跨物理后端同步及 A/B/C 复用防污染；session �
 session 测试配置显式使用 pool_discard=yes，客户端结束后归还连接以 DISCARD ALL 清理；新客户端的默认值检查验证这一归还清理，不把它称为客户端跨后端 GUC 同步。
 
 新增真实 psql 分支 psql_switch_and_reuse：两种模式 × MMR/rep × 事务池/session，配置限制明确跳过；脚本与输出归档。报告默认核心配置和业务过程表，命令／协议证据可展开。
+
+## 保存点、读写切换及旧客户端退出后的 psql 回归
+
+`backend_redeploy_hint/sql_parse` 新增两个独立子场景，均使用真实 psql、事务池，覆盖 MMR/主备及预处理保留开关：
+
+- `psql_savepoint_switch`：建立 `extra_float_digits=1` 基线，执行小写 `set application_name='123'`、SAVEPOINT、`SET extra_float_digits=3`、小写 ROLLBACK TO，再提交；预期为 123/1。第二个事务改为 application_name=321，保存点后设置 extra_float_digits=3 并直接提交，预期为 321/3。两条路径提交后都执行写→读→写，在每个实际节点核对两个参数。
+- `psql_client_reuse`：先用同一 psql 启动方式直连采集写节点的默认参数。A 提交与默认值不同的两个 GUC 后正常退出，B 随后登录，要求地址、端口、后端 PID 与 A 完全相同，且两个 GUC 均恢复干净基线。未复用原连接时不能算防污染验证通过。
+
+地址查询使用 `SELECT pg_catalog.inet_server_addr(), pg_catalog.inet_server_port();`，另查 PID 和 recovery。每组查询在显式事务中执行，避免参数与身份查询之间归还后端。MMR 根据本次配置的 write_cluster 识别写端，主备根据 recovery 识别；地址/端口未变化时，即使 PID 改变也不算读写切换成功。Hint 使用事务外 SET SESSION CHARACTERISTICS 标签；SQL_PARSE 使用 BEGIN READ WRITE/ONLY。
+
+`report.txt` 直接保存 psql 的 SQL 回显、aligned 表格和命令标签，按真实换行输出，后接参数恢复、写→读→写、旧连接复用及防污染的独立分析。SQL 脚本和完整 stdout/stderr 同时作为附件归档；不会用协议模拟输出或网页报告代替 psql 文本记录。
+
+仅复跑这两项时，在环境上下文设置：
+
+```json
+{"guc_alignment_scenarios": ["psql_savepoint_switch", "psql_client_reuse"]}
+```
+
+这是选择复跑，其他未执行项保留原有分母，不将综合入口误报为全量通过。

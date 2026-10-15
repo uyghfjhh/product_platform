@@ -86,7 +86,7 @@ function toReference(topology: TopologyData, observed: Observed) {
     if (node.group?.startsWith('citus') || topology.kind === 'citus') extSet.add('citus');
 
     const corePlugins: Array<{ name: string; type: 'mmr' | 'mac' | 'citus' }> = [];
-    if (extSet.has('fdd_mmr')) corePlugins.push({ name: 'MMR', type: 'mmr' });
+    if (extSet.has('fdd_mmr')) corePlugins.push({ name: node.extension_versions?.fdd_mmr ? `MMR ${node.extension_versions.fdd_mmr}` : 'MMR', type: 'mmr' });
     if (extSet.has('fbase_mac')) corePlugins.push({ name: 'MAC', type: 'mac' });
     if (extSet.has('citus')) corePlugins.push({ name: 'Citus', type: 'citus' });
 
@@ -101,6 +101,7 @@ function toReference(topology: TopologyData, observed: Observed) {
       endpoint: `${node.host}:${node.port}`,
       data_dir: node.data_dir,
       corePlugins,
+      serverVersion: node.server_version,
       pid: probe?.pid,
       status: probe?.running == null ? 'unknown' : (probe.running ? 'active' : 'down'),
       statusText: probe?.running == null ? '探测中' : (probe.running ? '运行中' : '已停止'),

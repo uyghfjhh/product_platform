@@ -114,7 +114,7 @@ def test_partial_wire_is_preserved_on_disconnect(tmp_path):
 
 def test_all_design_items_and_acceptance_have_registered_scenarios():
     names = {s for values in alignment.SCENARIOS.values() for s in values}
-    assert len(names) == 26
+    assert len(names) == 28
     assert set(alignment.DESIGN_ITEMS) == set(range(1, 17))
     assert len(alignment.ACCEPTANCE) == 13
     assert all(set(v).issubset(names) for v in alignment.DESIGN_ITEMS.values())

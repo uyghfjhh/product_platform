@@ -16,11 +16,11 @@
 
 static _Atomic int injected;
 static char *esc(const char *s) {
-    static _Thread_local char bufs[8][1024];
+    static _Thread_local char bufs[6][256];
     static _Thread_local unsigned slot;
-    char *out = bufs[(slot++) % 8]; size_t n=0;
+    char *out = bufs[(slot++) % 6]; size_t n=0;
     if (!s) s="";
-    for (; *s && n < 1000; ++s) {
+    for (; *s && n < 240; ++s) {
         if (*s=='"' || *s=='\\') out[n++]='\\';
         if ((unsigned char)*s < 32) { out[n++]=' '; continue; }
         out[n++]=*s;

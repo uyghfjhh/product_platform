@@ -37,6 +37,7 @@ SCENARIOS = {
     "backend_redeploy": (
         "tx_disconnect_cleanup", "session_backend_redeploy", "routing_and_discard_boundaries",
         "mode_owner_isolation", "local_backend_reclaim", "session_passthrough", "psql_switch_and_reuse",
+        "psql_savepoint_switch", "psql_client_reuse",
     ),
 }
 # Mandatory internal acceptance stays visible alongside executable black-box checks.
@@ -106,6 +107,10 @@ def make_plan(group):
     plans = []
     for topology in ("mmr", "replication"):
         for name in SCENARIOS[group]:
+            if name in {'psql_savepoint_switch', 'psql_client_reuse'}:
+                for reserve in (True, False):
+                    plans.append(CheckPlan(topology, 'transaction', reserve, 'psql', name))
+                continue
             if name == 'psql_switch_and_reuse':
                 for pool in ('transaction', 'session'):
                     plans.append(CheckPlan(topology, pool, False, 'psql', name, pool == 'transaction'))
@@ -162,6 +167,8 @@ def response_facts(messages):
 
 
 SCENARIO_LABELS = {
+    "psql_savepoint_switch": "psql 保存点参数恢复与读写切换",
+    "psql_client_reuse": "psql 旧客户端退出后连接复用防污染",
     "extended_parse_no_execute": "仅解析、不执行", "extended_bind_describe_no_execute": "绑定和描述不提前生效",
     "extended_execute_apply": "Execute 后参数生效", "extended_statement_isolation": "语句候选互不覆盖",
     "extended_portal_isolation": "Portal 候选隔离", "extended_candidate_cleanup": "未执行候选关闭与清理",
@@ -422,7 +429,7 @@ class ScenarioRunner:
             passed = passed and (recovery == 'true' if self.plan.topology == 'replication' else
                                 not is_write)
         title = '起点确认：按配置及实际角色识别当前节点' if side is None else f"路由确认：命中{'写' if side == 'write' else '读'}端"
-        actual = {**connection_facts(values), '采集 SQL': PROBE_SQL, '原始查询响应附件': values.get('observation_evidence'), '命中配置节点': [n['名称'] for n in matches],
+        actual = {**connection_facts(values), '采集 SQL': values.get('observation_sql', PROBE_SQL), '原始查询响应附件': values.get('observation_evidence'), '命中配置节点': [n['名称'] for n in matches],
                   '命中集群': [n['集群'] for n in matches], '是否写节点': is_write}
         if self.plan.topology == 'mmr':
             actual['配置 write_cluster'] = write_cluster
@@ -483,6 +490,10 @@ class ScenarioRunner:
     def run(self):
         self.default_values()
         name = self.plan.scenario
+        if name in {'psql_savepoint_switch', 'psql_client_reuse'}:
+            from products.fbasecman.guc_psql import PsqlGucChecks
+            checks = PsqlGucChecks(self)
+            return checks.savepoint_switch() if name == 'psql_savepoint_switch' else checks.client_reuse()
         if name in INTERNAL:
             from products.fbasecman.guc_instrumentation import ProductChecks
             checks = ProductChecks(self, self.config, self.binary)
@@ -621,6 +632,8 @@ class ScenarioRunner:
         return captured['mmr1']['参数值']
 
     def batches(self, probe):
+        if self.mode == "hint":
+            raise BaselineLimit("Hint 模式不解析多语句 Q 事务段，多语句 GUC 同步不做支持")
         # Each entire string is one Q, never split into separate client requests.
         cases = [
             ("BEGIN; SET work_mem='32MB'; COMMIT; SELECT current_setting('work_mem');", "32MB", None),

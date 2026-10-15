@@ -41,14 +41,13 @@ def installed_extensions(member_names, database):
                  runtime._bin(member, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
                  "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
                  "-U", "postgres", "-d", database, "-At",
-                 "-c", "SELECT extname FROM pg_extension ORDER BY 1"],
+                 "-c", "SELECT json_build_object('server_version',current_setting('server_version'),'database_version',version(),'extension_versions',(SELECT json_object_agg(extname,extversion) FROM pg_extension))"],
                 host=host, check=False)
-            names = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-            if proc.returncode == 0 and names:
-                return names
+            if proc.returncode == 0 and proc.stdout.strip():
+                return json.loads(proc.stdout.strip())
         except Exception:
             continue
-    return []
+    return {}
 
 nodes = []
 for name in names:
@@ -132,20 +131,16 @@ if kind == "citus":
 stream_db = ((config.mmr_clusters.get(cluster_name) or {}).get("database")
              or (config.citus_clusters.get(cluster_name) or {}).get("database")
              or "postgres")
-stream_installed = {}
-for stream_name in streaming_names:
-    stream = config.streaming_clusters[stream_name]
-    members = [stream["primary"]] + [item["instance"] for item in stream.get("standbys") or []]
-    try:
-        live_primary = runtime._primary(stream_name)
-        if live_primary in members:
-            members.remove(live_primary)
-            members.insert(0, live_primary)
-    except Exception:
-        pass
-    stream_installed[stream_name] = installed_extensions(members[:2], stream_db)
-for node in nodes:
-    node["installed_extensions"] = stream_installed.get(node.get("group"), [])
+# Query each physical instance: standby binaries can have different versions.
+# Bound parallel probes so stopped nodes do not serially exhaust the API timeout.
+from concurrent.futures import ThreadPoolExecutor
+with ThreadPoolExecutor(max_workers=8) as pool:
+    live_nodes = list(pool.map(lambda node: installed_extensions([node['id']], stream_db), nodes))
+for node, live in zip(nodes, live_nodes):
+    node['extension_versions'] = live.get('extension_versions') or {}
+    node['installed_extensions'] = sorted(node['extension_versions'])
+    node['server_version'] = live.get('server_version')
+    node['database_version'] = live.get('database_version')
 
 print(json.dumps({"target": target, "kind": kind, "nodes": nodes, "edges": edges}, ensure_ascii=False))
 """

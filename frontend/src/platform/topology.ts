@@ -9,6 +9,9 @@ export type TopologyNode = {
   data_dir: string;
   extensions?: string[];
   installed_extensions?: string[];
+  extension_versions?: Record<string, string>;
+  server_version?: string;
+  database_version?: string;
 };
 
 export type TopologyData = {

@@ -7,6 +7,8 @@ GROUPS = {
 }
 
 SCENARIO_PURPOSES = {
+    'psql_savepoint_switch': '真实 psql 执行小写 SET application_name、保存点后的 extra_float_digits 修改；分别检查 ROLLBACK TO 后提交和直接提交。每条路径提交后均验证写→读→写的实际节点与两个参数，不能仅凭 SET 成功认定切换成功。',
+    'psql_client_reuse': '真实 psql 客户端 A 提交非默认 application_name 与 extra_float_digits 后正常退出；B 随后登录，必须复用 A 的同一地址、端口及后端 PID，并恢复该节点预先采集的干净客户端参数。',
     'psql_switch_and_reuse': '真实 psql：A 设置非默认 work_mem，事务池按写→读→写查询并确认不同后端；B 新连接复用原写后端查询默认值。session 只验证固定连接真实 SET 与归还清理。',
     'session_passthrough': 'session 固定客户端与后端：先分配实际后端，再 SET 非默认 work_mem 并查询，参数必须真实改变且 PID 不变；RESET 恢复实测默认值。配置即使请求启用同步，也不能伪造缓存成功。',
     'extended_parse_no_execute': '只发送 Parse，不发送 Execute；会话参数和正式缓存必须保持执行前的值。',

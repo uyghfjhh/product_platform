@@ -613,6 +613,8 @@ export default function DeploymentPage({
                     <Tag>未探测</Tag>
                   )}
                 </dd>
+                <dt>数据库版本</dt><dd title={selectedNode.database_version}>{selectedNode.server_version || '未读取（实例不可达）'}</dd>
+                <dt>MMR 插件版本</dt><dd>{selectedNode.extension_versions?.fdd_mmr || '未读取 / 未安装'}</dd>
                 <dt>数据目录</dt><dd><code style={{ fontSize: 11 }}>{selectedNode.data_dir}</code></dd>
                 {(() => {
                   const configured = selectedNode.extensions || [];
