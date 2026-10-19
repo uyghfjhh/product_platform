@@ -27,9 +27,8 @@ config.validate(target)
 runtime = Runtime(config)
 names = runtime.target_instances(target)
 
-# 节点元数据的“已安装插件”取自实例 catalog（pg_extension）。同一条
-# 流复制链上的成员 catalog 一致，每个复制组只查一个可连通的成员
-# 即可；整组不可达时返回空集，前端回退到配置声明的扩展集。
+# 节点版本、实际角色与已安装插件来自各物理实例，禁止借用其他节点的
+# 版本或角色；不可达时保留配置声明与受管角色记录，版本保持未知。
 def installed_extensions(member_names, database):
     for member in member_names:
         instance = config.instance(member)
@@ -41,7 +40,7 @@ def installed_extensions(member_names, database):
                  runtime._bin(member, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
                  "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
                  "-U", "postgres", "-d", database, "-At",
-                 "-c", "SELECT json_build_object('server_version',current_setting('server_version'),'database_version',version(),'extension_versions',(SELECT json_object_agg(extname,extversion) FROM pg_extension))"],
+                 "-c", "SELECT json_build_object('server_version',current_setting('server_version'),'database_version',version(),'in_recovery',pg_is_in_recovery(),'extension_versions',(SELECT json_object_agg(extname,extversion) FROM pg_extension))"],
                 host=host, check=False)
             if proc.returncode == 0 and proc.stdout.strip():
                 return json.loads(proc.stdout.strip())
@@ -96,19 +95,15 @@ if cluster_exts:
 
 for stream_name in streaming_names:
     stream = config.streaming_clusters[stream_name]
-    primary = stream["primary"]
+    primary = runtime._primary(stream_name)
+    members = [stream['primary']] + [item['instance'] for item in stream.get('standbys') or []]
     for node in nodes:
-        if node["id"] == primary:
-            node["role"] = "primary"
-            node["group"] = stream_name
-    for standby in stream.get("standbys") or []:
-        secondary = standby["instance"]
-        edges.append({"id": "stream:" + primary + ":" + secondary, "source": primary,
-                      "target": secondary, "kind": "streaming"})
-        for node in nodes:
-            if node["id"] == secondary:
-                node["role"] = "standby"
-                node["group"] = stream_name
+        if node['id'] in members:
+            node['role'] = 'primary' if node['id'] == primary else 'standby'
+            node['group'] = stream_name
+    for secondary in members:
+        if secondary != primary:
+            edges.append({'id':'stream:'+primary+':'+secondary,'source':primary,'target':secondary,'kind':'streaming'})
 
 if kind == "logical":
     left = config.streaming_clusters[streaming_names[0]]["primary"]
@@ -116,7 +111,7 @@ if kind == "logical":
     edges.append({"id": "logical:" + left + ":" + right, "source": left,
                   "target": right, "kind": "logical"})
 if kind == "mmr":
-    members = [config.streaming_clusters[name]["primary"] for name in streaming_names]
+    members = [runtime._primary(name) for name in streaming_names]
     for index, left in enumerate(members):
         for right in members[index + 1:]:
             edges.append({"id": "mmr:" + left + ":" + right, "source": left,
@@ -141,6 +136,15 @@ for node, live in zip(nodes, live_nodes):
     node['installed_extensions'] = sorted(node['extension_versions'])
     node['server_version'] = live.get('server_version')
     node['database_version'] = live.get('database_version')
+    node['declared_role'] = node['role']
+    if live.get('in_recovery') is not None:
+        node['role'] = 'standby' if live['in_recovery'] else 'primary'
+    elif node.get('group'):
+        node['role'] = 'primary' if runtime._primary(node['group']) == node['id'] else 'standby'
+    node['original_primary'] = config.streaming_clusters.get(node.get('group'), {}).get('primary')
+    node['previous_primary'] = runtime._state().get('failovers', {}).get(node.get('group'), {}).get('old_primary')
+    node['rejoin_required'] = bool(node['previous_primary'] and not runtime._state().get('failovers', {}).get(node.get('group'), {}).get('rejoined'))
+
 
 print(json.dumps({"target": target, "kind": kind, "nodes": nodes, "edges": edges}, ensure_ascii=False))
 """

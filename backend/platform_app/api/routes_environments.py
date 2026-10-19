@@ -93,6 +93,33 @@ def register(app, settings: Settings, store) -> None:
         except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/api/v1/environments/{environment_id}/mmr-status")
+    def environment_mmr_status(environment_id: str):
+        value = store.environments.get_environment(environment_id)
+        if value is None:
+            raise HTTPException(404, '环境不存在')
+        if not value.get('deployment_config') or not value.get('deployment_target'):
+            raise HTTPException(422, '请先登记部署配置和目标')
+        try:
+            from ..deployment.mmr_status import read
+            return read(settings, value)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/v1/environments/{environment_id}/role-change")
+    def role_change_preview(environment_id: str, group: str):
+        value = store.environments.get_environment(environment_id)
+        if value is None:
+            raise HTTPException(404, '环境不存在')
+        try:
+            topology = configured_topology(settings, value)
+            if group not in {n.get('group') for n in topology['nodes']}:
+                raise ValueError('复制组不属于当前环境')
+            from ..deployment.role_change import preview
+            return preview(settings, value, group)
+        except (ValueError, RuntimeError, TimeoutError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
     @app.get("/api/v1/environments/{environment_id}/topology/status")
     def environment_topology_status(environment_id: str):
         value = store.environments.get_environment(environment_id)

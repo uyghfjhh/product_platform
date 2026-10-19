@@ -12,6 +12,10 @@ export type TopologyNode = {
   extension_versions?: Record<string, string>;
   server_version?: string;
   database_version?: string;
+  declared_role?: string;
+  original_primary?: string;
+  previous_primary?: string;
+  rejoin_required?: boolean;
 };
 
 export type TopologyData = {

@@ -285,6 +285,18 @@ def command_for(settings: Settings, environment: dict, action: str,
     if environment["product_id"] not in discover_products(settings.products_root):
         raise ValueError("产品未安装: %s" % environment["product_id"])
     if action.startswith("deployment."):
+        from .deployment.role_change import ACTIONS
+        if action in ACTIONS:
+            if not target.startswith('streaming.'):
+                raise ValueError('角色操作必须指定复制组')
+            selected = parameters.get('selected_node')
+            expected = parameters.get('expected_primary')
+            if not selected or not expected:
+                raise ValueError('请明确选择目标节点并确认当前主库')
+            return CommandSpec([sys.executable, str(Path(__file__).parent / 'deployment/role_change.py'),
+                '--engine-root', str(settings.pgcluster_root), '--config', environment['deployment_config'],
+                '--group', target.split('.', 1)[1], '--action', action,
+                '--selected', selected, '--expected', expected], settings.pgcluster_root)
         return DATABASE_CLUSTER_PROVIDER.lifecycle(settings, environment, action, target).command
     if action in {'workload.pgbench','workload.jdbc'}:
         from .workloads import command

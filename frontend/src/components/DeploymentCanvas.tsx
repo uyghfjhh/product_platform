@@ -4,10 +4,11 @@ import gsap from 'gsap';
 import type { TopologyData, TopologyNode } from '../platform/topology';
 import { renderDeploymentCanvas } from './referenceDeploymentCanvas';
 import './referenceDeploymentCanvas.css';
+import { mmrHint, type MmrStatus } from '../platform/mmr';
 
 type Observed = Record<string, { running: boolean | null; message?: string; pid?: number | null }> | null;
 
-function toReference(topology: TopologyData, observed: Observed) {
+function toReference(topology: TopologyData, observed: Observed, mmrStatus?: MmrStatus | null, mmrStale = false) {
   const groups = Array.from(new Set(topology.nodes.map((node) => node.group || 'cluster')));
 
   let currentY = 70;
@@ -70,7 +71,7 @@ function toReference(topology: TopologyData, observed: Observed) {
       };
     });
 
-    currentY += groupHeight + 24;
+    currentY += groupHeight + (topology.kind==='mmr' ? 52 : 24);
   });
 
   const nodes = topology.nodes.map((node) => {
@@ -119,6 +120,8 @@ function toReference(topology: TopologyData, observed: Observed) {
     target: edge.target,
     type: edge.kind === 'streaming' ? 'replication' : (edge.kind === 'mmr' ? 'sync' : 'route'),
     animated: true,
+    mmrText: edge.kind==='mmr' && mmrStatus ? (mmrStale ? 'MMR 状态已过期' : mmrStatus.issue_count ? `MMR ⚠ ${mmrStatus.issue_count}项异常：${mmrHint(mmrStatus.members.find(m=>m.issues.length)?.issues[0].code || '')}` : mmrStatus.unknown ? 'MMR 状态未确认' : 'MMR 双活') : undefined,
+    mmrError: edge.kind==='mmr' && !!mmrStatus && (mmrStale || mmrStatus.unknown || mmrStatus.issue_count>0),
   }));
 
   const health = Object.fromEntries(groups.map((group) => {
@@ -145,12 +148,15 @@ function toReference(topology: TopologyData, observed: Observed) {
   };
 }
 
-export default function DeploymentCanvas({ topology, observed, onSelectNode, onOpenSql, onDeploy }: {
+export default function DeploymentCanvas({ topology, observed, onSelectNode, onOpenSql, onDeploy, mmrStatus, mmrStale, onOpenMmr }: {
   topology: TopologyData;
   observed: Observed;
   onSelectNode: (node: TopologyNode) => void;
   onOpenSql: (node: TopologyNode) => void;
   onDeploy: () => void;
+  mmrStatus?: MmrStatus | null;
+  mmrStale?: boolean;
+  onOpenMmr?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -159,7 +165,7 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
 
-  const reference = useMemo(() => toReference(topology, observed), [topology, observed]);
+  const reference = useMemo(() => toReference(topology, observed, mmrStatus, mmrStale), [topology, observed, mmrStatus, mmrStale]);
   const { bounds } = reference;
   const html = useMemo(() => DOMPurify.sanitize(
     renderDeploymentCanvas(reference),
@@ -227,6 +233,7 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     const target = event.target as Element;
     const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
+    if (action === 'mmr') { onOpenMmr?.(); return; }
     if (action === 'deploy') { onDeploy(); return; }
     const card = target.closest<HTMLElement>('[data-node-id]');
     const node = topology.nodes.find((item) => item.id === card?.dataset.nodeId);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Progress, Tag } from 'antd';
 import { CloseOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import { api, post, type Event, type Task } from '../platform/api';
@@ -6,11 +6,12 @@ import { api, post, type Event, type Task } from '../platform/api';
 const finished = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED']);
 
 /** 平台通用执行终端：任务日志流 + 头部常驻进度条 + 折叠瘦身 + 取消与关闭，产品无关 */
-export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClose }: {
+export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClose, initiallyExpanded = false }: {
   taskId: string | null;
   onInspect: (taskId: string) => void;
   onFinished: () => void;
   onClose?: () => void;
+  initiallyExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [dismissedId, setDismissedId] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClo
   useEffect(() => {
     if (!taskId) return;
     setDismissedId(null);
-    setExpanded(false); // 默认收起为 38px 底部常驻状态栏，保证左侧拓扑画布完整展示，不遮挡下层节点
+    setExpanded(initiallyExpanded); // 默认收起为 38px 底部常驻状态栏，保证左侧拓扑画布完整展示，不遮挡下层节点
     setTask(null);
     setLines([]);
     setError('');
@@ -62,11 +63,26 @@ export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClo
     }
     void refresh();
     return () => { closed = true; window.clearTimeout(timer); };
-  }, [taskId]);
+  }, [taskId, initiallyExpanded]);
 
   useEffect(() => {
     if (follow && body.current) body.current.scrollTop = body.current.scrollHeight;
   }, [lines, expanded, follow]);
+
+  const roleSteps = useMemo(() => {
+    const steps = new Map<number, {index:number; title:string; status:string; elapsed:number; at:string; error?:string}>();
+    for (const line of lines) {
+      if (line.startsWith('ROLE_PLAN ')) {
+        try { (JSON.parse(line.slice(10)) as string[]).forEach((title, index) => {
+          if (!steps.has(index+1)) steps.set(index+1, {index:index+1,title,status:'pending',elapsed:0,at:''});
+        }); } catch { /* keep raw log */ }
+        continue;
+      }
+      if (!line.startsWith('ROLE_STEP ')) continue;
+      try { const step = JSON.parse(line.slice(10)); steps.set(step.index, step); } catch { /* keep raw log */ }
+    }
+    return Array.from(steps.values()).sort((a,b) => a.index-b.index);
+  }, [lines]);
 
   if (!taskId || dismissedId === taskId) return null;
   const running = !task || !finished.has(task.status);
@@ -142,10 +158,15 @@ export default function ExecutionTerminal({ taskId, onInspect, onFinished, onClo
         </div>
       </div>
 
+      {expanded && roleSteps.length > 0 && <div aria-label="角色操作步骤" style={{padding:'8px 16px', maxHeight:180, overflowY:'auto'}}>
+        {roleSteps.map(step => <div key={step.index} style={{color:step.status==='failed'?'#ff7875':step.status==='passed'?'#52c41a':step.status==='pending'?'#94a3b8':'#38bdf8'}}>
+          {step.status==='passed'?'✓':step.status==='failed'?'✗':step.status==='pending'?'○':'▶'} {step.index}. {step.title} {step.at ? new Date(step.at).toLocaleTimeString() : ''} · {(step.status==='running' ? Math.max(0, (Date.now()-Date.parse(step.at))/1000) : step.elapsed).toFixed(1)}s {step.error || ''}
+        </div>)}
+      </div>}
       {expanded && (
         <div className="regression-terminal-body" ref={body}>
           {error && <div className="terminal-error">{error}</div>}
-          <pre>{lines.length ? lines.join('\n') : task && finished.has(task.status) ? (task.reason || `任务已结束（${task.status}），未产生进程日志。`) : '等待任务输出...'}</pre>
+          <pre>{lines.length ? lines.filter(line => !line.startsWith('ROLE_STEP ') && !line.startsWith('ROLE_PLAN ')).join('\n') : task && finished.has(task.status) ? (task.reason || `任务已结束（${task.status}），未产生进程日志。`) : '等待任务输出...'}</pre>
         </div>
       )}
     </aside>

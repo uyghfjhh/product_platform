@@ -108,13 +108,28 @@ class OperationService:
             nodes = {node["id"] for node in topology["nodes"]}
             allowed = {environment["deployment_target"]} | nodes
             if item.action in {"deployment.failover", "deployment.switchover",
-                               "deployment.rejoin", "deployment.lag"}:
+                               "deployment.rejoin", "deployment.restore", "deployment.lag"}:
                 allowed = {f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
-            if item.action in {"deployment.verify", "deployment.restore"}:
+            if item.action in {"deployment.verify"}:
                 allowed = {environment["deployment_target"]} | {
                     f"streaming.{node['group']}" for node in topology["nodes"] if node.get("group")}
             if target not in allowed:
                 raise OperationError(422, message="操作目标不属于当前环境拓扑")
+            from .deployment.role_change import ACTIONS, preview, validate_request
+            if item.action in ACTIONS:
+                if store.tasks.has_active_task(item.environment_id):
+                    raise OperationError(409, '环境已有活动任务，请等待完成后再执行角色操作')
+                if not target.startswith('streaming.'):
+                    raise OperationError(422, '角色操作必须指定复制组')
+                if set(item.parameters) != {'selected_node', 'expected_primary'} or not all(
+                        isinstance(item.parameters.get(k), str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', item.parameters[k])
+                        for k in ('selected_node', 'expected_primary')):
+                    raise OperationError(422, '请选择目标节点并确认当前主库')
+                try:
+                    info = preview(settings, environment, target.split('.', 1)[1])
+                    validate_request(info, item.action, item.parameters['selected_node'], item.parameters['expected_primary'])
+                except (ValueError, TimeoutError) as exc:
+                    raise OperationError(422, str(exc)) from exc
             if item.action in {"deployment.validate", "deployment.create", "deployment.health", "deployment.clean"} and target != environment["deployment_target"]:
                 raise OperationError(422, message="该操作只能作用于当前集群")
         if declared is not None and declared.validate_target:
@@ -133,6 +148,11 @@ class OperationService:
             item.parameters.get("profile", "default"),
         ) is None:
             raise OperationError(404, message="当前环境没有该测试目标的结果")
+        if item.action.startswith('deployment.'):
+            from .deployment.role_change import ACTIONS
+            if any(task['environment_id'] == item.environment_id and task['action'] in ACTIONS
+                   for task in store.tasks.unfinished_tasks()):
+                raise OperationError(409, '该环境正在执行角色操作，暂不能执行其他部署动作')
         parameters = dict(item.parameters)
         if snapshot:
             parameters["_deployment_snapshot"] = snapshot

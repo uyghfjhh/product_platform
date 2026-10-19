@@ -23,6 +23,8 @@ def test_topology_reads_versions_per_physical_node(monkeypatch, capsys):
         def __init__(self,_):self.executor=Executor()
         def target_instances(self,_):return list(nodes)
         def _bin(self,*_):return '/bin/psql'
+        def _primary(self,_):return 'pg_1'
+        def _state(self):return {}
     monkeypatch.setitem(sys.modules,'pgclusterlib',types.ModuleType('pgclusterlib'))
     monkeypatch.setitem(sys.modules,'pgclusterlib.config',types.SimpleNamespace(load=lambda _:config))
     monkeypatch.setitem(sys.modules,'pgclusterlib.runtime',types.SimpleNamespace(Runtime=Runtime))

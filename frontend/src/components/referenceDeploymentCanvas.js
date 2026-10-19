@@ -29,7 +29,7 @@
         const boxWidth = cl.width || 760;
         clusterBoxesHtml += `
           <div class="cluster-group-box ${clClass} ${isAllDown ? 'cluster-down' : ''}" style="left: 60px; top: ${cl.y}px; width: ${boxWidth}px; height: ${cl.height}px;">
-            <div class="cluster-group-tag ${isAllDown ? 'down' : ''}">${tagText} ${statusPill}</div>
+            <div class="cluster-group-tag ${isAllDown ? 'down' : ''}"><span>${tagText}</span> ${statusPill}</div>
           </div>
         `;
       });
@@ -37,6 +37,7 @@
 
     // Build SVG Layer for animated / static inactive links
     let svgLines = '';
+    let mmrLabels = '';
     edges.forEach((edge) => {
       const sourceNode = nodes.find((n) => n.id === edge.source);
       const targetNode = nodes.find((n) => n.id === edge.target);
@@ -89,14 +90,48 @@
       const isEdgeActive = sourceNode.status === 'active' && targetNode.status === 'active' && Boolean(edge.animated);
       const edgeStatusClass = isEdgeActive ? 'edge-active' : 'edge-inactive';
       const edgeTypeClass = edge.type || 'route';
-      svgLines += `
-        <path id="edge_${escapeHtml(edge.id)}" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}" />
-      `;
+      if (edge.type==='sync' && edge.mmrText) {
+        const sourceGroup=clusters?.find(cl=>cl.id===sourceNode.cluster);
+        const targetGroup=clusters?.find(cl=>cl.id===targetNode.cluster);
+        const topGroup=sourceGroup && targetGroup ? (sourceGroup.y<targetGroup.y ? sourceGroup : targetGroup) : null;
+        const labelY=topGroup ? topGroup.y+topGroup.height+10 : (y1+y2)/2-12;
+        mmrLabels += `<button type="button" data-action="mmr" class="topo-mmr-link-label ${edge.mmrError ? 'mmr-warning' : ''}" style="left:${Math.min(x1,x2)+16}px;top:${labelY}px">${escapeHtml(edge.mmrText)}</button>`;
+      }
+      if (edge.type === 'sync') {
+        const longArc=Math.abs(targetNode.y-sourceNode.y)>280;
+        for (const [direction,offset] of [['forward',-7],['reverse',7]]) {
+          let sx,sy,tx,ty,c1x,c1y,c2x,c2y;
+          if (longArc) {
+            sx=sourceNode.x;sy=sourceNode.y+sHeight*.5+offset;
+            tx=targetNode.x;ty=targetNode.y+tHeight*.5+offset;
+            c1x=Math.min(sx,tx)-45+offset;c2x=c1x;c1y=sy;c2y=ty;
+          } else {
+            sx=sourceNode.x+50+offset;sy=sourceNode.y+sHeight+5;
+            tx=targetNode.x+50+offset;ty=targetNode.y-5;
+            const dy=Math.max(30,Math.abs(ty-sy)*.5);
+            c1x=sx;c1y=sy+dy;c2x=tx;c2y=ty-dy;
+          }
+          const reverse=direction==='reverse';
+          const path=reverse ? `M ${tx} ${ty} C ${c2x} ${c2y}, ${c1x} ${c1y}, ${sx} ${sy}`
+                             : `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`;
+          svgLines += `<path id="edge_${escapeHtml(edge.id)}_${direction}" data-direction="${direction}" data-source="${escapeHtml(reverse?edge.target:edge.source)}" data-target="${escapeHtml(reverse?edge.source:edge.target)}" d="${path}" class="topo-edge-line sync ${edgeStatusClass}" marker-end="url(#topo-arrow-mmr)"><title>${escapeHtml(reverse?edge.target:edge.source)} → ${escapeHtml(reverse?edge.source:edge.target)} · MMR 逻辑复制（方向示意）</title></path>`;
+        }
+      } else {
+        // Leave space outside the target card so its arrowhead remains visible.
+        if (edge.type === 'replication') {
+          const endX=x2-5;
+          const dx=Math.max(30,Math.abs(endX-x1)*.5);
+          d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${endX-dx} ${y2}, ${endX} ${y2}`;
+        }
+        svgLines += `<path id="edge_${escapeHtml(edge.id)}" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}" ${edge.type==='replication'?'marker-end="url(#topo-arrow-stream)"':''}><title>${escapeHtml(edge.source)} → ${escapeHtml(edge.target)} · ${edge.type==='replication'?'物理流复制':'复制连接'}</title></path>`;
+      }
     });
 
     const svgHtml = `
       <svg class="topo-svg-layer" width="${bounds.width}" height="${bounds.height}">
         <defs>
+          <marker id="topo-arrow-mmr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#a78bfa" /></marker>
+          <marker id="topo-arrow-stream" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#38bdf8" /></marker>
           <linearGradient id="edgeGlow" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
             <stop offset="100%" stop-color="#2563eb" stop-opacity="0.3"/>
@@ -197,7 +232,7 @@
       `;
     }
 
-    return bannerHtml + clusterBoxesHtml + svgHtml + nodesHtml;
+    return bannerHtml + clusterBoxesHtml + svgHtml + nodesHtml + mmrLabels;
   }
 
   function escapeHtml(str) {
