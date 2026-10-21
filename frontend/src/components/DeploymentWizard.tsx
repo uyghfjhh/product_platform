@@ -3,14 +3,15 @@ import { Alert, App, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal
 import { api, type Environment, type Task } from '../platform/api';
 import FreeTopologyEditor from './FreeTopologyEditor';
 
-type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number };
+type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number; license_required?: boolean; extensions_editable?: boolean; default_extensions?: Extension[] };
 type HostResource = { name: string; address: string; ssh_user: string; ssh_port?: number | null; ssh_identity_file: string; ssh_connect_timeout: number; home: string };
 type Node = { name: string; host?: string; port: number; data_dir: string; role?: 'primary' | 'standby' };
+type Extension = { name: string; preload: boolean };
 type Spec = {
   title: string; product_id: string; template_id: string; mode: 'new' | 'adopt' | 'import' | 'free';
   cluster_name?: string;
   host: string; hosts: HostResource[]; home: string; data_root: string; license_file: string; base_port: number;
-  nodes: Node[]; parameters: Record<string, unknown>; source_yaml: string; target: string;
+  nodes: Node[]; parameters: Record<string, unknown>; extensions?: Extension[]; source_yaml: string; target: string;
 };
 type Draft = { id: string; revision: number; spec: Spec };
 type Check = { title: string; host: string; ok: boolean; detail: unknown };
@@ -35,6 +36,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const [savedPlans, setSavedPlans] = useState<Array<{ id: string; action: string; ready: boolean; draft_revision: number }>>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [hosts, setHosts] = useState<HostResource[]>([]);
+  const [extensions, setExtensions] = useState<Extension[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [busy, setBusy] = useState(false);
@@ -43,6 +45,8 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   const [preview, setPreview] = useState('');
   const [importTargets, setImportTargets] = useState<Array<{ value: string; label: string }>>([]);
   const mode = Form.useWatch('mode', form);
+  const templateKey = Form.useWatch('template_key', form);
+  const selectedTemplate = templates.find((item) => `${item.product_id}:${item.id}` === templateKey);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +57,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   }, [open, draft?.id]);
 
   function loadDraft(value: Draft) {
-    setDraft(value); setNodes(value.spec.nodes); setHosts(value.spec.hosts || []); setPlan(null); setStep(0); setConfirmed(false); setPreview(''); setImportTargets(value.spec.target ? [{ value: value.spec.target, label: value.spec.target }] : []);
+    setDraft(value); setNodes(value.spec.nodes); setHosts(value.spec.hosts || []); setExtensions(value.spec.extensions || []); setPlan(null); setStep(0); setConfirmed(false); setPreview(''); setImportTargets(value.spec.target ? [{ value: value.spec.target, label: value.spec.target }] : []);
     form.setFieldsValue({ ...value.spec, template_key: `${value.spec.product_id}:${value.spec.template_id}`,
       parameters_text: JSON.stringify(value.spec.parameters, null, 2) });
   }
@@ -61,7 +65,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setStep(0); setDraft(null); setPlan(null); setNodes([]); setHosts([]); setError(''); setConfirmed(false); setPreview(''); setInstallations([]);
+    setStep(0); setDraft(null); setPlan(null); setNodes([]); setHosts([]); setExtensions([]); setError(''); setConfirmed(false); setPreview(''); setInstallations([]);
     setBusy(true);
     void Promise.all([api<Template[]>('/deployment/templates'), api<Draft[]>('/deployment/drafts')])
       .then(async ([options, saved]) => {
@@ -73,6 +77,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         } else {
           const first = options[0];
           form.resetFields();
+          setExtensions(first?.default_extensions?.map((ext) => ({ ...ext })) || []);
           form.setFieldsValue({ title: '', mode: 'new', template_key: first ? `${first.product_id}:${first.id}` : '',
             host: '127.0.0.1', home: '', data_root: '', license_file: '',
             base_port: first?.base_port || 15432, parameters_text: '{}', source_yaml: '', target: '' });
@@ -98,7 +103,9 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
       mode: values.mode, cluster_name: 'cluster',
       host: values.host, hosts: ['import', 'adopt'].includes(values.mode) ? [] : hosts.filter((item) => item.name && item.address),
       home: values.home || '', data_root: values.data_root || '', license_file: values.license_file || '',
-      base_port: values.base_port, parameters, nodes: nodes.map(({ name, host, port, data_dir, role }) => ({
+      base_port: values.base_port, parameters,
+      extensions: extensions.map((item) => ({ name: item.name.trim(), preload: item.preload })).filter((item) => item.name),
+      nodes: nodes.map(({ name, host, port, data_dir, role }) => ({
         name,
         host: ['import', 'adopt'].includes(values.mode) ? '' : (hosts.length ? (host || '') : ''),
         port, data_dir, role: role || 'standby',
@@ -180,6 +187,23 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     }
   }
 
+  const extensionsEditor = (
+    <Collapse style={{ marginTop: 16 }} items={[{ key: 'extensions', label: '扩展插件（可选）', children: <>
+      <Alert type="info" style={{ marginBottom: 8 }}
+        message="声明的扩展会参与安装校验并在部署后执行 CREATE EXTENSION；勾选预加载会加入 shared_preload_libraries。扩展需已装入各主机的数据库安装目录。" />
+      <Table rowKey={(_, index) => String(index)} size="small" pagination={false} dataSource={extensions} columns={[
+        { title: '扩展名', render: (_, ext, index) => <Input value={ext.name} placeholder="pg_deltax" onChange={(event) => setExtensions((prev) => prev.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} /> },
+        { title: '预加载', width: 90, render: (_, ext, index) => <Checkbox checked={ext.preload} onChange={(event) => setExtensions((prev) => prev.map((item, i) => i === index ? { ...item, preload: event.target.checked } : item))} /> },
+        { title: '', width: 60, render: (_, _ext, index) => <Button size="small" danger onClick={() => setExtensions((prev) => prev.filter((_, i) => i !== index))}>删除</Button> },
+      ]} />
+      <Space wrap>
+        <Button size="small" disabled={extensions.some((item) => item.name === 'pg_deltax')} onClick={() => setExtensions((prev) => [...prev, { name: 'pg_deltax', preload: true }])}>添加 pg_deltax</Button>
+        <Button size="small" disabled={extensions.some((item) => item.name === 'timescaledb')} onClick={() => setExtensions((prev) => [...prev, { name: 'timescaledb', preload: true }])}>添加 timescaledb</Button>
+        <Button size="small" onClick={() => setExtensions((prev) => [...prev, { name: '', preload: false }])}>自定义扩展</Button>
+      </Space>
+    </> }]} />
+  );
+
   return <Modal title="部署方案工作台" open={open} onCancel={onClose} width={1100} footer={null} maskClosable={!busy}>
     <Steps size="small" current={step} items={['方案与来源', '主机与安装', '实例配置', '检查与部署'].map((title) => ({ title }))} style={{ marginBottom: 24 }} />
     {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
@@ -200,7 +224,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         </Form.Item>}
         <Form.Item label="方案名称" name="title"><Input placeholder="例如：等保开发环境" /></Form.Item>
         <Form.Item label="部署模板" name="template_key"><Select disabled={Boolean(environment)} options={templates.map((item) => ({ value: `${item.product_id}:${item.id}`, label: `${item.product_title} · ${item.title}` }))}
-          onChange={(key) => { const selected = templates.find((item) => `${item.product_id}:${item.id}` === key); form.setFieldValue('base_port', selected?.base_port); setNodes([]); }} /></Form.Item>
+          onChange={(key) => { const selected = templates.find((item) => `${item.product_id}:${item.id}` === key); form.setFieldValue('base_port', selected?.base_port); setNodes([]); setExtensions(selected?.default_extensions?.map((ext) => ({ ...ext })) || []); }} /></Form.Item>
         <Form.Item label="配置来源" name="mode"><Radio.Group options={[{ value: 'new', label: '新建实例' }, { value: 'adopt', label: '接管已有实例' }, { value: 'import', label: '导入部署 YAML' }, { value: 'free', label: '自由拓扑' }]} onChange={() => { setNodes([]); setPlan(null); form.setFieldsValue({ source_yaml: '', target: '' }); setImportTargets([]); }} /></Form.Item>
         <Alert type="info" message={draft ? `稳定环境 ID：${draft.id}` : '环境 ID 会自动生成；名称修改不会改变测试、任务和报告的关联。'} />
       </div>
@@ -250,12 +274,12 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
               onChange={(home) => form.setFieldValue('home', home)} />}</Space>
           <Form.Item label="数据库安装目录（PGHOME）" name="home" extra="填写安装根目录，平台自动推导 bin、扩展和工具位置。"><Input placeholder="/usr/local/fbase15.15" /></Form.Item>
           <Form.Item label="数据根目录" name="data_root" extra="目标主机上的目录；节点目录会自动生成，也可下一步逐节点修改。"><Input placeholder="/home/postgres/pgdata/my-cluster" /></Form.Item>
-          <Form.Item label="License 文件" name="license_file"><Input placeholder="目标主机上的 License 绝对路径" /></Form.Item>
+          {selectedTemplate?.license_required !== false && <Form.Item label="License 文件" name="license_file"><Input placeholder="目标主机上的 License 绝对路径" /></Form.Item>}
           <Form.Item label="主节点起始端口" name="base_port"><InputNumber min={1024} max={65535} /></Form.Item>
         </>}
       </div>
       <div style={{ display: step === 2 ? 'block' : 'none' }}>
-        {mode === 'free' ? (
+        {mode === 'free' ? (<>
           <FreeTopologyEditor
             nodes={nodes.map((node) => ({ name: node.name, host: node.host || '', port: node.port, data_dir: node.data_dir, role: node.role || 'standby' }))}
             hosts={hosts}
@@ -263,7 +287,8 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
             dataRoot={form.getFieldValue('data_root') || ''}
             onChange={(next) => setNodes(next)}
           />
-        ) : <>
+          {extensionsEditor}
+        </>) : <>
         <Alert type="info" message={['import', 'adopt'].includes(mode) ? '实例与复制关系来自接管配置；如需修改请返回审阅 YAML。' : '固定回归模板保留节点名称与复制关系；可调整端口和数据目录。'} style={{ marginBottom: 12 }} />
         <Table rowKey="name" pagination={false} size="small" scroll={{ x: 700 }} dataSource={nodes} columns={[
           { title: '节点', dataIndex: 'name' },
@@ -277,6 +302,7 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         ]} />
         <Collapse style={{ marginTop: 16 }} items={[{ key: 'parameters', label: '高级数据库参数', children:
           <Form.Item name="parameters_text" extra={'JSON 对象，例如 {"max_connections": 200}；结构参数由拓扑管理。'}><Input.TextArea rows={5} disabled={['import', 'adopt'].includes(mode)} /></Form.Item> }]} />
+        {selectedTemplate?.extensions_editable && extensionsEditor}
         </>}
       </div>
     </Form>

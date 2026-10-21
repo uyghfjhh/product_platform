@@ -5,10 +5,26 @@ covers the generic primary + standbys case the workbench models freely.
 """
 
 import re
+from copy import deepcopy
 from pathlib import Path
 
 _IDENTIFIER = re.compile(r"[a-zA-Z_]\w*")
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def _declared_extensions(spec):
+    """Deduplicated cluster extension declarations preserving user order."""
+    names, plugins, preloads = [], {}, []
+    for ext in spec.extensions:
+        if ext.name in plugins:
+            continue
+        plugin = {"required": True, "extension": ext.name}
+        if ext.preload:
+            plugin["preload_library"] = ext.name
+            preloads.append(ext.name)
+        plugins[ext.name] = plugin
+        names.append(ext.name)
+    return names, plugins, preloads
 
 
 def compile_freeform(spec):
@@ -71,6 +87,11 @@ def compile_freeform(spec):
             installations[install_name] = installation
         install_for_host[host_name] = install_by_home[home]
 
+    ext_names, plugins, preloads = _declared_extensions(spec)
+    if plugins:
+        for installation in installations.values():
+            installation["plugins"] = deepcopy(plugins)
+
     instances = {}
     for node in spec.nodes:
         host_name = node.host or default_host
@@ -92,6 +113,16 @@ def compile_freeform(spec):
         "log_directory": "log",
         **spec.parameters,
     }
+    existing_preloads = parameters.get("shared_preload_libraries")
+    if isinstance(existing_preloads, str):
+        existing_preloads = [
+            item.strip() for item in existing_preloads.split(",") if item.strip()
+        ]
+    elif not isinstance(existing_preloads, list):
+        existing_preloads = []
+    extra_preloads = [name for name in preloads if name not in existing_preloads]
+    if extra_preloads:
+        parameters["shared_preload_libraries"] = [*existing_preloads, *extra_preloads]
     config = {
         "hosts": hosts_section,
         "postgresql_installations": installations,
@@ -134,6 +165,7 @@ def compile_freeform(spec):
                     if node.role == "standby"
                 ],
                 "replication": {"mode": "async"},
+                **({"extensions": ext_names} if ext_names else {}),
             }
         },
     }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, App, Button, Drawer, Dropdown, Empty, Input, Segmented, Space, Tag, Tooltip, Typography, Table } from 'antd';
+import { Alert, App, Button, Drawer, Dropdown, Empty, Input, Select, Space, Tag, Tooltip, Typography, Table } from 'antd';
 import {
   CloudServerOutlined, ReloadOutlined, CopyOutlined, MoreOutlined, DatabaseOutlined,
   PlusOutlined, SettingOutlined, EditOutlined, DeploymentUnitOutlined,
@@ -103,6 +103,26 @@ export default function DeploymentPage({
   const productAdapter = useMemo(() => deploymentAdapter(product), [product?.id]);
   // 2D 画布是平台中立能力：产品未提供自有画布时使用共享实现
   const ProductCanvas = useMemo(() => deploymentFrontend(product)?.DeploymentCanvas, [product?.id]);
+
+  // 环境过多时按产品分组，可输入环境名、部署目标或主机过滤
+  const environmentGroups = useMemo(() => {
+    const groups = new Map<string, { label: string; options: Array<{ value: string; label: string; env: Environment; searchText: string }> }>();
+    for (const env of environments) {
+      const key = env.product_id || '';
+      if (!groups.has(key)) {
+        const title = products.find((p) => p.id === key)?.title || key || '未关联产品';
+        groups.set(key, { label: title, options: [] });
+      }
+      groups.get(key)!.options.push({
+        value: env.id,
+        label: env.title,
+        env,
+        searchText: `${env.title} ${env.deployment_target || ''} ${env.host}`.toLowerCase(),
+      });
+    }
+    return Array.from(groups.values());
+  }, [environments, products]);
+
   useEffect(() => {
     if (!environment) { setActions([]); setTopology(null); setObserved(null); return; }
     setObserved(null);
@@ -310,19 +330,27 @@ export default function DeploymentPage({
             <span>环境:</span>
           </span>
           {environments.length > 0 && (
-            <Segmented
+            <Select
               size="middle"
-              style={{ maxWidth: '100%' }}
+              showSearch
+              filterOption={(input, option) =>
+                String((option as { searchText?: string })?.searchText || '').includes(input.toLowerCase())}
+              popupMatchSelectWidth={false}
+              style={{ minWidth: 200, maxWidth: 380, flex: '0 1 auto' }}
+              styles={{ popup: { root: { minWidth: 300 } } }}
               value={environment?.id}
               onChange={(val) => onSelectEnvironment?.(String(val))}
-              options={environments.map((env) => ({
-                value: env.id,
-                label: (
-                  <span style={{ padding: '2px 8px', fontSize: 13, fontWeight: 500 }}>
-                    {env.title}
-                  </span>
-                ),
-              }))}
+              options={environmentGroups}
+              optionRender={(option) => {
+                const env = (option.data as { env?: Environment }).env;
+                if (!env) return option.label;
+                return (
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{env.title}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{env.host}</div>
+                  </div>
+                );
+              }}
             />
           )}
         </div>

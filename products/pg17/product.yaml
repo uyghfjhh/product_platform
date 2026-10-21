@@ -1,0 +1,11 @@
+id: pg17
+title: PostgreSQL 17.5
+plugin_api: v1
+provider: provider.py
+capabilities:
+  deployment: database-cluster
+  database: postgresql-compatible
+actions:
+  - id: database.check
+    title: 检查数据库连接
+    capability: database

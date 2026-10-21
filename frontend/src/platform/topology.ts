@@ -18,10 +18,30 @@ export type TopologyNode = {
   rejoin_required?: boolean;
 };
 
+export type TopologyEdgeLink = {
+  name: string;
+  pub_cluster: string;
+  sub_cluster: string;
+  database: string;
+  sub_database: string;
+  publication: string;
+  subscription: string;
+  slot: string;
+  tables: string | string[];
+  via_partition_root: boolean;
+  publish?: string | null;
+  live?: {
+    connected?: boolean;
+    state?: string;
+    senders?: number;
+    replay_lag_bytes?: number;
+  };
+};
+
 export type TopologyData = {
   target: string;
   kind: string;
   nodes: TopologyNode[];
-  edges: { id: string; source: string; target: string; kind: string }[];
+  edges: { id: string; source: string; target: string; kind: string; link?: TopologyEdgeLink }[];
 };
 

@@ -20,6 +20,7 @@ import json
 import sys
 from pgclusterlib.config import load
 from pgclusterlib.runtime import Runtime
+from pgclusterlib.sql import quote_literal
 
 config = load(sys.argv[1])
 target = sys.argv[2]
@@ -29,24 +30,31 @@ names = runtime.target_instances(target)
 
 # 节点版本、实际角色与已安装插件来自各物理实例，禁止借用其他节点的
 # 版本或角色；不可达时保留配置声明与受管角色记录，版本保持未知。
-def installed_extensions(member_names, database):
-    for member in member_names:
-        instance = config.instance(member)
-        host = "local" if runtime.executor.is_local(instance["host_config"]["address"]) \
-            else instance["host_config"]["address"]
-        try:
-            proc = runtime.executor.run(
-                ["env", "PGCONNECT_TIMEOUT=3",
-                 runtime._bin(member, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
-                 "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
-                 "-U", "postgres", "-d", database, "-At",
-                 "-c", "SELECT json_build_object('server_version',current_setting('server_version'),'database_version',version(),'in_recovery',pg_is_in_recovery(),'extension_versions',(SELECT json_object_agg(extname,extversion) FROM pg_extension))"],
-                host=host, check=False)
-            if proc.returncode == 0 and proc.stdout.strip():
-                return json.loads(proc.stdout.strip())
-        except Exception:
-            continue
-    return {}
+def installed_extensions(member_names, databases):
+    out = {}
+    for database in databases:
+        for member in member_names:
+            instance = config.instance(member)
+            host = "local" if runtime.executor.is_local(instance["host_config"]["address"]) \
+                else instance["host_config"]["address"]
+            try:
+                proc = runtime.executor.run(
+                    ["env", "PGCONNECT_TIMEOUT=3",
+                     runtime._bin(member, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
+                     "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
+                     "-U", "postgres", "-d", database, "-At",
+                     "-c", "SELECT json_build_object('server_version',current_setting('server_version'),'database_version',version(),'in_recovery',pg_is_in_recovery(),'extension_versions',(SELECT json_object_agg(extname,extversion) FROM pg_extension))"],
+                    host=host, check=False)
+                if proc.returncode == 0 and proc.stdout.strip():
+                    row = json.loads(proc.stdout.strip())
+                    for key in ("server_version", "database_version", "in_recovery"):
+                        out.setdefault(key, row.get(key))
+                    versions = out.setdefault("extension_versions", {})
+                    versions.update(row.get("extension_versions") or {})
+                    break
+            except Exception:
+                continue
+    return out
 
 nodes = []
 for name in names:
@@ -89,9 +97,6 @@ if kind == "mmr":
     cluster_exts.update((config.mmr_clusters.get(cluster_name) or {}).get("extensions") or [])
 elif kind == "citus":
     cluster_exts.update((config.citus_clusters.get(cluster_name) or {}).get("extensions") or [])
-if cluster_exts:
-    for node in nodes:
-        node["extensions"] = sorted(set(node["extensions"]) | cluster_exts)
 
 for stream_name in streaming_names:
     stream = config.streaming_clusters[stream_name]
@@ -105,11 +110,62 @@ for stream_name in streaming_names:
         if secondary != primary:
             edges.append({'id':'stream:'+primary+':'+secondary,'source':primary,'target':secondary,'kind':'streaming'})
 
+# Per-group merge: a node inherits the extensions declared on its own
+# streaming cluster (plus the top-level cluster extensions for mmr/citus).
+for node in nodes:
+    merged = set(cluster_exts)
+    stream = config.streaming_clusters.get(node.get("group")) or {}
+    merged.update(stream.get("extensions") or [])
+    if merged:
+        node["extensions"] = sorted(set(node["extensions"]) | merged)
+
 if kind == "logical":
-    left = config.streaming_clusters[streaming_names[0]]["primary"]
-    right = config.streaming_clusters[streaming_names[1]]["primary"]
-    edges.append({"id": "logical:" + left + ":" + right, "source": left,
-                  "target": right, "kind": "logical"})
+    # 同一对 streaming 集群间可能挂多条逻辑链路（如多库对比环境）——全部画出来
+    pair = (streaming_names[0], streaming_names[1])
+    link_names = [lname for lname, item in config.logical_replications.items()
+                  if (item["pub"]["streaming_cluster"], item["sub"]["streaming_cluster"]) == pair]
+    for lname in link_names:
+        lnk = config.logical_replications[lname]
+        left = config.streaming_clusters[lnk["pub"]["streaming_cluster"]]["primary"]
+        right = config.streaming_clusters[lnk["sub"]["streaming_cluster"]]["primary"]
+        edges.append({
+            "id": "logical:" + lname + ":" + left + ":" + right,
+            "source": left,
+            "target": right,
+            "kind": "logical",
+            "link": {
+                "name": lname,
+                "pub_cluster": lnk["pub"]["streaming_cluster"],
+                "sub_cluster": lnk["sub"]["streaming_cluster"],
+                "database": lnk["pub"].get("database", "postgres"),
+                "sub_database": lnk["sub"].get("database", "postgres"),
+                "publication": "%s_pub" % lname,
+                "subscription": "%s_sub" % lname,
+                "slot": (lnk["sub"].get("slot") or {}).get("name") or "%s_slot" % lname,
+                "tables": lnk["pub"].get("tables") or "all",
+                "via_partition_root": bool(lnk["pub"].get("via_partition_root")),
+                "publish": lnk["pub"].get("publish"),
+                "live": {},
+            },
+        })
+
+        # 发布端 pg_stat_replication 探测订阅 apply worker 的活连接与回放延迟
+        instance = config.instance(left)
+        host = "local" if runtime.executor.is_local(instance["host_config"]["address"]) \
+            else instance["host_config"]["address"]
+        try:
+            proc = runtime.executor.run(
+                ["env", "PGCONNECT_TIMEOUT=3",
+                 runtime._bin(left, "psql"), "-X", "-v", "ON_ERROR_STOP=1",
+                 "-h", instance["host_config"]["address"], "-p", str(instance["port"]),
+                 "-U", "postgres", "-d", lnk["pub"].get("database", "postgres"), "-At",
+                 "-c", "SELECT json_build_object('connected',count(*)>0,'state',coalesce(max(state),'disconnected'),'senders',count(*),'replay_lag_bytes',coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(),replay_lsn)),0)::bigint) FROM pg_stat_replication WHERE application_name=%s"
+                       % quote_literal("%s_sub" % lname)],
+                host=host, check=False)
+            if proc.returncode == 0 and proc.stdout.strip():
+                edges[-1]["link"]["live"] = json.loads(proc.stdout.strip())
+        except Exception:
+            pass
 if kind == "mmr":
     members = [runtime._primary(name) for name in streaming_names]
     for index, left in enumerate(members):
@@ -128,9 +184,15 @@ stream_db = ((config.mmr_clusters.get(cluster_name) or {}).get("database")
              or "postgres")
 # Query each physical instance: standby binaries can have different versions.
 # Bound parallel probes so stopped nodes do not serially exhaust the API timeout.
+# 扩展按 streaming_clusters.databases 逐库探测并合并版本——数据库级扩展
+# （如逻辑复制环境里的 pg_deltax/timescaledb）不在默认库里。
 from concurrent.futures import ThreadPoolExecutor
+def node_databases(node):
+    stream = config.streaming_clusters.get(node.get("group")) or {}
+    dbs = [stream_db] + sorted((stream.get("databases") or {}).keys())
+    return list(dict.fromkeys(dbs))
 with ThreadPoolExecutor(max_workers=8) as pool:
-    live_nodes = list(pool.map(lambda node: installed_extensions([node['id']], stream_db), nodes))
+    live_nodes = list(pool.map(lambda node: installed_extensions([node['id']], node_databases(node)), nodes))
 for node, live in zip(nodes, live_nodes):
     node['extension_versions'] = live.get('extension_versions') or {}
     node['installed_extensions'] = sorted(node['extension_versions'])

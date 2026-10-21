@@ -51,7 +51,12 @@ def templates(settings):
         deployment = provider_extensions(settings, product.id).deployment
         if deployment:
             output.extend(
-                {**item, "product_id": product.id, "product_title": product.title}
+                {
+                    **item,
+                    "product_id": product.id,
+                    "product_title": product.title,
+                    "license_required": product.license is not None,
+                }
                 for item in deployment.deployment_templates(settings)
             )
     return output
@@ -88,8 +93,16 @@ def compile_spec(settings, spec, environment_id):
         for row in templates(settings)
     ):
         raise ValueError("产品部署模板不存在")
-    if not all((spec.home, spec.data_root, spec.license_file)):
-        raise ValueError("请填写数据库安装目录、数据根目录及 License 文件")
+    from ..product_catalog import discover_products
+
+    manifest = discover_products(settings.products_root).get(spec.product_id)
+    license_required = manifest is not None and manifest.license is not None
+    if not all((spec.home, spec.data_root)) or (license_required and not spec.license_file):
+        raise ValueError(
+            "请填写数据库安装目录、数据根目录及 License 文件"
+            if license_required
+            else "请填写数据库安装目录和数据根目录"
+        )
     if Path(spec.data_root).is_relative_to(ROOT) or Path(spec.home).is_relative_to(
         ROOT / "data"
     ):

@@ -1,5 +1,15 @@
 # 当前实施状态
 
+## 2026-10-20：PostgreSQL 部署支持通用扩展插件（pg_deltax / TimescaleDB）
+
+- pgcluster `streaming_clusters.<name>.extensions` 落地：`config_model` 增加列表与标识符校验；`create_streaming` 就绪后在主库逐个 `CREATE EXTENSION IF NOT EXISTS`（默认 postgres 库），备库靠物理流复制同步扩展对象。
+- `create_streaming` 新增 `_ensure_streaming_plugins` 前置检查：对成员主机所用安装的 `required` 插件验证 `<home>/share( /postgresql)?/extension/<ext>.control` 与 `preload_library` 的 `lib/<name>.so`，缺失即在 initdb 前报"请先装入数据库安装目录"；`install` 命令与按需 PGXS 安装路径不变。
+- 平台拓扑脚本改为按 `node.group` 合并所属 streaming 集群的 `extensions` 进 `node.extensions`，mmr/citus 顶层 extensions 行为不变。
+- 自由拓扑（freeform）`DeploymentSpec.extensions` 声明式支持：`{name, preload}` → installation `plugins: {required, extension, preload_library}` + 去重合并进 `shared_preload_libraries`（PROTECTED 参数由拓扑管理）+ `streaming_clusters.extensions`；部署向导在自由拓扑页新增扩展表，预置 pg_deltax、timescaledb 两项并支持自定义。
+- 部署画布对非核心扩展渲染通用徽章（pg_deltax→DeltaX、timescaledb→TimescaleDB，带 `extension_versions` 版本），新增 `plugin-ext` 中性配色；详情页既有通用扩展 Tag 不变。
+- 边界约定：平台与引擎不做编译安装；用户保证扩展已装入目标 PG 安装目录，部署前校验 control/.so 存在性。
+- 验证：pgcluster 新增 5 项单测（标识符校验、主库 CREATE EXTENSION、缺 control/缺 so 提前失败）；平台新增 2 项单测（编译产物与 YAML 结构、非法扩展名拒绝）。真机用 pgsql17.5 部署一主一备 streaming.ts_cluster：自动 `启用扩展 pg_deltax`，`pg_extension` 主备均 0.2.1，`deltax.deltax_create_table` 建分区表、插入、备库可见；负例 required timescaledb 未装时 initdb 前报错且未建数据目录。拓扑脚本实测输出配置声明与实装版本。全量 755 passed、14 skipped、2 项 fbasecman 目录既有基线失败；前端构建、quick 检查通过，服务已重启加载。
+
 ## 2026-10-15：真实 psql 保存点、读写切换与旧连接复用防污染
 
 - `backend_redeploy_hint/sql_parse` 新增 `psql_savepoint_switch`、`psql_client_reuse`，覆盖事务池、MMR/主备、预处理保留开/关。保留现有用例，未重跑此前其他失败专项。

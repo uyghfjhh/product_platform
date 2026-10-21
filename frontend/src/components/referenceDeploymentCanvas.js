@@ -1,5 +1,7 @@
 // Shared deployment renderer; layout dimensions come from the topology model.
 
+  const LOGICAL_PALETTE = ['#34d399', '#22d3ee', '#fbbf24', '#a78bfa', '#f472b6'];
+
   export function renderDeploymentCanvas(env) {
 
     const { nodes, edges, clusters, health = {}, bounds = { width: 1400, height: 1200 } } = env;
@@ -38,6 +40,7 @@
     // Build SVG Layer for animated / static inactive links
     let svgLines = '';
     let mmrLabels = '';
+    const logicalGroups = {};
     edges.forEach((edge) => {
       const sourceNode = nodes.find((n) => n.id === edge.source);
       const targetNode = nodes.find((n) => n.id === edge.target);
@@ -69,6 +72,17 @@
           const dy = Math.max(30, Math.abs(y2 - y1) * 0.5);
           d = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
         }
+      } else if (edge.type === 'logical') {
+        // Publication → subscription flows downward between stacked groups;
+        // multiple links between the same pair are fanned into parallel lanes.
+        const lane = edge.logicalLane || 0;
+        const color = LOGICAL_PALETTE[lane % LOGICAL_PALETTE.length];
+        x1 = sourceNode.x + 50 + lane * 16;
+        y1 = sourceNode.y + sHeight;
+        x2 = targetNode.x + 50 + lane * 16;
+        y2 = targetNode.y;
+        const dy = Math.max(30, Math.abs(y2 - y1) * 0.5);
+        d = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
       } else if (edge.type === 'replication') {
         // From primary right side to standby left side
         x1 = sourceNode.x + sWidth;
@@ -97,6 +111,22 @@
         const labelY=topGroup ? topGroup.y+topGroup.height+10 : (y1+y2)/2-12;
         mmrLabels += `<button type="button" data-action="mmr" class="topo-mmr-link-label ${edge.mmrError ? 'mmr-warning' : ''}" style="left:${Math.min(x1,x2)+16}px;top:${labelY}px">${escapeHtml(edge.mmrText)}</button>`;
       }
+      if (edge.type==='logical' && edge.logicalText) {
+        const sourceGroup=clusters?.find(cl=>cl.id===sourceNode.cluster);
+        const targetGroup=clusters?.find(cl=>cl.id===targetNode.cluster);
+        const topGroup=sourceGroup && targetGroup ? (sourceGroup.y<targetGroup.y ? sourceGroup : targetGroup) : null;
+        const lane = edge.logicalLane || 0;
+        const color = LOGICAL_PALETTE[lane % LOGICAL_PALETTE.length];
+        const key = edge.source+'>'+edge.target;
+        (logicalGroups[key] ||= {
+          left: x1-36,
+          top: topGroup ? topGroup.y+topGroup.height+6 : (y1+y2)/2-10,
+          width: (bounds.width || 920) - (x1-36) - 24,
+          items: [],
+        }).items.push(
+          `<button type="button" data-action="logical" data-link="${escapeHtml(edge.logicalName||'')}" class="topo-logical-link-label ${edge.logicalWarn ? 'logical-warning' : ''}" title="点击查看链路详情" style="color:${color};border-color:${color}66">${escapeHtml(edge.logicalText)}</button>`
+        );
+      }
       if (edge.type === 'sync') {
         const longArc=Math.abs(targetNode.y-sourceNode.y)>280;
         for (const [direction,offset] of [['forward',-7],['reverse',7]]) {
@@ -123,15 +153,34 @@
           const dx=Math.max(30,Math.abs(endX-x1)*.5);
           d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${endX-dx} ${y2}, ${endX} ${y2}`;
         }
-        svgLines += `<path id="edge_${escapeHtml(edge.id)}" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}" ${edge.type==='replication'?'marker-end="url(#topo-arrow-stream)"':''}><title>${escapeHtml(edge.source)} → ${escapeHtml(edge.target)} · ${edge.type==='replication'?'物理流复制':'复制连接'}</title></path>`;
+        if (edge.type === 'logical') {
+          const endY=y2-6;
+          const dy=Math.max(30,Math.abs(endY-y1)*.5);
+          d=`M ${x1} ${y1} C ${x1} ${y1+dy}, ${x2} ${endY-dy}, ${x2} ${endY}`;
+        }
+        const edgeTitle = edge.type==='replication' ? '物理流复制'
+          : edge.type==='logical' ? (edge.logicalTitle || '逻辑复制') : '复制连接';
+        const edgeLane = edge.logicalLane || 0;
+        const edgeMarker = edge.type==='replication' ? 'marker-end="url(#topo-arrow-stream)"'
+          : edge.type==='logical' ? `marker-end="url(#topo-arrow-logical-${edgeLane % LOGICAL_PALETTE.length})"` : '';
+        const edgeStyle = edge.type==='logical'
+          ? ` style="stroke:${LOGICAL_PALETTE[edgeLane % LOGICAL_PALETTE.length]};stroke-dasharray:6 4"` : '';
+        svgLines += `<path id="edge_${escapeHtml(edge.id)}" data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${d}" class="topo-edge-line ${edgeTypeClass} ${edgeStatusClass}"${edgeStyle} ${edgeMarker}><title>${escapeHtml(edge.source)} → ${escapeHtml(edge.target)} · ${edgeTitle}</title></path>`;
       }
     });
+
+    // 逻辑复制链路标签:每组一条 flex 平铺行(标题 + 各链路 pill)
+    for (const group of Object.values(logicalGroups)) {
+      const linkCount = group.items.length;
+      mmrLabels += `<div class="topo-logical-links" style="left:${group.left}px;top:${group.top}px;max-width:${group.width}px"><span class="topo-logical-link-label logical-header">逻辑复制${linkCount>1?` ×${linkCount}`:''} (发布 → 订阅)</span>${group.items.join('')}</div>`;
+    }
 
     const svgHtml = `
       <svg class="topo-svg-layer" width="${bounds.width}" height="${bounds.height}">
         <defs>
           <marker id="topo-arrow-mmr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#a78bfa" /></marker>
           <marker id="topo-arrow-stream" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#38bdf8" /></marker>
+          ${LOGICAL_PALETTE.map((c, i) => `<marker id="topo-arrow-logical-${i}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="${c}" /></marker>`).join('')}
           <linearGradient id="edgeGlow" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
             <stop offset="100%" stop-color="#2563eb" stop-opacity="0.3"/>
@@ -156,8 +205,10 @@
       const pluginsHtml = (n.corePlugins || []).map((p) => {
         const pName = typeof p === 'object' ? p.name : p;
         const pType = (typeof p === 'object' ? p.type : p).toLowerCase();
-        return `<span class="plugin-pill plugin-${escapeHtml(pType)}" title="核心扩展: ${escapeHtml(pName)}">${escapeHtml(pName)}</span>`;
+        const pCls = (typeof p === 'object' && p.cls) ? ` ${escapeHtml(p.cls)}` : '';
+        return `<span class="plugin-pill plugin-${escapeHtml(pType)}${pCls}" title="核心扩展: ${escapeHtml(pName)}">${escapeHtml(pName)}</span>`;
       }).join('');
+      const pluginsRow = pluginsHtml ? `<div class="topo-node-plugins">${pluginsHtml}</div>` : '';
 
       const versionHtml = n.serverVersion ? `<span style="font-size:10px;opacity:.8;margin-left:6px" title="数据库版本">PG ${escapeHtml(n.serverVersion)}</span>` : '';
       const cardTitle = `点击查看节点详情 (${escapeHtml(n.label || n.id)}) 与单节点运维`;
@@ -178,9 +229,9 @@
             </div>
             <div class="topo-node-badges">
               <span class="topo-node-role-badge ${statusClass === 'down' ? 'down' : roleColorClass}">${escapeHtml(roleBadge)}</span>
-              ${pluginsHtml}
             </div>
           </div>
+          ${pluginsRow}
           <div class="topo-node-subline">
             <span class="topo-node-endpoint" title="连接地址: ${escapeHtml(endpoint)}">${escapeHtml(endpoint)}</span>
             <div class="topo-node-meta">

@@ -207,7 +207,9 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 2px;
 }
 
 /* Subline: Endpoint (Full IP:Port) + Metadata (PID + Status) */
@@ -302,6 +304,26 @@
   background: rgba(236, 72, 153, 0.22);
   color: #f472b6;
   border: 1px solid rgba(236, 72, 153, 0.45);
+}
+
+.plugin-pill.plugin-ext {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.plugin-pill.plugin-ext.ext-pg_deltax {
+  background: rgba(45, 212, 191, 0.16);
+  color: #5eead4;
+  border-color: rgba(45, 212, 191, 0.45);
+}
+
+.plugin-pill.plugin-ext.ext-timescaledb {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.45);
 }
 
 .topo-node-status-text {
@@ -710,6 +732,16 @@
 
 .topo-edge-line.sync { stroke:#a78bfa; }
 .topo-edge-line.replication { stroke:#38bdf8; }
+.topo-edge-line.logical { stroke:#34d399; }
+.topo-edge-line.edge-active.logical { stroke:rgba(52, 211, 153, 0.8); stroke-dasharray:6 4; animation:topo-dash 1.2s linear infinite; filter:drop-shadow(0 0 4px rgba(52, 211, 153, 0.5)); }
+.topo-logical-link-label { position:absolute;z-index:5;max-width:460px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 9px;border:1px solid rgba(52, 211, 153, 0.4);border-radius:12px;background:#0c1423;color:#6ee7b7;font-size:10px;line-height:16px;cursor:default; }
+.topo-logical-link-label:hover { border-color:#34d399;color:#a7f3d0; }
+.topo-logical-link-label.logical-warning { color:#fbbf24;border-color:#92400e; }
+.topo-logical-link-label.logical-header { color:#34d399;border-color:rgba(52,211,153,.55);font-weight:600; }
+.topo-logical-links { position:absolute;z-index:5;display:flex;gap:6px;flex-wrap:wrap;align-items:center; }
+.topo-logical-links .topo-logical-link-label { position:static; }
+
+.topo-node-plugins { display:flex;gap:0.3rem;flex-wrap:wrap;justify-content:flex-end;margin-top:3px; }
 
 /* Secondary status table: keep the deployment topology visually dominant. */
 .deployment-mmr-summary { padding:10px 16px 12px; border-top:1px solid var(--border-subtle); }

@@ -989,6 +989,55 @@ def test_free_topology_compiles_and_generates_plan(workbench, tmp_path):
     assert len(plan["operations"]) == 3
 
 
+def test_free_topology_declares_cluster_extensions(workbench, tmp_path):
+    client, service, spec, _ = workbench
+    home = Path(spec["home"])
+    for name in ("pg_deltax", "timescaledb", "btree_gin"):
+        (home / "share/extension" / (name + ".control")).write_text("fixture")
+        (home / "lib" / (name + ".so")).write_text("fixture")
+    free = {
+        **spec,
+        "mode": "free",
+        "cluster_name": "timeseries",
+        "template_id": "free",
+        "nodes": [
+            {"name": "pg1", "role": "primary", "port": 7460,
+             "data_dir": str(tmp_path / "pg1")},
+        ],
+        "extensions": [
+            {"name": "pg_deltax", "preload": True},
+            {"name": "timescaledb", "preload": True},
+            {"name": "btree_gin"},
+            {"name": "pg_deltax"},
+        ],
+    }
+    config, target, _ = compile_spec(
+        service.settings, DeploymentSpec(**free), "free-env"
+    )
+    assert target == "streaming.timeseries"
+    cluster = config["streaming_clusters"]["timeseries"]
+    assert cluster["extensions"] == ["pg_deltax", "timescaledb", "btree_gin"]
+    plugins = config["postgresql_installations"]["deploy_postgres"]["plugins"]
+    assert plugins["pg_deltax"] == {
+        "required": True, "extension": "pg_deltax", "preload_library": "pg_deltax"
+    }
+    assert plugins["btree_gin"] == {"required": True, "extension": "btree_gin"}
+    parameters = config["postgresql_config"]["parameters"]
+    assert parameters["shared_preload_libraries"] == [
+        "pg_deltax", "timescaledb"
+    ]
+    _, plan = create_plan(workbench, free)
+    assert plan["ready"], plan["checks"]
+
+
+def test_free_topology_extension_names_are_validated(tmp_path):
+    with pytest.raises(Exception, match="name"):
+        DeploymentSpec(
+            title="x", product_id="p", template_id="t", host="127.0.0.1",
+            extensions=[{"name": "bad;ext"}],
+        )
+
+
 def test_free_topology_requires_exactly_one_primary(workbench, tmp_path):
     _, service, spec, _ = workbench
     for roles in (("standby", "standby"), ("primary", "primary")):

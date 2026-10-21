@@ -54,6 +54,14 @@ class HostResource(BaseModel):
         return options or None
 
 
+class ExtensionSpec(BaseModel):
+    """Cluster-level extension declaration compiled into the engine config."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-zA-Z_][a-zA-Z0-9_$]*$", max_length=63)
+    preload: bool = False
+
+
 class DeploymentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=120)
@@ -69,6 +77,7 @@ class DeploymentSpec(BaseModel):
     base_port: int = Field(default=15432, ge=1024, le=65535)
     nodes: list[NodeOverride] = Field(default_factory=list, max_length=64)
     parameters: dict = Field(default_factory=dict)
+    extensions: list[ExtensionSpec] = Field(default_factory=list, max_length=16)
     source_yaml: str = Field(default="", max_length=262144)
     target: str = ""
 
