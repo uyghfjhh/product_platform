@@ -1,8 +1,0 @@
-{
-  "targets": [
-    "guc.extended_boundary_hint",
-    "guc.transaction_sync_sql_parse",
-    "guc.extended_boundary_sql_parse",
-    "guc.transaction_sync_hint"
-  ]
-}

@@ -48,3 +48,7 @@ Thumbs.db
 # Generated frontend contracts and product registry
 frontend/src/products/generated.ts
 frontend/src/platform/contracts.generated.ts
+
+# Regression run artifacts (state/output dirs that land in the repo root)
+last_failed.json
+history.jsonl

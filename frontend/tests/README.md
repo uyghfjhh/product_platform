@@ -52,7 +52,7 @@ PLATFORM_URL=http://127.0.0.1:8766 node tests/license-management.mjs
   （`tool 数据库部署管理`），`getByRole('menuitem', {name})` 不可靠——
   统一用 `.platform-sidebar .ant-menu-title-content` 按文本定位（点击冒泡）。
   菜单树：`数据库部署管理`（叶子）→ `产品测试中心`（子菜单→产品子菜单
-  `接入示例`/`FBase 数据库`/`fbasecman`→profile 叶子 `接入验证`/
+  `FBase 数据库`/`fbasecman`→profile 叶子
   `多活回归测试`/`等保回归测试`/`fbasecman 回归测试`/`稳定性测试`）→
   `License 授权管理`（子菜单→`密钥管理`/`License 生成`）。
   **产品子菜单默认折叠**（products 异步加载，defaultOpenKeys 不生效），

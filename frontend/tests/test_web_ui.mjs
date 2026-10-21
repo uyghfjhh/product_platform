@@ -22,12 +22,12 @@ try {
   const sider = page.locator('.platform-sidebar');
   const menu = (name) => sider.locator('.ant-menu-title-content', { hasText: name }).first();
   // 展开产品子菜单以露出 profile 叶子（产品异步加载，defaultOpenKeys 不生效）
-  for (const product of ['接入示例', 'FBase 数据库', 'fbasecman']) {
+  for (const product of ['FBase 数据库', 'fbasecman']) {
     await menu(product).click();
     await page.waitForTimeout(300);
   }
   const menuText = await sider.innerText();
-  for (const expected of ['数据库部署管理', '产品测试中心', '接入示例', '接入验证',
+  for (const expected of ['数据库部署管理', '产品测试中心',
     'FBase 数据库', '多活回归测试', '等保回归测试', 'fbasecman', 'fbasecman 回归测试',
     '稳定性测试', 'License 授权管理', '密钥管理', 'License 生成']) {
     assert.ok(menuText.includes(expected), `Must include ${expected}`);
