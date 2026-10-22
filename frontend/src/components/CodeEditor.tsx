@@ -1,5 +1,6 @@
 import Editor, { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import 'monaco-editor/esm/vs/editor/edcore.main';
 import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
 import 'monaco-editor/esm/vs/basic-languages/pgsql/pgsql.contribution';
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';

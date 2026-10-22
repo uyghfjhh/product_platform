@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from 'antd';
 
 import { api, type Case, type Environment, type Result } from '../../platform/api';
@@ -40,8 +40,10 @@ export default function FailedCasesModal({
 }: Props) {
   const [failedReasons, setFailedReasons] = useState<Record<string, string>>({});
   const [failedSteps, setFailedSteps] = useState<Record<string, FailedStep[]>>({});
+  const fetchedTargetsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    fetchedTargetsRef.current.clear();
     setFailedReasons({});
     setFailedSteps({});
   }, [environment?.id]);
@@ -50,7 +52,8 @@ export default function FailedCasesModal({
     if (!open || failedCasesList.length === 0 || (!adapter.artifactPath && !environment)) return;
     let cancelled = false;
     failedCasesList.forEach((c) => {
-      if (failedReasons[c.target]) return;
+      if (fetchedTargetsRef.current.has(c.target)) return;
+      fetchedTargetsRef.current.add(c.target);
       api<{
         reason?: string;
         steps?: Array<{ result?: string; status: string; title?: string; actual?: string; expected?: string }>;
@@ -59,7 +62,10 @@ export default function FailedCasesModal({
       }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id)
         : `/environments/${encodeURIComponent(environment!.id)}/results/${encodeURIComponent(c.target)}/report`)
         .then((data) => {
-          if (cancelled) return;
+          if (cancelled) {
+            fetchedTargetsRef.current.delete(c.target);
+            return;
+          }
           if (data.steps) data.parsed = { reason: data.reason, steps: data.steps.map((step) => ({ ...step, status: step.result || step.status })) };
           let reason = data.reason || data.summary?.reason || data.parsed?.reason;
           if (!reason && data.parsed?.steps) {
@@ -77,9 +83,11 @@ export default function FailedCasesModal({
           }));
         })
         .catch(() => {
-          if (!cancelled) {
-            setFailedReasons((prev) => ({ ...prev, [c.target]: '获取失败原因失败或暂无报告' }));
+          if (cancelled) {
+            fetchedTargetsRef.current.delete(c.target);
+            return;
           }
+          setFailedReasons((prev) => ({ ...prev, [c.target]: '获取失败原因失败或暂无报告' }));
         });
     });
     return () => {
