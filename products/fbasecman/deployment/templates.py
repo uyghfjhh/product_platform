@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import yaml
+from platform_app.deployment.builder import build_hosts_section, build_installations
 
 from .profile import _merge, build_profile
 
@@ -38,35 +39,13 @@ def compile_template(settings, spec, environment_id):
     if overrides and set(overrides) != set(config["instances"]):
         raise ValueError("节点覆盖必须包含模板全部节点")
     if spec.hosts:
-        hosts_section = {}
-        for host in spec.hosts:
-            entry = {"address": host.address}
-            ssh = host.ssh_options()
-            if ssh:
-                entry["ssh"] = ssh
-            hosts_section[host.name] = entry
-        default_host = next(
-            host.name for host in spec.hosts if host.address == spec.host
+        hosts_section, default_host, homes = build_hosts_section(spec)
+        installations, install_for_host = build_installations(
+            hosts_section,
+            homes,
+            base_installation=config["postgresql_installations"]["regress_postgres"],
+            name_prefix="regress_postgres",
         )
-        base_installation = deepcopy(config["postgresql_installations"]["regress_postgres"])
-        install_by_home = {}
-        install_for_host = {}
-        installations = {}
-        for host_name in hosts_section:
-            home = next(
-                host.home or spec.home
-                for host in spec.hosts
-                if host.name == host_name
-            )
-            if home not in install_by_home:
-                install_name = (
-                    "regress_postgres"
-                    if not install_by_home
-                    else "regress_postgres_" + host_name
-                )
-                install_by_home[home] = install_name
-                installations[install_name] = {**base_installation, "home": home}
-            install_for_host[host_name] = install_by_home[home]
         config["hosts"] = hosts_section
         config["postgresql_installations"] = installations
         for name, node in config["instances"].items():

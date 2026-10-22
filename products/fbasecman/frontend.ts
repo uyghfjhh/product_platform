@@ -1,8 +1,17 @@
+import { createElement, lazy, Suspense, type ComponentType } from 'react';
 import type { ProductFrontend } from '../../frontend/src/products/types';
-import ReportViewer from './frontend/ReportViewer';
-import SceneDetails from './frontend/SceneDetails';
-import TestSettings from './frontend/TestSettings';
-import TestPreparation from './frontend/TestPreparation';
+
+function lazyComponent<P extends object>(loader: () => Promise<{ default: ComponentType<P> }>): ComponentType<P> {
+  const Component = lazy(loader);
+  return function LazyProductComponent(props: P) {
+    return createElement(Suspense, { fallback: null }, createElement(Component, props));
+  };
+}
+
+const ReportViewer = lazyComponent(() => import('./frontend/ReportViewer'));
+const SceneDetails = lazyComponent(() => import('./frontend/SceneDetails'));
+const TestSettings = lazyComponent(() => import('./frontend/TestSettings'));
+const TestPreparation = lazyComponent(() => import('./frontend/TestPreparation'));
 
 const frontend: ProductFrontend = {
   TestSettings,

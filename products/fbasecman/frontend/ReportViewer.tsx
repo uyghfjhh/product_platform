@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Empty, Modal, Segmented, Select, Space, Tabs, Tag, Typography } from 'antd';
 import { PauseOutlined, PlayCircleOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
 
@@ -6,10 +6,11 @@ import { api, statusColor } from '../../../frontend/src/platform/api';
 import CodeEditor from '../../../frontend/src/components/LazyCodeEditor';
 import LogViewer from '../../../frontend/src/components/LogViewer';
 import type { TopologyData, TopologyNode } from '../../../frontend/src/platform/topology';
-import Topology2D from './Topology2D';
-import ReferenceThreeTopology from './ReferenceThreeTopology';
 import type { RegressionTopology } from './topologyModel';
 import ReportEvidenceSteps from './ReportEvidenceSteps';
+
+const Topology2D = lazy(() => import('./Topology2D'));
+const ReferenceThreeTopology = lazy(() => import('./ReferenceThreeTopology'));
 
 type ReportStep = {
   title: string;
@@ -204,14 +205,16 @@ export default function ReportDrawer({ target, environmentId, onClose }: { targe
         ...(currentClusters.length ? [{ key: 'topology', label: '🪐 架构拓扑看板', children: <>
           <Alert type="info" showIcon className="report-source-note" message="拓扑快照部分由报告步骤推演；实测状态以原始命令和日志为准。" />
           <div className="report-topology-toolbar"><Segmented value={topologyMode} onChange={(value) => setTopologyMode(value as typeof topologyMode)} options={[{ label: '3D 全息拓扑', value: '3d' }, { label: '2D 架构图', value: '2d' }, { label: '详细节点卡片', value: 'cards' }]} /></div>
-          {topologyMode === '3d' && parsed?.topology && <ReferenceThreeTopology topology={parsed.topology}
-            onSelect={(name) => setSelectedNode(threeTopology?.nodes.find((node) => node.id === name) || null)} />}
-          {topologyMode === '2d' && parsed?.topology && <Topology2D topology={parsed.topology}
-            position={selectedStep} playing={playing} speed={playbackSpeed}
-            onSelectStep={(index) => { setPlaying(false); setSelectedStep(index); }}
-            onTogglePlay={() => { if (selectedStep === snapshots.length - 1) setSelectedStep(0); setPlaying(!playing); }}
-            onSpeed={setPlaybackSpeed}
-            selected={selectedNode?.id || null} onSelect={(name) => setSelectedNode(threeTopology?.nodes.find((node) => node.id === name) || null)} />}
+          <Suspense fallback={<Empty description="正在加载拓扑视图…" />}>
+            {topologyMode === '3d' && parsed?.topology && <ReferenceThreeTopology topology={parsed.topology}
+              onSelect={(name) => setSelectedNode(threeTopology?.nodes.find((node) => node.id === name) || null)} />}
+            {topologyMode === '2d' && parsed?.topology && <Topology2D topology={parsed.topology}
+              position={selectedStep} playing={playing} speed={playbackSpeed}
+              onSelectStep={(index) => { setPlaying(false); setSelectedStep(index); }}
+              onTogglePlay={() => { if (selectedStep === snapshots.length - 1) setSelectedStep(0); setPlaying(!playing); }}
+              onSpeed={setPlaybackSpeed}
+              selected={selectedNode?.id || null} onSelect={(name) => setSelectedNode(threeTopology?.nodes.find((node) => node.id === name) || null)} />}
+          </Suspense>
           {topologyMode === 'cards' && <div className="report-node-grid">{threeTopology?.nodes.map((node) => <div className="report-node-card" key={node.id}><strong>{node.label}</strong><span>{node.group} · {node.role}</span><span>{node.host}:{node.port}</span><Tag color={observed[node.id]?.running ? 'success' : 'warning'}>{observed[node.id]?.message || '未知'}</Tag></div>)}</div>}
           {topologyMode === '3d' && selectedNode && <div className="report-node-inspector"><strong>{selectedNode.label}</strong><span>{selectedNode.group} · {selectedNode.role} · {selectedNode.host}:{selectedNode.port}</span><Tag color={observed[selectedNode.id]?.running ? 'success' : 'warning'}>{observed[selectedNode.id]?.message || '未知'}</Tag></div>}
           {topologyMode !== '2d' && snapshots.length > 0 && <div className="replay-controls">

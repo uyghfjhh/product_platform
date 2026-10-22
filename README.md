@@ -63,7 +63,7 @@ git diff --check
 
 - [设计](docs/design.md)：公共能力、产品边界和任务协议。
 - [SDK](backend/platform_regress/SDK.md)：公开类型、生命周期和证据。
-- [Demo](products/.demo/README.md)：最小产品接入示例（隐藏包，不参与平台发现）。
+- [Demo](products/demo/README.md)：最小产品接入示例。
 - [当前实施状态](docs/progress.md)。
 
 不保留旧目录映射、旧 CLI 别名或报告镜像。读取判定只使用结构化事实，不从展示文本推断成功；AI 不改变确定性判定。编辑前核对工作区已有改动，不批量重置仓库，不删除实际数据库目录。

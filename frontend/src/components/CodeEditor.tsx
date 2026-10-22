@@ -1,7 +1,13 @@
 import Editor, { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution';
+import 'monaco-editor/esm/vs/basic-languages/pgsql/pgsql.contribution';
+import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution';
+import 'monaco-editor/esm/vs/basic-languages/ini/ini.contribution';
+import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution';
+import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 
-// 使用随前端打包的 Monaco，浏览器无需访问外部 CDN。
+// 仅打包平台实际使用的语言高亮与编辑器核心，无需访问外部 CDN。
 loader.config({ monaco });
 
 type Props = {

@@ -3,7 +3,7 @@ import { Alert, Button, Checkbox, Collapse, Empty, Input, InputNumber, Modal, Se
 import { ExperimentOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 
 import { api, generateUUID, post, statusColor, type Environment, type Task } from '../platform/api';
-import CodeEditor from './CodeEditor';
+import CodeEditor from './LazyCodeEditor';
 import WorkloadDashboard from './WorkloadDashboard';
 import './workloadWorkbench.css';
 

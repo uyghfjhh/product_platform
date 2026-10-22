@@ -3,6 +3,12 @@
 from copy import deepcopy
 
 import yaml
+from platform_app.deployment.builder import (
+    DEFAULT_PG_PARAMETERS,
+    build_hosts_section,
+    build_installations,
+    build_postgresql_config,
+)
 
 
 def templates(settings):
@@ -40,25 +46,7 @@ def compile_template(settings, spec, environment_id):
         }
         for name, node in cluster["nodes"].items()
     }
-    host_entries = list(spec.hosts)
-    if host_entries:
-        hosts_section = {}
-        for host in host_entries:
-            entry = {"address": host.address}
-            ssh = host.ssh_options()
-            if ssh:
-                entry["ssh"] = ssh
-            hosts_section[host.name] = entry
-        default_host = next(
-            host.name for host in host_entries if host.address == spec.host
-        )
-        homes = {
-            host.name: host.home or spec.home for host in host_entries
-        }
-    else:
-        hosts_section = {"deploy_host": {"address": spec.host}}
-        default_host = "deploy_host"
-        homes = {default_host: spec.home}
+    hosts_section, default_host, homes = build_hosts_section(spec)
     overrides = {node.name: node for node in spec.nodes}
     if overrides and set(overrides) != set(nodes):
         raise ValueError("节点覆盖必须包含模板全部节点，不能增删固定回归节点")
@@ -89,72 +77,25 @@ def compile_template(settings, spec, environment_id):
     parameters = {
         **cluster["postgresql"]["settings"],
         **spec.parameters,
-        "listen_addresses": "*",
-        "logging_collector": "on",
-        "log_destination": "stderr,csvlog",
-        "log_directory": "log",
-        "wal_level": "logical",
-        "hot_standby": "on",
+        **DEFAULT_PG_PARAMETERS,
         "shared_preload_libraries": preloads,
     }
     if spec.template_id == "mmr":
         parameters.update(
             {"track_commit_timestamp": "on", "fdd.running_databases": "postgres"}
         )
-    install_by_home = {}
-    installations = {}
-    install_for_host = {}
-    for host_name in hosts_section:
-        home = homes[host_name]
-        if home not in install_by_home:
-            install_name = (
-                "deploy_postgres"
-                if not install_by_home
-                else "deploy_postgres_" + host_name
-            )
-            install_by_home[home] = install_name
-            installations[install_name] = {
-                "provider": "fbase",
-                "home": home,
-                "plugins": plugins,
-                "license": {
-                    "source_file": spec.license_file,
-                    "data_file": "license.dat",
-                },
-            }
-        install_for_host[host_name] = install_by_home[home]
+    installations, install_for_host = build_installations(
+        hosts_section,
+        homes,
+        provider="fbase",
+        plugins=plugins,
+        license_file=spec.license_file,
+        include_license=True,
+    )
     config = {
         "hosts": hosts_section,
         "postgresql_installations": installations,
-        "postgresql_config": {
-            "parameters": parameters,
-            "replication_capacity": {
-                "wal_senders": "auto",
-                "replication_slots": "auto",
-            },
-            "hba": [
-                {
-                    "type": "local",
-                    "database": "all",
-                    "user": "all",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "all",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "replication",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-            ],
-        },
+        "postgresql_config": build_postgresql_config(parameters),
         "instances": {
             name: {
                 "host": node_hosts[name],

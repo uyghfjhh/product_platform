@@ -4,6 +4,15 @@ Extensions default to pg_deltax + TimescaleDB and remain editable through
 ``spec.extensions``; binaries must already be installed into each PGHOME.
 """
 
+from platform_app.deployment.builder import (
+    DEFAULT_PG_PARAMETERS,
+    build_hosts_section,
+    build_installations,
+    build_postgresql_config,
+    compile_extensions,
+    merge_preload_libraries,
+)
+
 TOPOLOGIES = {
     "single": [("primary", "primary")],
     "ha": [("primary", "primary"), ("standby1", "standby")],
@@ -44,23 +53,7 @@ def compile_template(settings, spec, environment_id):
     if topology is None:
         raise ValueError("未知部署模板: %s" % spec.template_id)
     cluster_name = spec.cluster_name or "cluster"
-    host_entries = list(spec.hosts)
-    if host_entries:
-        hosts_section = {}
-        for host in host_entries:
-            entry = {"address": host.address}
-            ssh = host.ssh_options()
-            if ssh:
-                entry["ssh"] = ssh
-            hosts_section[host.name] = entry
-        default_host = next(
-            host.name for host in host_entries if host.address == spec.host
-        )
-        homes = {host.name: host.home or spec.home for host in host_entries}
-    else:
-        hosts_section = {"deploy_host": {"address": spec.host}}
-        default_host = "deploy_host"
-        homes = {default_host: spec.home}
+    hosts_section, default_host, homes = build_hosts_section(spec)
     ordered_hosts = [default_host] + [
         name for name in hosts_section if name != default_host
     ]
@@ -84,90 +77,19 @@ def compile_template(settings, spec, environment_id):
                 nodes[node.name]["host"] = node.host
             nodes[node.name]["port"] = node.port
             nodes[node.name]["data_dir"] = node.data_dir
-    extensions = [
-        (item.name, bool(item.preload)) for item in spec.extensions
-    ] or list(DEFAULT_EXTENSIONS)
-    ext_names = list(dict.fromkeys(name for name, _ in extensions))
-    plugins = {}
-    for name, preload in extensions:
-        entry = {"required": True, "extension": name}
-        if preload:
-            entry["preload_library"] = name
-        plugins[name] = entry
-    install_by_home = {}
-    installations = {}
-    install_for_host = {}
-    for host_name in hosts_section:
-        home = homes[host_name]
-        if home not in install_by_home:
-            install_name = (
-                "deploy_postgres"
-                if not install_by_home
-                else "deploy_postgres_" + host_name
-            )
-            install_by_home[home] = install_name
-            installations[install_name] = {
-                "provider": "postgres",
-                "home": home,
-                "plugins": plugins,
-            }
-        install_for_host[host_name] = install_by_home[home]
-    parameters = {
-        "wal_level": "logical",
-        "hot_standby": "on",
-        "listen_addresses": "*",
-        "logging_collector": "on",
-        "log_destination": "stderr,csvlog",
-        "log_directory": "log",
-        **spec.parameters,
-    }
-    existing_preloads = parameters.get("shared_preload_libraries")
-    if isinstance(existing_preloads, str):
-        existing_preloads = [
-            item.strip() for item in existing_preloads.split(",") if item.strip()
-        ]
-    elif not isinstance(existing_preloads, list):
-        existing_preloads = []
-    extra_preloads = [
-        name for name, preload in extensions
-        if preload and name not in existing_preloads
-    ]
-    if extra_preloads:
-        parameters["shared_preload_libraries"] = [
-            *existing_preloads, *extra_preloads
-        ]
+    ext_names, plugins, preloads = compile_extensions(
+        spec.extensions, DEFAULT_EXTENSIONS
+    )
+    installations, install_for_host = build_installations(
+        hosts_section, homes, provider="postgres", plugins=plugins
+    )
+    parameters = merge_preload_libraries(
+        {**DEFAULT_PG_PARAMETERS, **spec.parameters}, preloads
+    )
     config = {
         "hosts": hosts_section,
         "postgresql_installations": installations,
-        "postgresql_config": {
-            "parameters": parameters,
-            "replication_capacity": {
-                "wal_senders": "auto",
-                "replication_slots": "auto",
-            },
-            "hba": [
-                {
-                    "type": "local",
-                    "database": "all",
-                    "user": "all",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "all",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "replication",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-            ],
-        },
+        "postgresql_config": build_postgresql_config(parameters),
         "instances": {
             name: {
                 "host": node["host"],

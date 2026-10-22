@@ -54,6 +54,13 @@ class ProductAction:
 
 
 @dataclass(frozen=True)
+class ProductExtension:
+    id: str
+    title: str
+    preload: bool = True
+
+
+@dataclass(frozen=True)
 class ProductManifest:
     id: str
     title: str
@@ -68,6 +75,7 @@ class ProductManifest:
     source_root: Path | None
     test_profiles: tuple[TestProfile, ...]
     provider_path: Path | None
+    extensions: tuple[ProductExtension, ...] = ()
 
     @property
     def source_path(self) -> str:
@@ -291,6 +299,24 @@ def load_manifest(package_root: Path) -> ProductManifest:
     elif (package_root / "provider.py").is_file():
         provider_path = Path("provider.py")
 
+    extensions_raw = raw.get("extensions", [])
+    if not isinstance(extensions_raw, list):
+        raise ProductManifestError("extensions must be a list")
+    extensions: list[ProductExtension] = []
+    for item in extensions_raw:
+        if not isinstance(item, dict):
+            raise ProductManifestError("each extension must be a mapping")
+        ext_id = _string(item.get("id"), "extensions[].id")
+        if not re.fullmatch(r"[a-zA-Z_]\w*", ext_id):
+            raise ProductManifestError(f"invalid extension id: {ext_id}")
+        ext_title = _string(item.get("title", ext_id), f"extensions.{ext_id}.title")
+        preload = item.get("preload", True)
+        if not isinstance(preload, bool):
+            raise ProductManifestError(f"extensions.{ext_id}.preload must be boolean")
+        extensions.append(ProductExtension(ext_id, ext_title, preload))
+    if len({item.id for item in extensions}) != len(extensions):
+        raise ProductManifestError("extension ids must be unique")
+
     return ProductManifest(
         id=product_id,
         title=title,
@@ -305,6 +331,7 @@ def load_manifest(package_root: Path) -> ProductManifest:
         source_root=source_root,
         test_profiles=tuple(test_profiles),
         provider_path=provider_path,
+        extensions=tuple(extensions),
     )
 
 

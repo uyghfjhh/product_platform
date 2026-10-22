@@ -5,26 +5,19 @@ covers the generic primary + standbys case the workbench models freely.
 """
 
 import re
-from copy import deepcopy
 from pathlib import Path
+
+from .builder import (
+    DEFAULT_PG_PARAMETERS,
+    build_hosts_section,
+    build_installations,
+    build_postgresql_config,
+    compile_extensions,
+    merge_preload_libraries,
+)
 
 _IDENTIFIER = re.compile(r"[a-zA-Z_]\w*")
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def _declared_extensions(spec):
-    """Deduplicated cluster extension declarations preserving user order."""
-    names, plugins, preloads = [], {}, []
-    for ext in spec.extensions:
-        if ext.name in plugins:
-            continue
-        plugin = {"required": True, "extension": ext.name}
-        if ext.preload:
-            plugin["preload_library"] = ext.name
-            preloads.append(ext.name)
-        plugins[ext.name] = plugin
-        names.append(ext.name)
-    return names, plugins, preloads
 
 
 def compile_freeform(spec):
@@ -46,51 +39,15 @@ def compile_freeform(spec):
     if Path(spec.home).is_relative_to(ROOT / "data"):
         raise ValueError("数据库安装目录不能位于平台控制面目录")
 
-    if spec.hosts:
-        hosts_section = {}
-        for host in spec.hosts:
-            entry = {"address": host.address}
-            ssh = host.ssh_options()
-            if ssh:
-                entry["ssh"] = ssh
-            hosts_section[host.name] = entry
-        default_host = next(
-            host.name for host in spec.hosts if host.address == spec.host
-        )
-        homes = {host.name: host.home or spec.home for host in spec.hosts}
-    else:
-        hosts_section = {"deploy_host": {"address": spec.host}}
-        default_host = "deploy_host"
-        homes = {default_host: spec.home}
-
-    install_by_home = {}
-    installations = {}
-    install_for_host = {}
-    for host_name in hosts_section:
-        home = homes[host_name]
-        if home not in install_by_home:
-            install_name = (
-                "deploy_postgres"
-                if not install_by_home
-                else "deploy_postgres_" + host_name
-            )
-            install_by_home[home] = install_name
-            installation = {
-                "provider": "fbase" if spec.license_file else "postgres",
-                "home": home,
-            }
-            if spec.license_file:
-                installation["license"] = {
-                    "source_file": spec.license_file,
-                    "data_file": "license.dat",
-                }
-            installations[install_name] = installation
-        install_for_host[host_name] = install_by_home[home]
-
-    ext_names, plugins, preloads = _declared_extensions(spec)
-    if plugins:
-        for installation in installations.values():
-            installation["plugins"] = deepcopy(plugins)
+    hosts_section, default_host, homes = build_hosts_section(spec)
+    ext_names, plugins, preloads = compile_extensions(spec.extensions)
+    installations, install_for_host = build_installations(
+        hosts_section,
+        homes,
+        provider="fbase" if spec.license_file else "postgres",
+        plugins=plugins or None,
+        license_file=spec.license_file or None,
+    )
 
     instances = {}
     for node in spec.nodes:
@@ -104,57 +61,13 @@ def compile_freeform(spec):
             "data_dir": node.data_dir,
         }
 
-    parameters = {
-        "wal_level": "logical",
-        "hot_standby": "on",
-        "listen_addresses": "*",
-        "logging_collector": "on",
-        "log_destination": "stderr,csvlog",
-        "log_directory": "log",
-        **spec.parameters,
-    }
-    existing_preloads = parameters.get("shared_preload_libraries")
-    if isinstance(existing_preloads, str):
-        existing_preloads = [
-            item.strip() for item in existing_preloads.split(",") if item.strip()
-        ]
-    elif not isinstance(existing_preloads, list):
-        existing_preloads = []
-    extra_preloads = [name for name in preloads if name not in existing_preloads]
-    if extra_preloads:
-        parameters["shared_preload_libraries"] = [*existing_preloads, *extra_preloads]
+    parameters = merge_preload_libraries(
+        {**DEFAULT_PG_PARAMETERS, **spec.parameters}, preloads
+    )
     config = {
         "hosts": hosts_section,
         "postgresql_installations": installations,
-        "postgresql_config": {
-            "parameters": parameters,
-            "replication_capacity": {
-                "wal_senders": "auto",
-                "replication_slots": "auto",
-            },
-            "hba": [
-                {
-                    "type": "local",
-                    "database": "all",
-                    "user": "all",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "all",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-                {
-                    "type": "host",
-                    "database": "replication",
-                    "user": "all",
-                    "address": "0.0.0.0/0",
-                    "auth_method": "trust",
-                },
-            ],
-        },
+        "postgresql_config": build_postgresql_config(parameters),
         "instances": instances,
         "streaming_clusters": {
             spec.cluster_name: {

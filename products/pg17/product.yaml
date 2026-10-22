@@ -5,6 +5,13 @@ provider: provider.py
 capabilities:
   deployment: database-cluster
   database: postgresql-compatible
+extensions:
+  - id: pg_deltax
+    title: DeltaX
+    preload: true
+  - id: timescaledb
+    title: TimescaleDB
+    preload: true
 actions:
   - id: database.check
     title: 检查数据库连接

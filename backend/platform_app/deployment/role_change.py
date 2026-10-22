@@ -329,7 +329,7 @@ def execute(runtime, action, group, selected, expected, emit):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(1)
-        emit('物理角色操作已完成；未修改 fbasecman 配置，代理路由需按其监控状态确认。')
+        emit('物理角色操作已完成；若部署包含外部代理，代理路由需按其监控状态确认。')
     step('检查关联集群健康', associated_health)
     return {'new_primary': new_primary, 'old_primary': old_primary,
             'old_primary_state': 'stopped' if action == 'deployment.failover' else 'standby'}

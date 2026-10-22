@@ -6,14 +6,9 @@ import type { TopologyData, TopologyEdgeLink, TopologyNode } from '../platform/t
 import { renderDeploymentCanvas } from './referenceDeploymentCanvas';
 import './referenceDeploymentCanvas.css';
 import { mmrHint, type MmrStatus } from '../platform/mmr';
+import { CORE_EXTENSIONS, extensionCssClass, formatExtensionLabel } from '../platform/extensions';
 
 type Observed = Record<string, { running: boolean | null; message?: string; pid?: number | null }> | null;
-
-const CORE_EXTENSIONS = new Set(['fdd_mmr', 'fbase_mac', 'citus']);
-const EXTENSION_LABELS: Record<string, string> = {
-  pg_deltax: 'DeltaX',
-  timescaledb: 'TimescaleDB',
-};
 
 function toReference(topology: TopologyData, observed: Observed, mmrStatus?: MmrStatus | null, mmrStale = false) {
   const groups = Array.from(new Set(topology.nodes.map((node) => node.group || 'cluster')));
@@ -123,12 +118,10 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
     if (extSet.has('citus')) corePlugins.push({ name: 'Citus', type: 'citus' });
     for (const ext of extSet) {
       if (CORE_EXTENSIONS.has(ext)) continue;
-      const version = node.extension_versions?.[ext];
-      const label = EXTENSION_LABELS[ext] || ext;
       corePlugins.push({
-        name: version ? `${label} ${version}` : label,
+        name: formatExtensionLabel(ext, node.extension_versions?.[ext]),
         type: 'ext',
-        cls: `ext-${ext.replace(/[^a-z0-9_-]/g, '_')}`,
+        cls: extensionCssClass(ext),
       });
     }
 

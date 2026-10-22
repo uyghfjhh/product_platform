@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 
 import { api, type Environment, type Product, type RegressionBinding, type Task, statusColor } from './api';
+import { registerProductExtensions } from './extensions';
 import TaskDrawer from '../components/TaskDrawer';
 import SettingsModal from '../components/SettingsModal';
 import PlatformErrorBoundary from '../components/PlatformErrorBoundary';
@@ -104,7 +105,8 @@ export default function PlatformShell({ themeName, onThemeChange }: {
         api<Task[]>('/operations?limit=20'),
         api<RegressionBinding[]>('/regression-bindings'),
       ]);
-      setProducts(productList);
+      registerProductExtensions(productList);
+      setProducts(productList.filter((item) => item.id !== 'demo'));
       setEnvironments(environmentList);
       setTasks(taskList);
       setBindings(bindingList);

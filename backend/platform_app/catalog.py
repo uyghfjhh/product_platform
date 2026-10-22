@@ -31,6 +31,10 @@ def list_products(settings: Settings) -> list[dict]:
             "source_path": manifest.source_path,
             "provider": str(manifest.provider_path) if manifest.provider_path else None,
             "versions": list(manifest.versions),
+            "extensions": [
+                {"id": ext.id, "title": ext.title, "preload": ext.preload}
+                for ext in manifest.extensions
+            ],
             "cli": {name: str(path) for name, path in manifest.cli.items()},
             "license": (
                 {"product_code": manifest.license.product_code,

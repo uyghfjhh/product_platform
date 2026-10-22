@@ -9,6 +9,7 @@ type Props = {
   onChange?: (value: string) => void;
   readOnly?: boolean;
   height?: number;
+  theme?: string;
 };
 
 export default function LazyCodeEditor(props: Props) {

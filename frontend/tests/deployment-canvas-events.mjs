@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { renderDeploymentCanvas } from '../src/components/referenceDeploymentCanvas.js';
+import { renderDeploymentCanvas } from '../src/components/referenceDeploymentCanvas.ts';
 
 const id = `node'"&<\\;window.pwned=true;//`;
 const html = renderDeploymentCanvas({

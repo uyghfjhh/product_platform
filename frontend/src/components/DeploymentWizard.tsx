@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Alert, App, Button, Checkbox, Collapse, Form, Input, InputNumber, Modal, Radio, Select, Space, Steps, Table, Tag, Typography } from 'antd';
 import { api, type Environment, type Task } from '../platform/api';
+import { EXTENSION_PRESETS } from '../platform/extensions';
 import FreeTopologyEditor from './FreeTopologyEditor';
 
-type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number; license_required?: boolean; extensions_editable?: boolean; default_extensions?: Extension[] };
+type Template = { id: string; title: string; product_id: string; product_title: string; base_port: number; nodes: number; license_required?: boolean; extensions_editable?: boolean; default_extensions?: Extension[]; supported_extensions?: Array<{ name: string; label?: string; preload: boolean }> };
 type HostResource = { name: string; address: string; ssh_user: string; ssh_port?: number | null; ssh_identity_file: string; ssh_connect_timeout: number; home: string };
 type Node = { name: string; host?: string; port: number; data_dir: string; role?: 'primary' | 'standby' };
 type Extension = { name: string; preload: boolean };
@@ -187,6 +188,10 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
     }
   }
 
+  const quickExtensions = (selectedTemplate?.supported_extensions?.length
+    ? selectedTemplate.supported_extensions.map((item) => ({ name: item.name, defaultPreload: item.preload }))
+    : EXTENSION_PRESETS);
+
   const extensionsEditor = (
     <Collapse style={{ marginTop: 16 }} items={[{ key: 'extensions', label: '扩展插件（可选）', children: <>
       <Alert type="info" style={{ marginBottom: 8 }}
@@ -197,8 +202,13 @@ export default function DeploymentWizard({ open, environment, onClose, onSaved, 
         { title: '', width: 60, render: (_, _ext, index) => <Button size="small" danger onClick={() => setExtensions((prev) => prev.filter((_, i) => i !== index))}>删除</Button> },
       ]} />
       <Space wrap>
-        <Button size="small" disabled={extensions.some((item) => item.name === 'pg_deltax')} onClick={() => setExtensions((prev) => [...prev, { name: 'pg_deltax', preload: true }])}>添加 pg_deltax</Button>
-        <Button size="small" disabled={extensions.some((item) => item.name === 'timescaledb')} onClick={() => setExtensions((prev) => [...prev, { name: 'timescaledb', preload: true }])}>添加 timescaledb</Button>
+        {quickExtensions.map((preset) => (
+          <Button key={preset.name} size="small"
+            disabled={extensions.some((item) => item.name === preset.name)}
+            onClick={() => setExtensions((prev) => [...prev, { name: preset.name, preload: preset.defaultPreload }])}>
+            添加 {preset.name}
+          </Button>
+        ))}
         <Button size="small" onClick={() => setExtensions((prev) => [...prev, { name: '', preload: false }])}>自定义扩展</Button>
       </Space>
     </> }]} />

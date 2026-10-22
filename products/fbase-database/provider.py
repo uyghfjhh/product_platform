@@ -7,11 +7,14 @@ import re
 import sys
 from pathlib import Path
 
-import psycopg
 import yaml
 from platform_app.event_contracts import SceneObservationError
-from platform_app.postgresql_observations import parse_replication
-from platform_app.providers import CommandSpec, Observation
+from platform_app.postgresql_observations import (
+    observe_pg_replication,
+    observe_pg_version,
+    parse_replication,
+)
+from platform_app.providers import CommandSpec
 from platform_app.scene import emit_observation, endpoint_id
 from platform_app import topology as topology_api
 
@@ -244,26 +247,9 @@ class FbaseProvider:
                                           profile=parameters.get("profile", "default"))
 
     def observe_runtime(self, settings, environment):
-        connection = psycopg.connect(
-            host=environment["host"], port=environment["port"],
-            dbname=environment.get("database_name") or "postgres",
-            user=environment.get("database_user") or "postgres",
-            connect_timeout=4, options="-c statement_timeout=4000",
+        return observe_pg_replication(
+            environment, lambda text: self.parse_runtime("replication", text)
         )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT application_name, client_addr::text, state, sync_state "
-                    "FROM pg_stat_replication ORDER BY application_name"
-                )
-                rows = cursor.fetchall()
-            text = "application_name\tclient_addr\tstate\tsync_state\n" + "\n".join(
-                "\t".join("" if value is None else str(value) for value in row)
-                for row in rows
-            )
-            return self.parse_runtime("replication", text)
-        finally:
-            connection.close()
 
     def parse_runtime(self, name, text):
         if name != "replication":
@@ -271,18 +257,7 @@ class FbaseProvider:
         return parse_replication(text)
 
     def observe_database(self, environment):
-        connection = psycopg.connect(
-            host=environment["host"], port=environment["port"],
-            dbname=environment["database_name"], user=environment["database_user"],
-            connect_timeout=4, options="-c statement_timeout=4000",
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT version()")
-                version = cursor.fetchone()[0]
-            return [Observation("sql.version", "ready", {"version": version})]
-        finally:
-            connection.close()
+        return observe_pg_version(environment)
 
     def _test_context(self, settings, environment, cluster, with_topology,
                       extended=False):

@@ -1,8 +1,78 @@
 // Shared deployment renderer; layout dimensions come from the topology model.
 
+export type ReferencePlugin = string | { name: string; type: string; cls?: string };
+
+export type ReferenceNode = {
+  id: string;
+  label?: string;
+  type?: string;
+  cluster?: string;
+  role?: string;
+  host?: string;
+  port?: number;
+  endpoint?: string;
+  data_dir?: string;
+  corePlugins?: ReferencePlugin[];
+  serverVersion?: string;
+  pid?: number | null;
+  status?: string;
+  statusText?: string;
+  x: number;
+  y: number;
+  compact?: boolean;
+  width?: number;
+  height?: number;
+};
+
+export type ReferenceEdge = {
+  id: string;
+  source: string;
+  target: string;
+  type?: string;
+  animated?: boolean;
+  mmrText?: string;
+  mmrError?: boolean;
+  logicalText?: string;
+  logicalWarn?: boolean;
+  logicalLane?: number;
+  logicalName?: string;
+  logicalTitle?: string;
+};
+
+export type ReferenceCluster = {
+  id: string;
+  name: string;
+  tag?: string;
+  type?: string;
+  y: number;
+  height: number;
+  width?: number;
+};
+
+export type ReferenceClusterHealth = {
+  total_alive: number;
+  total_count: number;
+};
+
+export type ReferenceHealth = {
+  probed?: boolean;
+  proxy_running?: boolean;
+  total_db_nodes?: number;
+  total_db_active?: number;
+  [clusterId: string]: ReferenceClusterHealth | boolean | number | undefined;
+};
+
+export type ReferenceDeployment = {
+  nodes: ReferenceNode[];
+  edges: ReferenceEdge[];
+  clusters?: ReferenceCluster[];
+  health?: ReferenceHealth;
+  bounds?: { width: number; height: number };
+};
+
   const LOGICAL_PALETTE = ['#34d399', '#22d3ee', '#fbbf24', '#a78bfa', '#f472b6'];
 
-  export function renderDeploymentCanvas(env) {
+  export function renderDeploymentCanvas(env: ReferenceDeployment): string {
 
     const { nodes, edges, clusters, health = {}, bounds = { width: 1400, height: 1200 } } = env;
 
@@ -11,7 +81,8 @@
     if (clusters && Array.isArray(clusters)) {
       clusters.forEach((cl) => {
         const clClass = cl.type || 'mmr';
-        const clHealth = health[cl.id];
+        const rawHealth = health[cl.id];
+        const clHealth = typeof rawHealth === 'object' && rawHealth !== null ? rawHealth : undefined;
         const alive = clHealth ? clHealth.total_alive : 0;
         const total = clHealth ? clHealth.total_count : 7;
         const isAllDown = health.probed === false ? false : alive === 0;
@@ -40,7 +111,7 @@
     // Build SVG Layer for animated / static inactive links
     let svgLines = '';
     let mmrLabels = '';
-    const logicalGroups = {};
+    const logicalGroups: Record<string, { left: number; top: number; width: number; items: string[] }> = {};
     edges.forEach((edge) => {
       const sourceNode = nodes.find((n) => n.id === edge.source);
       const targetNode = nodes.find((n) => n.id === edge.target);
@@ -48,10 +119,9 @@
 
       const sWidth = sourceNode.width || (sourceNode.compact ? 195 : 220);
       const sHeight = sourceNode.height || (sourceNode.compact ? 50 : 80);
-      const tWidth = targetNode.width || (targetNode.compact ? 195 : 220);
       const tHeight = targetNode.height || (targetNode.compact ? 50 : 80);
 
-      let x1, y1, x2, y2, d;
+      let x1: number, y1: number, x2: number, y2: number, d: string;
 
       if (edge.type === 'sync') {
         const yDiff = Math.abs(targetNode.y - sourceNode.y);
@@ -76,7 +146,6 @@
         // Publication → subscription flows downward between stacked groups;
         // multiple links between the same pair are fanned into parallel lanes.
         const lane = edge.logicalLane || 0;
-        const color = LOGICAL_PALETTE[lane % LOGICAL_PALETTE.length];
         x1 = sourceNode.x + 50 + lane * 16;
         y1 = sourceNode.y + sHeight;
         x2 = targetNode.x + 50 + lane * 16;
@@ -129,8 +198,8 @@
       }
       if (edge.type === 'sync') {
         const longArc=Math.abs(targetNode.y-sourceNode.y)>280;
-        for (const [direction,offset] of [['forward',-7],['reverse',7]]) {
-          let sx,sy,tx,ty,c1x,c1y,c2x,c2y;
+        for (const [direction,offset] of [['forward',-7],['reverse',7]] as const) {
+          let sx: number, sy: number, tx: number, ty: number, c1x: number, c1y: number, c2x: number, c2y: number;
           if (longArc) {
             sx=sourceNode.x;sy=sourceNode.y+sHeight*.5+offset;
             tx=targetNode.x;ty=targetNode.y+tHeight*.5+offset;
@@ -286,7 +355,7 @@
     return bannerHtml + clusterBoxesHtml + svgHtml + nodesHtml + mmrLabels;
   }
 
-  function escapeHtml(str) {
+  function escapeHtml(str: unknown): string {
     if (str === null || str === undefined) return '';
     return String(str)
       .replace(/&/g, '&amp;')

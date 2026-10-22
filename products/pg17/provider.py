@@ -2,9 +2,11 @@
 
 import importlib
 
-import psycopg
-from platform_app.postgresql_observations import parse_replication
-from platform_app.providers import Observation
+from platform_app.postgresql_observations import (
+    observe_pg_replication,
+    observe_pg_version,
+    parse_replication,
+)
 
 
 def _templates():
@@ -28,26 +30,9 @@ class Pg17Provider:
         raise ValueError("PostgreSQL 未注册操作: %s" % action)
 
     def observe_runtime(self, settings, environment):
-        connection = psycopg.connect(
-            host=environment["host"], port=environment["port"],
-            dbname=environment.get("database_name") or "postgres",
-            user=environment.get("database_user") or "postgres",
-            connect_timeout=4, options="-c statement_timeout=4000",
+        return observe_pg_replication(
+            environment, lambda text: self.parse_runtime("replication", text)
         )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT application_name, client_addr::text, state, sync_state "
-                    "FROM pg_stat_replication ORDER BY application_name"
-                )
-                rows = cursor.fetchall()
-            text = "application_name\tclient_addr\tstate\tsync_state\n" + "\n".join(
-                "\t".join("" if value is None else str(value) for value in row)
-                for row in rows
-            )
-            return self.parse_runtime("replication", text)
-        finally:
-            connection.close()
 
     def parse_runtime(self, name, text):
         if name != "replication":
@@ -55,19 +40,7 @@ class Pg17Provider:
         return parse_replication(text)
 
     def observe_database(self, environment):
-        connection = psycopg.connect(
-            host=environment["host"], port=environment["port"],
-            dbname=environment.get("database_name") or "postgres",
-            user=environment.get("database_user") or "postgres",
-            connect_timeout=4, options="-c statement_timeout=4000",
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT version()")
-                version = cursor.fetchone()[0]
-            return [Observation("sql.version", "ready", {"version": version})]
-        finally:
-            connection.close()
+        return observe_pg_version(environment)
 
 
 PROVIDER = Pg17Provider()

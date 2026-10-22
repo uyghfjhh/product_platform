@@ -18,6 +18,12 @@ class TestProfile(BaseModel):
     deployment_targets: list[str]
 
 
+class ProductExtension(BaseModel):
+    id: str
+    title: str
+    preload: bool = True
+
+
 class Product(ResponseModel):
     id: str
     title: str
@@ -25,6 +31,7 @@ class Product(ResponseModel):
     capabilities: list[str]
     source_path: str
     test_profiles: list[TestProfile] = Field(default_factory=list)
+    extensions: list[ProductExtension] = Field(default_factory=list)
 
 
 class Environment(EnvironmentInput):
