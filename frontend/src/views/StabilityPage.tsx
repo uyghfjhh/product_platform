@@ -1,4 +1,4 @@
-import { Empty, Typography } from 'antd';
+import { Empty, Tag, Typography } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 
 import { type Environment, type Product, type RegressionBinding } from '../platform/api';
@@ -25,10 +25,17 @@ export default function StabilityPage({ product, environment, openTask, reload,
   return (
     <div className="workload-page">
       <header className="workload-page-heading">
-        <span className="workload-page-icon"><ThunderboltOutlined /></span>
-        <div>
-          <Typography.Title level={3}>压测与常稳</Typography.Title>
-          <Typography.Text type="secondary">组合工作负载，审阅真实执行目标，观察持续运行表现。</Typography.Text>
+        <div className="workload-page-heading-left">
+          <span className="workload-page-icon"><ThunderboltOutlined /></span>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Typography.Title level={3} style={{ margin: 0 }}>压测与常稳</Typography.Title>
+              <Tag color="blue">代理路由 · HA 混沌 · 基准对比</Tag>
+            </div>
+            <Typography.Text type="secondary">
+              编排 fbasecman 多路并发常稳（读写分离 / 负载均衡 / HA 动态切换 / 预编译防泄漏）与直连代理 A/B 性能基准。
+            </Typography.Text>
+          </div>
         </div>
       </header>
       <TestBindingBar product={product} profileId={profileId}

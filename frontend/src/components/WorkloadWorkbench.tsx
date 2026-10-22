@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Collapse, Empty, Input, InputNumber, Modal, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography } from 'antd';
-import { ExperimentOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Checkbox, Collapse, Empty, Input, InputNumber, Modal, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import {
+  CheckCircleOutlined, CodeOutlined, CompassOutlined, DashboardOutlined,
+  ExperimentOutlined, FireOutlined, PlayCircleOutlined, PlusOutlined,
+  ReloadOutlined, SafetyCertificateOutlined, SearchOutlined, StopOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 
-import { api, generateUUID, post, statusColor, type Environment, type Task } from '../platform/api';
+import { api, generateUUID, operationRequest, post, statusColor, type Environment, type Task } from '../platform/api';
 import CodeEditor from './LazyCodeEditor';
+import ExecutionTerminal from './ExecutionTerminal';
 import WorkloadDashboard from './WorkloadDashboard';
 import './workloadWorkbench.css';
 
@@ -13,10 +19,27 @@ type Parameters = {
   statement_timeout_seconds: number; minimum_tps: number; max_average_latency_ms: number; jdbc_jar: string;
   connection_mode: 'direct' | 'proxy' | 'compare';
 };
+type StableMeta = {
+  name: string;
+  user: string;
+  database: string;
+  port_kind: string;
+  clients: number;
+  jobs: number;
+  connect_per_transaction: boolean;
+  feature: string | null;
+  duration_seconds: number;
+  duration_text: string;
+  sql_asset: string;
+  script_preview: string;
+  route_rule: { user: string; allowed_nodes: string[]; min_nodes: number };
+  verifications: Array<{ title: string; detail: string }>;
+};
 type Entry = {
   id: string; title: string; description: string; driver: string; category: string;
   impact: string; available: boolean; reason: string | null; defaults: Parameters;
   default_selected: boolean; editable_script: boolean; source: string;
+  stable_meta?: StableMeta;
 };
 type Draft = Entry & { key: string; selected: boolean; parameters: Parameters };
 type Catalog = { environment: Environment; workloads: Entry[]; limitations: string[];
@@ -62,10 +85,12 @@ function Curve({ samples, field, title }: { samples: Sample[]; field: 'tps' | 'l
 }
 
 export default function WorkloadWorkbench({ environment, openTask }: { environment: Environment; openTask: (identity: string) => void }) {
+  const { message } = App.useApp();
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [active, setActive] = useState('');
+  const [configTab, setConfigTab] = useState('parameters');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('全部');
   const [openGroups, setOpenGroups] = useState<string[]>(['SQL 负载']);
@@ -74,6 +99,9 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
   const [plan, setPlan] = useState<Plan | null>(null);
   const [compare, setCompare] = useState(false);
   const [workspace, setWorkspace] = useState('configure');
+  const [stableDuration, setStableDuration] = useState<number>(0);
+  const [stableTaskId, setStableTaskId] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string>('sql-compare');
   const storageKey = 'workload-run:' + environment.id;
   const [runId, setRunId] = useState(() => sessionStorage.getItem(storageKey) || '');
   const [run, setRun] = useState<Run | null>(null);
@@ -111,9 +139,9 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
         if (!TERMINAL.includes(row.status)) timer = window.setTimeout(() => void refresh(), 1500);
       } catch (cause) {
         if (!cancelled) {
-          const message = (cause as Error).message;
-          setError(message);
-          if (message === '负载执行不存在') {
+          const messageText = (cause as Error).message;
+          setError(messageText);
+          if (messageText === '负载执行不存在') {
             sessionStorage.removeItem(storageKey); setRunId(''); setRun(null);
           } else timer = window.setTimeout(() => void refresh(), 3000);
         }
@@ -125,14 +153,15 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
 
   const current = drafts.find((entry) => entry.key === active);
   const selected = drafts.filter((entry) => entry.selected);
+  const stableEntries = drafts.filter((entry) => Boolean(entry.stable_meta));
+  const routingEntries = stableEntries.filter((entry) => entry.category === '产品常稳');
+  const haEntries = stableEntries.filter((entry) => entry.category === 'HA / 配置变更');
   const visible = drafts.filter((entry) => (category === '全部' || entry.category === category)
     && (entry.title + entry.description + entry.id).toLowerCase().includes(query.toLowerCase()));
   const running = Boolean(runId && (!run || !TERMINAL.includes(run.status)));
+
   function update(values: Partial<Parameters>) {
     setDrafts((entries) => entries.map((entry) => entry.key === active ? { ...entry, parameters: { ...entry.parameters, ...values } } : entry));
-  }
-  function select(key: string, checked: boolean) {
-    setDrafts((entries) => entries.map((entry) => entry.key === key ? { ...entry, selected: checked } : entry));
   }
   function addCustom() {
     const template = drafts.find((entry) => entry.id === 'pgbench.connectivity');
@@ -165,6 +194,57 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
     try { setRun(await post<Run>(`/workload-runs/${run.id}/cancel`, {})); }
     catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
+  async function launchStableSuite(target: string, options: { smoke?: boolean; duration_seconds?: number; enabled_workloads?: string[]; label?: string } = {}) {
+    setBusy(true); setError('');
+    try {
+      const params: Record<string, unknown> = {};
+      if (options.smoke) params.smoke = true;
+      if (options.duration_seconds && options.duration_seconds > 0) params.duration_seconds = options.duration_seconds;
+      if (options.enabled_workloads?.length) params.enabled_workloads = options.enabled_workloads;
+      const task = await operationRequest(environment.id, 'stability.fbasecman', target, params, true);
+      setStableTaskId(task.id);
+      message.success(`已提交 fbasecman 常稳任务：${options.label || target}`);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function applyPreset(presetKey: 'full-stable' | 'routing-pool' | 'ha-chaos' | 'sql-compare') {
+    setActivePreset(presetKey);
+    setCategory('全部');
+    setQuery('');
+    if (presetKey === 'full-stable') {
+      setOpenGroups(['产品常稳', 'HA / 配置变更']);
+      setDrafts((entries) => entries.map((entry) => ({
+        ...entry,
+        selected: Boolean(entry.stable_meta),
+      })));
+      if (routingEntries[0]) setActive(routingEntries[0].key);
+    } else if (presetKey === 'routing-pool') {
+      setOpenGroups(['产品常稳']);
+      setDrafts((entries) => entries.map((entry) => ({
+        ...entry,
+        selected: entry.category === '产品常稳',
+      })));
+      if (routingEntries[0]) setActive(routingEntries[0].key);
+    } else if (presetKey === 'ha-chaos') {
+      setOpenGroups(['HA / 配置变更']);
+      setDrafts((entries) => entries.map((entry) => ({
+        ...entry,
+        selected: entry.category === 'HA / 配置变更',
+      })));
+      if (haEntries[0]) setActive(haEntries[0].key);
+    } else {
+      setOpenGroups(['SQL 负载']);
+      setDrafts((entries) => entries.map((entry) => ({
+        ...entry,
+        selected: entry.available && (entry.id === 'pgbench.connectivity' || entry.id === 'pgbench.catalog'),
+        parameters: entry.available ? { ...entry.parameters, connection_mode: 'compare' } : entry.parameters,
+      })));
+      setActive('pgbench.connectivity');
+    }
+  }
   function numberField(key: 'clients' | 'jobs' | 'duration_seconds' | 'target_tps' | 'statement_timeout_seconds' | 'minimum_tps' | 'max_average_latency_ms', label: string, min: number, max: number) {
     if (!current) return null;
     return <div className="wb-field"><label>{label}</label><InputNumber aria-label={label} min={min} max={max} value={current.parameters[key]} disabled={busy} precision={key.endsWith('_tps') || key.endsWith('_ms') ? undefined : 0}
@@ -175,8 +255,10 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
         update(patch);
       }} /></div>;
   }
+
   const taskId = inspectedTask || run?.tasks.at(-1) || '';
   const observed = metrics[taskId];
+
   const dashboardView = <WorkloadDashboard environmentId={environment.id} runId={runId || undefined} openTask={openTask}
     clients={run ? run.definition.workloads.flatMap((entry, index) => {
       const fact = metrics[run.tasks[index]];
@@ -194,47 +276,375 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
       summary: phase ? fact?.result?.phases?.[phase]?.summary : fact?.summary,
       result_started_at: metrics[run.tasks[index]]?.result?.started_at,
     })); }) : []} />;
+
+  const selectedStable = selected.filter((entry) => Boolean(entry.stable_meta));
+  const selectedSql = selected.filter((entry) => entry.available && !entry.stable_meta);
+  const isStableSelection = selectedStable.length > 0 && selectedSql.length === 0;
+
+  const scenarioPresetsBar = stableEntries.length > 0 && (
+    <div className="wb-presets-strip">
+      <div className="wb-preset-card" data-active={activePreset === 'full-stable'}
+        onClick={() => applyPreset('full-stable')}>
+        <div className="wb-preset-top">
+          <span className="wb-preset-icon"><SafetyCertificateOutlined /></span>
+          <Tag color={activePreset === 'full-stable' ? 'blue' : 'default'}>
+            {activePreset === 'full-stable' ? '✓ 已选中 · 13 路并发' : '点击切换 · 13 路并发'}
+          </Tag>
+        </div>
+        <strong>标准常稳全套（Full Soak）</strong>
+        <p>自动勾选下方 8 路代理路由 + 5 路 HA/Reload 混沌扰动，四维判点全检</p>
+        <div className="wb-preset-actions" onClick={(e) => e.stopPropagation()}>
+          <Button size="small" icon={<ThunderboltOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('full-stable');
+              void launchStableSuite('all', { smoke: true, label: '标准常稳全套 · 20s 冒烟' });
+            }}>
+            20s 冒烟
+          </Button>
+          <Button size="small" type={activePreset === 'full-stable' ? 'primary' : 'default'} icon={<PlayCircleOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('full-stable');
+              void launchStableSuite('all', { duration_seconds: stableDuration || undefined, label: '标准常稳全套 (13 路)' });
+            }}>
+            启动全套
+          </Button>
+        </div>
+      </div>
+
+      <div className="wb-preset-card" data-active={activePreset === 'routing-pool'}
+        onClick={() => applyPreset('routing-pool')}>
+        <div className="wb-preset-top">
+          <span className="wb-preset-icon"><CompassOutlined /></span>
+          <Tag color={activePreset === 'routing-pool' ? 'cyan' : 'default'}>
+            {activePreset === 'routing-pool' ? `✓ 已选中 · ${routingEntries.length} 路路由` : `点击切换 · ${routingEntries.length} 路路由`}
+          </Tag>
+        </div>
+        <strong>代理路由与连接池常稳</strong>
+        <p>自动勾选下方 8 路 MMR/REP Hint 长短连接、读写双口、Balance 与 JDBC</p>
+        <div className="wb-preset-actions" onClick={(e) => e.stopPropagation()}>
+          <Button size="small" icon={<ThunderboltOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('routing-pool');
+              void launchStableSuite('all', {
+                smoke: true,
+                enabled_workloads: routingEntries.map((e) => e.id),
+                label: '路由与连接池常稳 · 20s 冒烟',
+              });
+            }}>
+            20s 冒烟
+          </Button>
+          <Button size="small" type={activePreset === 'routing-pool' ? 'primary' : 'default'} icon={<PlayCircleOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('routing-pool');
+              void launchStableSuite('all', {
+                duration_seconds: stableDuration || undefined,
+                enabled_workloads: routingEntries.map((e) => e.id),
+                label: `路由与连接池常稳 (${routingEntries.length} 路)`,
+              });
+            }}>
+            启动路由组
+          </Button>
+        </div>
+      </div>
+
+      <div className="wb-preset-card" data-active={activePreset === 'ha-chaos'}
+        onClick={() => applyPreset('ha-chaos')}>
+        <div className="wb-preset-top">
+          <span className="wb-preset-icon warn"><FireOutlined /></span>
+          <Tag color={activePreset === 'ha-chaos' ? 'gold' : 'default'}>
+            {activePreset === 'ha-chaos' ? `✓ 已选中 · ${haEntries.length} 路混沌` : `点击切换 · ${haEntries.length} 路混沌`}
+          </Tag>
+        </div>
+        <strong>HA 控制面与 Reload 混沌</strong>
+        <p>自动勾选下方 5 路数据源翻转 + RELOAD + 节点权重/写主切换并发注入</p>
+        <div className="wb-preset-actions" onClick={(e) => e.stopPropagation()}>
+          <Button size="small" icon={<ThunderboltOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('ha-chaos');
+              void launchStableSuite('all', {
+                smoke: true,
+                enabled_workloads: ['pgbench.mmr_hint_long', ...haEntries.map((e) => e.id)],
+                label: 'HA 与 Reload 混沌组合 · 20s 冒烟',
+              });
+            }}>
+            20s 冒烟
+          </Button>
+          <Button size="small" type={activePreset === 'ha-chaos' ? 'primary' : 'default'} icon={<PlayCircleOutlined />} loading={busy}
+            onClick={() => {
+              applyPreset('ha-chaos');
+              void launchStableSuite('all', {
+                duration_seconds: stableDuration || undefined,
+                enabled_workloads: ['pgbench.mmr_hint_long', ...haEntries.map((e) => e.id)],
+                label: `HA 与 Reload 混沌组合 (${haEntries.length} 路)`,
+              });
+            }}>
+            启动混沌组
+          </Button>
+        </div>
+      </div>
+
+      <div className="wb-preset-card" data-active={activePreset === 'sql-compare'}
+        onClick={() => applyPreset('sql-compare')}>
+        <div className="wb-preset-top">
+          <span className="wb-preset-icon accent"><DashboardOutlined /></span>
+          <Tag color={activePreset === 'sql-compare' ? 'purple' : 'default'}>
+            {activePreset === 'sql-compare' ? '✓ 已选中 · A/B 对比' : '点击切换 · A/B 对比'}
+          </Tag>
+        </div>
+        <strong>单后端直连 vs 代理基准</strong>
+        <p>自动勾选下方 SQL 负载并设为直连/代理对比（各预热 3s），测算吞吐损耗</p>
+        <div className="wb-preset-actions" onClick={(e) => e.stopPropagation()}>
+          <Button size="small" type={activePreset === 'sql-compare' ? 'primary' : 'default'}
+            onClick={() => applyPreset('sql-compare')}>
+            切到此预设
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderStableScenarioDetail = (entry: Draft, meta: StableMeta) => {
+    const isHa = entry.category === 'HA / 配置变更';
+    const portLabel = meta.port_kind === 'write'
+      ? '写专用端口 (write_port)'
+      : meta.database === 'console'
+        ? '管理端端口 (admin@console)'
+        : '主读写端口 (main_port)';
+    return (
+      <div className="wb-stable-detail">
+        <div className="wb-stable-action-bar">
+          <div className="wb-stable-action-meta">
+            <Tag color={isHa ? 'gold' : 'blue'}>{isHa ? '⚡ HA / 配置混沌负载' : '🛡️ 代理路由与连接池常稳'}</Tag>
+            <span>脚本资产：<code>{meta.sql_asset}</code></span>
+            <span>默认时长：<strong>{meta.duration_text}</strong></span>
+          </div>
+          <Space wrap size={8}>
+            <Select
+              size="small"
+              value={stableDuration}
+              onChange={setStableDuration}
+              style={{ width: 145 }}
+              options={[
+                { value: 0, label: `正式时长 (${meta.duration_text})` },
+                { value: 20, label: '短时联调 · 20 秒' },
+                { value: 60, label: '快速验证 · 1 分钟' },
+                { value: 300, label: '中时压测 · 5 分钟' },
+              ]}
+            />
+            <Button size="small" icon={<ThunderboltOutlined />} loading={busy}
+              onClick={() => void launchStableSuite(meta.name, { smoke: true, label: `${entry.title} (20s 冒烟)` })}>
+              冒烟试跑 (20s)
+            </Button>
+            <Button size="small" type="primary" icon={<PlayCircleOutlined />} loading={busy}
+              onClick={() => void launchStableSuite(meta.name, {
+                duration_seconds: stableDuration || undefined,
+                label: `${entry.title} (${stableDuration ? `${stableDuration}s` : meta.duration_text})`,
+              })}>
+              单独执行此场景
+            </Button>
+          </Space>
+        </div>
+
+        <div className="wb-spec-grid">
+          <div className="wb-spec-card">
+            <span className="wb-spec-label">连接账号与目标库</span>
+            <strong><code>{meta.user}</code> @ <code>{meta.database}</code></strong>
+            <small>{meta.database === 'console' ? '管理控制台专用连接池' : '业务读写路由连接池'}</small>
+          </div>
+          <div className="wb-spec-card">
+            <span className="wb-spec-label">接入端口与连接复用</span>
+            <strong>{portLabel}</strong>
+            <small>{meta.connect_per_transaction ? '短连接：每事务重新建连 (-C)' : '长连接：会话持久复用连接'}</small>
+          </div>
+          <div className="wb-spec-card">
+            <span className="wb-spec-label">并发度与线程模型</span>
+            <strong>{meta.clients} 客户端 · {meta.jobs} 线程</strong>
+            <small>{entry.driver === 'jdbc' ? '100 短连接线程高频 prepare/close' : `pgbench -c ${meta.clients} -j ${meta.jobs}`}</small>
+          </div>
+          <div className="wb-spec-card">
+            <span className="wb-spec-label">路由命中要求 (ROUTE_RULES)</span>
+            <strong>允许 {meta.route_rule.allowed_nodes.length} 节点 · 至少命中 {meta.route_rule.min_nodes} 个</strong>
+            <small className="wb-node-pills">
+              {meta.route_rule.allowed_nodes.map((n) => <code key={n}>{n}</code>)}
+            </small>
+          </div>
+        </div>
+
+        <div className="wb-section-block">
+          <div className="wb-section-title">
+            <SafetyCertificateOutlined />
+            <span>四维常稳验收判点（区别于普通吞吐测试）</span>
+          </div>
+          <div className="wb-verify-grid">
+            {meta.verifications.map((v, idx) => (
+              <div key={idx} className="wb-verify-card">
+                <div className="wb-verify-head">
+                  <CheckCircleOutlined className="wb-verify-icon" />
+                  <strong>{v.title}</strong>
+                </div>
+                <p>{v.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="wb-section-block">
+          <div className="wb-section-title">
+            <CodeOutlined />
+            <span>场景真实执行 SQL / 协议载荷（<code>{meta.sql_asset}</code>）</span>
+          </div>
+          <pre className="wb-sql-preview-box">{meta.script_preview}</pre>
+        </div>
+      </div>
+    );
+  };
+
+  const orderedGroups = [...new Set(visible.map((entry) => entry.category))].sort((a, b) => {
+    const order = activePreset === 'sql-compare'
+      ? ['SQL 负载', '产品常稳', 'HA / 配置变更']
+      : activePreset === 'ha-chaos'
+        ? ['HA / 配置变更', '产品常稳', 'SQL 负载']
+        : ['产品常稳', 'HA / 配置变更', 'SQL 负载'];
+    return (order.indexOf(a) === -1 ? 99 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 99 : order.indexOf(b));
+  });
+
   const configure = <>
+    {scenarioPresetsBar}
     <div className="wb-grid">
       <section className="wb-library">
-        <div className="wb-panel-heading"><div><span className="wb-eyebrow">WORKLOAD LIBRARY</span><h4>工作负载库</h4></div><Tag>{selected.length} 项已选</Tag></div>
+        <div className="wb-panel-heading"><div><span className="wb-eyebrow">WORKLOAD LIBRARY</span><h4>工作负载库</h4></div><Tag color="blue">{selected.length} 项已选</Tag></div>
         <div className="wb-library-filters"><Input aria-label="搜索负载" prefix={<SearchOutlined />} placeholder="搜索名称、场景或引擎" value={query} onChange={(event) => setQuery(event.target.value)} />
           <Select aria-label="负载分类" value={category} onChange={setCategory} options={['全部', ...new Set(drafts.map((entry) => entry.category))].map((value) => ({ value, label: value }))} /></div>
-        <div className="wb-selection-actions"><Button type="text" size="small" disabled={busy} onClick={() => setDrafts((entries) => entries.map((entry) => ({ ...entry, selected: visible.some((item) => item.key === entry.key && item.available) || entry.selected })))}>选择可用项</Button><Button type="text" size="small" disabled={busy} onClick={() => setDrafts((entries) => entries.map((entry) => ({ ...entry, selected: false })))}>清空选择</Button></div>
+        <div className="wb-selection-actions"><Button type="text" size="small" disabled={busy} onClick={() => setDrafts((entries) => entries.map((entry) => ({ ...entry, selected: visible.some((item) => item.key === entry.key && (activePreset === 'sql-compare' ? item.available : Boolean(item.stable_meta) || item.available)) || entry.selected })))}>选择可用项</Button><Button type="text" size="small" disabled={busy} onClick={() => setDrafts((entries) => entries.map((entry) => ({ ...entry, selected: false })))}>清空选择</Button></div>
         <div className="wb-library-list">{visible.length ? <Collapse ghost size="small"
-          activeKey={query || category !== '全部' ? [...new Set(visible.map((entry) => entry.category))] : openGroups}
+          activeKey={query || category !== '全部' ? orderedGroups : openGroups}
           onChange={(keys) => setOpenGroups(Array.isArray(keys) ? keys : [keys])}
-          items={[...new Set(visible.map((entry) => entry.category))].map((group) => ({ key: group,
-            label: <span className="wb-group-label">{group}<Tag>{visible.filter((entry) => entry.category === group).length} 项</Tag>{!visible.some((entry) => entry.category === group && entry.available) && <small>尚未接入</small>}</span>,
-            children: visible.filter((entry) => entry.category === group).map((entry) => <div key={entry.key} className={`wb-library-row ${active === entry.key ? 'active' : ''} ${!entry.available ? 'unavailable' : ''}`}>
-              <Checkbox aria-label={'选择 ' + entry.title} checked={entry.selected} disabled={busy || !entry.available} onChange={(event) => select(entry.key, event.target.checked)} />
-              <button type="button" className="wb-library-open" onClick={() => setActive(entry.key)}><div className="wb-compact-title"><strong>{entry.title}</strong><Tag>{entry.driver}</Tag></div>{active === entry.key && <span>{entry.description}</span>}</button>
-            </div>),
-          }))} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的负载" />}</div>
+          items={orderedGroups.map((group) => {
+            const groupItems = visible.filter((entry) => entry.category === group);
+            const groupCheckedCount = groupItems.filter((entry) => entry.selected).length;
+            return {
+              key: group,
+              label: (
+                <span className="wb-group-label">
+                  {group}
+                  <Tag color={groupCheckedCount > 0 ? 'blue' : 'default'}>
+                    {groupCheckedCount > 0 ? `已选 ${groupCheckedCount}/${groupItems.length}` : `${groupItems.length} 项`}
+                  </Tag>
+                  <small>{group === 'SQL 负载' ? '第4卡: 直连/代理基准' : '第1~3卡: 常稳专项'}</small>
+                </span>
+              ),
+              children: groupItems.map((entry) => {
+              const meta = entry.stable_meta;
+              const selectable = entry.available || Boolean(meta);
+              return (
+                <div key={entry.key} className={`wb-library-row ${active === entry.key ? 'active' : ''} ${!selectable ? 'unavailable' : ''}`}>
+                  <Checkbox aria-label={'选择 ' + entry.title} checked={entry.selected} disabled={busy || !selectable} onChange={(event) => {
+                    const checked = event.target.checked;
+                    setDrafts((entries) => entries.map((item) => {
+                      if (item.key === entry.key) return { ...item, selected: checked };
+                      // 避免把并发常稳专项与顺序 SQL 基准混在同一批勾选里
+                      if (checked && Boolean(item.stable_meta) !== Boolean(meta)) return { ...item, selected: false };
+                      return item;
+                    }));
+                  }} />
+                  <button type="button" className="wb-library-open" onClick={() => setActive(entry.key)}>
+                    <div className="wb-compact-title"><strong>{entry.title}</strong><Tag>{entry.driver}</Tag></div>
+                    <div className="wb-row-submeta">
+                      {meta ? (
+                        <>
+                          <span>{meta.user}@{meta.database}</span>
+                          <span>· {meta.port_kind === 'write' ? '写口' : meta.database === 'console' ? 'Console' : '主口'}</span>
+                          <span>· {meta.connect_per_transaction ? '短连接' : '长连接'}</span>
+                          <span>· {meta.clients}c</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{entry.parameters.clients} 并发</span>
+                          <span>· {entry.parameters.duration_seconds}s</span>
+                          <span>· {connectionLabel(entry.parameters.connection_mode)}</span>
+                        </>
+                      )}
+                    </div>
+                    {active === entry.key && <span>{entry.description}</span>}
+                  </button>
+                </div>
+              );
+            }),
+            };
+          })} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的负载" />}</div>
         <Button className="wb-custom-button" icon={<PlusOutlined />} disabled={busy || !drafts.some((entry) => entry.id === 'pgbench.connectivity' && entry.available)} onClick={addCustom}>添加自定义 SQL 负载</Button>
       </section>
       <section className="wb-config">
         {current ? <>
-          <div className="wb-panel-heading"><div><span className="wb-eyebrow">SCENARIO CONFIGURATION</span><h4>{current.title}</h4><p>{current.description}</p></div><Tag>{current.driver}</Tag></div>
-          <div className="wb-config-source"><span>参数来源：{current.source}</span>{current.available && JSON.stringify(current.parameters) !== JSON.stringify(current.defaults) && <Tag color="processing">本次已覆盖</Tag>}</div>
-          {!current.available ? <Alert type="warning" showIcon message="该场景暂不可执行" description={current.reason} /> : <>
+          <div className="wb-panel-heading">
+            <div>
+              <span className="wb-eyebrow">SCENARIO CONFIGURATION</span>
+              <h4>{current.title}</h4>
+              <p>{current.description}</p>
+            </div>
+            <Space size={6}>
+              <Tag color="blue">{current.driver}</Tag>
+              <Tag>{current.impact}</Tag>
+            </Space>
+          </div>
+          <div className="wb-config-source">
+            <span>参数来源：{current.source}</span>
+            {current.available && JSON.stringify(current.parameters) !== JSON.stringify(current.defaults) && <Tag color="processing">本次已覆盖</Tag>}
+            {current.available && (
+              <Button type="link" size="small" icon={<ReloadOutlined />} disabled={busy} style={{ padding: 0, height: 'auto' }}
+                onClick={() => update({ ...current.defaults })}>
+                恢复默认参数
+              </Button>
+            )}
+          </div>
+          {current.stable_meta ? renderStableScenarioDetail(current, current.stable_meta) : !current.available ? (
+            <Alert type="warning" showIcon message="该场景暂不可执行" description={current.reason} />
+          ) : <>
             {current.key.startsWith('custom-') && <div className="wb-custom-name"><Input aria-label="自定义负载名称" value={current.title} maxLength={120} onChange={(event) => setDrafts((entries) => entries.map((entry) => entry.key === active ? { ...entry, title: event.target.value } : entry))} /><Button danger disabled={busy} onClick={() => { setDrafts((entries) => entries.filter((entry) => entry.key !== active)); setActive(drafts[0]?.key || ''); }}>移除</Button></div>}
-            <Tabs items={[
+            <Tabs activeKey={configTab} onChange={setConfigTab} items={[
               { key: 'parameters', label: '负载参数', children: <>
-                <div className="wb-default-summary"><strong>常用参数和 SQL 已填好，通常无需修改</strong><span>需要调整负载强度时，可选一个常用预设。</span></div>
-                <div className="wb-field"><label>连接方式</label><Select aria-label="连接方式" disabled={busy}
-                  value={current.parameters.connection_mode || 'direct'}
-                  options={(catalog?.connection_modes || ['direct']).map((value) => ({ value, label: connectionLabel(value) }))}
-                  onChange={(connection_mode) => update({ connection_mode })} /></div>
-                {current.parameters.connection_mode !== 'direct' && <div className="wb-quiet-note">自动启动本轮独立 fbasecman，检查控制台和实际后端，结束后停止。代理固定访问登记的同一后端；对比模式先直连后代理，每阶段分别预热 3 秒。</div>}
-                <Space wrap className="wb-profile-presets">{catalog?.profiles?.map((profile) => <Button key={profile.id} disabled={busy}
-                  type={current.parameters.duration_seconds === profile.duration_seconds && current.parameters.clients === profile.clients ? 'primary' : 'default'}
-                  onClick={() => update({ duration_seconds: profile.duration_seconds, clients: profile.clients, jobs: null })}>{profile.title}</Button>)}</Space>
-                <div className="wb-fields">{numberField('duration_seconds', '时长（秒）', 1, 86400)}{numberField('clients', '并发客户端', 1, 128)}</div>
+                <div className="wb-quick-strip">
+                  <span className="wb-quick-strip-label">强度预设：</span>
+                  <Space wrap className="wb-profile-presets">{catalog?.profiles?.map((profile) => <Button key={profile.id} size="small" disabled={busy}
+                    type={current.parameters.duration_seconds === profile.duration_seconds && current.parameters.clients === profile.clients ? 'primary' : 'default'}
+                    onClick={() => update({ duration_seconds: profile.duration_seconds, clients: profile.clients, jobs: null })}>{profile.title}</Button>)}</Space>
+                </div>
+                <div className="wb-fields wb-fields-3col">
+                  <div className="wb-field"><label>连接方式</label><Select aria-label="连接方式" disabled={busy}
+                    value={current.parameters.connection_mode || 'direct'}
+                    options={(catalog?.connection_modes || ['direct']).map((value) => ({ value, label: connectionLabel(value) }))}
+                    onChange={(connection_mode) => update({ connection_mode })} /></div>
+                  {numberField('duration_seconds', '时长（秒）', 1, 86400)}
+                  {numberField('clients', '并发客户端', 1, 128)}
+                </div>
+                {current.parameters.connection_mode !== 'direct' && <div className="wb-quiet-note wb-mode-note">自动启动本轮独立 fbasecman，检查控制台和实际后端，结束后停止。代理固定访问登记的同一后端；对比模式先直连后代理，每阶段分别预热 3 秒。</div>}
                 <div className="wb-default-facts"><Tag>{current.driver === 'jdbc' ? '线程与客户端一致' : current.parameters.jobs == null ? '线程自动匹配' : `线程 ${current.parameters.jobs}`}</Tag><Tag>查询超时 {current.parameters.statement_timeout_seconds} 秒</Tag>
                   {current.driver === 'pgbench' && <Tag>{current.parameters.connect_per_transaction ? '每事务重连' : '复用连接'}</Tag>}
-                  {current.driver === 'jdbc' && <Tag>{current.parameters.jdbc_jar ? '驱动路径已填入' : '需要 JDBC 驱动'}</Tag>}</div>
+                  {current.driver === 'jdbc' && <Tag>{current.parameters.jdbc_jar ? '驱动路径已填入' : '需要 JDBC 驱动'}</Tag>}
+                  <Tag color={current.parameters.minimum_tps || current.parameters.max_average_latency_ms ? 'processing' : 'default'}>
+                    {current.parameters.minimum_tps || current.parameters.max_average_latency_ms
+                      ? `阈值: ≥${current.parameters.minimum_tps} TPS / ≤${current.parameters.max_average_latency_ms || '∞'}ms`
+                      : '性能阈值: 未设（仅采集）'}
+                  </Tag>
+                </div>
                 {current.driver === 'jdbc' && !current.parameters.jdbc_jar && <Alert type="warning" showIcon message="未发现本机 JDBC 驱动，请在高级配置中补充路径" />}
+
+                {/* 单页内联 SQL 速览卡：无需切 Tab 即可核对当前 SQL */}
+                <div className="wb-inline-sql-card">
+                  <div className="wb-inline-sql-head">
+                    <span><CodeOutlined /> 执行 SQL 脚本（只读事务）</span>
+                    <Space size={6}>
+                      <Tag color={current.parameters.script === current.defaults.script ? 'default' : 'processing'}>
+                        {current.parameters.script === current.defaults.script ? '默认脚本' : '已自定义'}
+                      </Tag>
+                      <Button size="small" type="link" style={{ padding: 0, height: 'auto' }} onClick={() => setConfigTab('sql')}>
+                        编辑 SQL ❯
+                      </Button>
+                    </Space>
+                  </div>
+                  <pre className="wb-inline-sql-pre">{current.parameters.script}</pre>
+                </div>
+
                 <Collapse key={current.key} ghost className="wb-advanced" defaultActiveKey={current.driver === 'jdbc' && !current.parameters.jdbc_jar ? ['advanced'] : []}
                   items={[{ key: 'advanced', label: current.driver === 'jdbc' && !current.parameters.jdbc_jar ? '高级配置（需补充驱动）' : '高级配置（已提供默认值）', children: <>
                     <div className="wb-fields">{current.driver === 'pgbench' && <>{numberField('jobs', '工作线程（空值自动）', 1, current.parameters.clients)}{numberField('target_tps', '目标 TPS（0 表示不限速）', 0, 1000000)}</>}
@@ -242,7 +652,6 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
                     {current.driver === 'pgbench' ? <div className="wb-toggle-field"><div><strong>每事务重新连接</strong><span>已按负载模板选择，通常无需修改。</span></div><Switch aria-label="每事务重新连接" checked={current.parameters.connect_per_transaction} disabled={busy} onChange={(value) => update({ connect_per_transaction: value })} /></div>
                       : <div className="wb-field"><label>控制机 JDBC 驱动 jar 绝对路径</label><Input aria-label="JDBC 驱动路径" value={current.parameters.jdbc_jar} disabled={busy} onChange={(event) => update({ jdbc_jar: event.target.value })} placeholder="自动识别本机驱动，也可手动覆盖" /></div>}
                   </> }]} />
-                <div className="wb-quiet-note">预设只调整时长、并发和自动线程，不覆盖 SQL 或验收规则。查询使用只读事务，建议使用专用只读账号。</div>
               </> },
               { key: 'sql', label: 'SQL 脚本', children: <>
                 <div className="wb-script-toolbar"><Tag color={current.parameters.script === current.defaults.script ? 'default' : 'processing'}>{current.parameters.script === current.defaults.script ? '默认脚本' : '本次自定义'}</Tag><Space><Button size="small" disabled={busy} onClick={() => update({ script: current.defaults.script })}>恢复默认 SQL</Button><Button size="small" onClick={() => setCompare(true)}>对照默认</Button></Space></div>
@@ -254,16 +663,95 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
                 <Alert type="info" showIcon message="执行成功不等于性能达标" description="未设置阈值时报告明确标注性能验收未配置；本阶段没有业务结果断言或 P95 / P99 采集。" />
               </> },
             ]} />
-            <Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => update({ ...current.defaults })}>恢复此负载全部默认参数</Button>
           </>}
         </> : <Empty description="选择一项负载查看配置" />}
       </section>
     </div>
-    <footer className="wb-execution-bar"><div><strong>本次执行 · {selected.length} 项负载</strong><span>顺序执行 · 失败停止后续项 · 后端 {catalog?.environment.host}:{catalog?.environment.port}/{catalog?.environment.database_name}</span><small>{[...new Set(selected.map((entry) => connectionLabel(entry.parameters.connection_mode)))].join('、')} · 代理端口在执行时独立分配</small></div><Space wrap><Button icon={<ExperimentOutlined />} loading={busy} disabled={!selected.length || running} onClick={() => void review(true)}>小规模试跑</Button><Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} disabled={!selected.length || running} onClick={() => void review()}>审阅并启动 {selected.length} 项</Button></Space></footer>
+    <footer className="wb-execution-bar">
+      {isStableSelection ? (
+        <>
+          <div>
+            <strong>本次 fbasecman 常稳执行 · {selectedStable.length} 项已勾选</strong>
+            <span>多路并发执行 · 自动准备夹具 / 预检路由 / 守护进程 RSS / 扫描 PG 日志 · 后端 {catalog?.environment.host}:{catalog?.environment.port}</span>
+            <small>已选场景：{selectedStable.map((e) => e.title).slice(0, 4).join('、')}{selectedStable.length > 4 ? ` 等 ${selectedStable.length} 项` : ''}</small>
+          </div>
+          <Space wrap>
+            <Button icon={<ThunderboltOutlined />} loading={busy} disabled={!selectedStable.length}
+              onClick={() => void launchStableSuite(
+                selectedStable.length === stableEntries.length ? 'all' : (selectedStable.length === 1 ? selectedStable[0].stable_meta!.name : 'all'),
+                {
+                  smoke: true,
+                  enabled_workloads: selectedStable.length === stableEntries.length ? undefined : selectedStable.map((e) => e.id),
+                  label: `常稳冒烟试跑 (${selectedStable.length} 项 · 20s)`,
+                },
+              )}>
+              20s 冒烟试跑 ({selectedStable.length} 项)
+            </Button>
+            <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} disabled={!selectedStable.length}
+              onClick={() => void launchStableSuite(
+                selectedStable.length === stableEntries.length ? 'all' : (selectedStable.length === 1 ? selectedStable[0].stable_meta!.name : 'all'),
+                {
+                  duration_seconds: stableDuration || undefined,
+                  enabled_workloads: selectedStable.length === stableEntries.length ? undefined : selectedStable.map((e) => e.id),
+                  label: `fbasecman 常稳执行 (${selectedStable.length} 项)`,
+                },
+              )}>
+              启动已选 {selectedStable.length} 项常稳
+            </Button>
+          </Space>
+        </>
+      ) : (
+        <>
+          <div>
+            <strong>本次 SQL 基准执行 · {selectedSql.length} 项已勾选</strong>
+            <span>顺序执行 · 失败停止后续项 · 后端 {catalog?.environment.host}:{catalog?.environment.port}/{catalog?.environment.database_name}</span>
+            <small>{selectedSql.length ? [...new Set(selectedSql.map((entry) => connectionLabel(entry.parameters.connection_mode)))].join('、') : '未勾选负载'} · 代理端口在执行时独立分配</small>
+          </div>
+          <Space wrap>
+            <Button icon={<ExperimentOutlined />} loading={busy} disabled={!selectedSql.length || running} onClick={() => void review(true)}>小规模试跑</Button>
+            <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} disabled={!selectedSql.length || running} onClick={() => void review()}>审阅并启动 {selectedSql.length} 项</Button>
+          </Space>
+        </>
+      )}
+    </footer>
   </>;
+
   const observe = run ? <section className="wb-run-panel">
     <div className="wb-panel-heading"><div><span className="wb-eyebrow">RUN OBSERVATION</span><h4>负载执行</h4><p>{run.definition.environment.host}:{run.definition.environment.port}/{run.definition.environment.database_name} · 顺序执行</p></div><Space><Tag color={statusColor(run.status)}>{LABELS[run.status] || run.status}</Tag>{running && <Button danger icon={<StopOutlined />} loading={busy} onClick={() => Modal.confirm({ title: '停止整组工作负载？', content: '取消当前任务，并禁止提交后续负载。', onOk: stop })}>停止整组</Button>}</Space></div>
     {run.reason && <Alert type="warning" message={run.reason} />}
+
+    {/* 四维运行健康速览卡片 */}
+    <div className="wb-observe-kpis">
+      <div className="wb-kpi-card">
+        <span className="wb-kpi-label">执行进度与状态</span>
+        <strong>{run.task_details?.filter((t) => t.status === 'SUCCEEDED').length || 0} / {run.definition.workloads.length} 完成</strong>
+        <small>当前状态：{LABELS[run.status] || run.status}</small>
+      </div>
+      <div className="wb-kpi-card">
+        <span className="wb-kpi-label">当前关注任务 TPS</span>
+        <strong>{observed?.summary.tps?.toFixed(2) ?? observed?.samples.at(-1)?.tps.toFixed(2) ?? '—'}</strong>
+        <small>{observed?.result?.comparison?.valid ? `直连 ${observed.result.comparison.direct_tps?.toFixed(1)} → 代理 ${observed.result.comparison.proxy_tps?.toFixed(1)}` : '实时吞吐采样'}</small>
+      </div>
+      <div className="wb-kpi-card">
+        <span className="wb-kpi-label">平均延迟 (ms)</span>
+        <strong>{observed?.summary.latency_ms?.toFixed(3) ?? observed?.samples.at(-1)?.latency_ms.toFixed(3) ?? '—'}</strong>
+        <small>{observed?.result?.comparison?.valid ? `延迟变化 +${observed.result.comparison.latency_increase_ms?.toFixed(3)} ms` : '客户端往返耗时'}</small>
+      </div>
+      <div className="wb-kpi-card">
+        <span className="wb-kpi-label">代理进程与内存守护</span>
+        <strong>
+          {observed?.proxy_monitor?.samples.length
+            ? `${observed.proxy_monitor.samples.at(-1)?.rss_mib.toFixed(1)} MiB`
+            : observed?.connection_evidence?.proxy_pid ? `PID ${observed.connection_evidence.proxy_pid}` : '直连模式'}
+        </strong>
+        <small>
+          {observed?.proxy_monitor?.samples.length
+            ? `CPU ${observed.proxy_monitor.samples.at(-1)?.cpu_percent?.toFixed(1) ?? '—'}% · ${observed?.connection_evidence?.proxy_stopped ? '已停止回收' : '运行中'}`
+            : '进程存活与泄漏监控'}
+        </small>
+      </div>
+    </div>
+
     <Table pagination={false} rowKey="id" size="small" scroll={{ x: 700 }} dataSource={run.definition.workloads.map((entry, index) => ({ ...entry, parameters: run.definition.steps[index].parameters, task: run.task_details?.[index], identity: run.tasks[index] }))} columns={[
       { title: '负载', dataIndex: 'title' },
       { title: '连接方式', render: (_, row) => connectionLabel(row.parameters.connection_mode) },
@@ -297,8 +785,9 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
 
   return <div className="workload-workbench">
     {error && <Alert closable type="error" showIcon message={error} onClose={() => setError('')} />}
-    <div className="wb-target-summary"><span className="wb-target-dot" /><strong>{catalog?.environment.title || environment.title}</strong><code>{catalog?.environment.host || environment.host}:{catalog?.environment.port || environment.port}</code><span>数据库：{catalog?.environment.database_name || environment.database_name}</span><Tag>登记的后端数据库</Tag></div>
     {!catalog ? catalogLoading ? <div className="wb-loading"><Spin /> 正在读取负载目录</div> : <div className="workload-empty"><Empty description="负载目录读取失败，请确认后端已加载新接口" /><Button onClick={() => window.location.reload()}>重新读取</Button></div> : <Tabs activeKey={workspace} onChange={setWorkspace} items={[{ key: 'configure', label: '配置方案', children: configure }, { key: 'dashboard', label: '综合监控大屏', children: dashboardView }, { key: 'observe', label: <>运行观察 {run && <Tag>{LABELS[run.status] || run.status}</Tag>}</>, children: observe }]} />}
+    <ExecutionTerminal taskId={stableTaskId} onInspect={openTask} initiallyExpanded
+      onFinished={() => undefined} onClose={() => setStableTaskId(null)} />
     <Modal title={plan?.smoke ? '审阅小规模试跑' : '审阅执行计划'} open={Boolean(plan)} width={840} onCancel={() => !busy && setPlan(null)} onOk={() => void start()} confirmLoading={busy} okText="确认启动" okButtonProps={{ disabled: !plan?.ready || running }}>
       {plan && <><div className="wb-review-summary"><strong>{plan.environment.title}</strong><code>{plan.environment.host}:{plan.environment.port}/{plan.environment.database_name}</code><span>用户：{plan.environment.database_user} · 顺序执行 · 峰值 {plan.peak_clients} 个客户端 · 总运行配置时长 {plan.duration_seconds} 秒（不含准备及连接开销）</span></div>
         {plan.issues.map((issue) => <Alert key={issue} type="error" showIcon message={issue} />)}

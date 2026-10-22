@@ -31,7 +31,7 @@ def _engine_run(case, tmp_path):
 
 def test_catalog_registers_all_targets():
     module = load_cases()
-    assert len(module.CASES) == len(module.CASE_METADATA) == 212
+    assert len(module.CASES) == len(module.CASE_METADATA) == 220
 
 
 def test_long_time_cases_skip_suite_runs():
@@ -82,7 +82,7 @@ def test_common_cases_are_native():
 
 def test_every_catalog_case_has_a_native_platform_host():
     module = load_cases()
-    assert len(module.CASES) == 212
+    assert len(module.CASES) == 220
     assert not [target for target, case in module.CASES.items()
                 if type(case).__name__ == "LegacyCmanCase"]
     suite_hosts = [case for case in module.CASES.values()

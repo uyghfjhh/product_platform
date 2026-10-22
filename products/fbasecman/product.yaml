@@ -37,6 +37,15 @@ actions:
     title: 运行 fbasecman 常稳
     capability: stability
     changes_environment: true
+    parameters:
+      type: object
+      properties:
+        smoke:
+          type: boolean
+        duration_seconds:
+          type: integer
+        enabled_workloads:
+          type: array
   - id: diagnostics.analyze
     title: AI 分析当前测试结果
     capability: diagnostics

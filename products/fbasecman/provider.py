@@ -338,10 +338,37 @@ class FbasecmanProvider:
             script = product.cli_path("stable")
             from products.fbasecman.test_settings import regression_snapshot
             snapshot = regression_snapshot(settings, environment)
-            command = [str(script), '--config', snapshot['regress_extra_configs'][0], "run"]
-            if target != "all":
-                command.append(target)
-            return CommandSpec(command, settings.product_regress_root("fbasecman"))
+            regress_root = settings.product_regress_root("fbasecman")
+            command = [str(script), '--config', snapshot['regress_extra_configs'][0]]
+            if parameters.get("smoke"):
+                smoke_cfg = regress_root / "suites" / "stable" / "assets" / "config" / "stable.smoke.yaml"
+                if smoke_cfg.is_file():
+                    command.extend(["--config", str(smoke_cfg)])
+            custom_stable = {}
+            if parameters.get("duration_seconds"):
+                dur = f"{int(parameters['duration_seconds'])}s"
+                custom_stable["pgbench_duration"] = dur
+                custom_stable["jdbc_duration"] = dur
+            if parameters.get("enabled_workloads"):
+                custom_stable["enabled_workloads"] = [
+                    w[7:] if str(w).startswith("stable.") else str(w)
+                    for w in parameters["enabled_workloads"]
+                ]
+            if custom_stable:
+                import yaml
+                override_dir = settings.runtime_dir / "products" / "fbasecman" / environment["id"]
+                override_dir.mkdir(parents=True, exist_ok=True)
+                override_file = override_dir / "stable_workbench_override.yaml"
+                override_file.write_text(
+                    yaml.safe_dump({"stable": custom_stable}, allow_unicode=True),
+                    encoding="utf-8",
+                )
+                command.extend(["--config", str(override_file)])
+            command.append("run")
+            normalized = target[7:] if target and target.startswith("stable.") else target
+            if normalized and normalized != "all":
+                command.append(normalized)
+            return CommandSpec(command, regress_root)
         raise ValueError("fbasecman 未注册操作: %s" % action)
 
 

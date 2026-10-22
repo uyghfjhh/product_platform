@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Form, Input, InputNumber, Select, Space, Statistic, Table, Typography } from 'antd';
+import { Alert, App, Button, Card, Collapse, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography } from 'antd';
+import { ThunderboltOutlined } from '@ant-design/icons';
 import { api, operationRequest, type Environment } from '../platform/api';
+import WorkloadWorkbench from '../components/WorkloadWorkbench';
 
 type Sample = { elapsed: number; tps: number; latency_ms: number };
 type Metrics = { samples: Sample[]; summary: { tps?: number; latency_ms?: number }; status: string; reason?: string; available: boolean };
@@ -14,6 +16,8 @@ export default function WorkloadsPage({ environments, environment, onSelectEnvir
   const { message, modal } = App.useApp();
   const [form] = Form.useForm();
   const driver = Form.useWatch('driver', form);
+  const selectedEnvId = Form.useWatch('environment_id', form);
+  const activeEnvironment = environments.find((e) => e.id === (selectedEnvId || environment?.id)) || environment || environments[0];
   const [taskId, setTaskId] = useState('');
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [error, setError] = useState('');
@@ -33,9 +37,9 @@ export default function WorkloadsPage({ environments, environment, onSelectEnvir
   }, [taskId]);
   async function start() {
     const values = await form.validateFields();
-    const environment = environments.find((e) => e.id === values.environment_id);
-    if (!environment) return;
-    modal.confirm({ title: '启动数据库工作负载', content: `${environment.title} · ${values.clients} 个客户端 · ${values.duration_seconds} 秒。将占用数据库连接及执行资源。`, onOk: async () => {
+    const targetEnv = environments.find((e) => e.id === values.environment_id);
+    if (!targetEnv) return;
+    modal.confirm({ title: '启动数据库工作负载', content: `${targetEnv.title} · ${values.clients} 个客户端 · ${values.duration_seconds} 秒。将占用数据库连接及执行资源。`, onOk: async () => {
       setBusy(true); setError('');
       try {
         const { environment_id, driver: selected, ...parameters } = values;
@@ -44,22 +48,59 @@ export default function WorkloadsPage({ environments, environment, onSelectEnvir
       } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
     } });
   }
-  return <>
-    <Typography.Title level={3}>数据库压测</Typography.Title>
-    <Alert type="info" message="pgbench 与 JDBC 使用真实客户端负载，采集 TPS 和平均延迟并按阈值判定；不初始化业务数据库。" style={{ marginBottom: 16 }} />
-    {error && <Alert type="error" message={error} />}
-    <Form form={form} layout="vertical" initialValues={{ environment_id: environments.some((e) => e.id === environment?.id) ? environment?.id : undefined, driver: 'pgbench', preset: 'connectivity', clients: 4, duration_seconds: 30, minimum_tps: 0, max_average_latency_ms: 0, jdbc_jar: '' }}>
-      <Form.Item name="environment_id" label="环境" rules={[{ required: true }]}><Select options={environments.map((e) => ({ value: e.id, label: e.title }))} onChange={onSelectEnvironment} /></Form.Item>
-      <Space wrap><Form.Item name="driver" label="客户端"><Select style={{ width: 150 }} options={[{ value: 'pgbench', label: 'pgbench' }, { value: 'jdbc', label: 'JDBC' }]} /></Form.Item><Form.Item name="preset" label="工作负载"><Select style={{ width: 180 }} options={[{ value: 'connectivity', label: '连接与轻查询' }, { value: 'catalog', label: '系统目录查询' }]} /></Form.Item><Form.Item name="clients" label="并发客户端"><InputNumber min={1} max={128} /></Form.Item><Form.Item name="duration_seconds" label="时长（秒）"><InputNumber min={1} max={3600} /></Form.Item></Space>
-      {driver === 'jdbc' && <Form.Item name="jdbc_jar" label="控制机 JDBC 驱动 jar 路径" rules={[{ required: true }]}><Input /></Form.Item>}
-      <Space wrap><Form.Item name="minimum_tps" label="最低 TPS（0 不设阈值）"><InputNumber min={0} /></Form.Item><Form.Item name="max_average_latency_ms" label="最高平均延迟 ms（0 不设阈值）"><InputNumber min={0} /></Form.Item></Space>
-      <Button type="primary" loading={busy} onClick={() => void start().catch((cause: Error) => setError(cause.message))}>启动压测</Button>
-    </Form>
-    {taskId && <Space style={{ margin: '16px 0' }}><Button onClick={() => openTask(taskId)}>任务、取消与原始日志</Button><Typography.Text>{metrics?.status}</Typography.Text></Space>}
-    {metrics && <><Space wrap size={40}><Statistic title="汇总 TPS" value={metrics.summary.tps ?? '—'} precision={2} /><Statistic title="平均延迟（ms）" value={metrics.summary.latency_ms ?? '—'} precision={3} /></Space>
-      {!metrics.available && <Alert type="info" message="采样尚未产生或运行产物已清理；任务状态仍可查看。" />}
-      <Curve samples={metrics.samples} field="tps" label="TPS 实际采样" /><Curve samples={metrics.samples} field="latency_ms" label="平均延迟实际采样（ms）" />
-      <Table size="small" rowKey={(_, i) => String(i)} dataSource={metrics.samples} columns={[{ title: '秒', dataIndex: 'elapsed' }, { title: 'TPS', dataIndex: 'tps' }, { title: '平均延迟 ms', dataIndex: 'latency_ms' }]} />
-    </>}
-  </>;
+  return <div className="workload-page">
+    <header className="workload-page-heading">
+      <div className="workload-page-heading-left">
+        <span className="workload-page-icon"><ThunderboltOutlined /></span>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Typography.Title level={3} style={{ margin: 0 }}>数据库压测</Typography.Title>
+            <Tag color="blue">工作负载编排 · 实时采样 · 常稳守护</Tag>
+          </div>
+          <Typography.Text type="secondary">pgbench 与 JDBC 真实客户端负载，采集 TPS 与平均延迟并支持多场景组合编排。</Typography.Text>
+        </div>
+      </div>
+      {environments.length > 0 && (
+        <Space size={8}>
+          <Typography.Text type="secondary">目标环境：</Typography.Text>
+          <Select
+            style={{ minWidth: 240 }}
+            value={activeEnvironment?.id}
+            options={environments.map((e) => ({ value: e.id, label: `${e.title} (${e.host}:${e.port})` }))}
+            onChange={(val) => {
+              form.setFieldValue('environment_id', val);
+              onSelectEnvironment?.(val);
+            }}
+          />
+        </Space>
+      )}
+    </header>
+    {error && <Alert type="error" message={error} style={{ marginBottom: 12 }} />}
+
+    {activeEnvironment && (
+      <WorkloadWorkbench key={activeEnvironment.id} environment={activeEnvironment} openTask={openTask} />
+    )}
+
+    <Collapse ghost defaultActiveKey={['quick-single']} style={{ marginTop: 12 }} items={[{
+      key: 'quick-single',
+      label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>单次快速探针压测（直接提交单任务）</Typography.Text>,
+      children: (
+        <Card size="small">
+          <Form form={form} layout="vertical" initialValues={{ environment_id: environments.some((e) => e.id === environment?.id) ? environment?.id : environments[0]?.id, driver: 'pgbench', preset: 'connectivity', clients: 4, duration_seconds: 30, minimum_tps: 0, max_average_latency_ms: 0, jdbc_jar: '' }}>
+            <Form.Item name="environment_id" label="环境" rules={[{ required: true }]}><Select options={environments.map((e) => ({ value: e.id, label: e.title }))} onChange={onSelectEnvironment} /></Form.Item>
+            <Space wrap><Form.Item name="driver" label="客户端"><Select style={{ width: 150 }} options={[{ value: 'pgbench', label: 'pgbench' }, { value: 'jdbc', label: 'JDBC' }]} /></Form.Item><Form.Item name="preset" label="工作负载"><Select style={{ width: 180 }} options={[{ value: 'connectivity', label: '连接与轻查询' }, { value: 'catalog', label: '系统目录查询' }]} /></Form.Item><Form.Item name="clients" label="并发客户端"><InputNumber min={1} max={128} /></Form.Item><Form.Item name="duration_seconds" label="时长（秒）"><InputNumber min={1} max={3600} /></Form.Item></Space>
+            {driver === 'jdbc' && <Form.Item name="jdbc_jar" label="控制机 JDBC 驱动 jar 路径" rules={[{ required: true }]}><Input /></Form.Item>}
+            <Space wrap><Form.Item name="minimum_tps" label="最低 TPS（0 不设阈值）"><InputNumber min={0} /></Form.Item><Form.Item name="max_average_latency_ms" label="最高平均延迟 ms（0 不设阈值）"><InputNumber min={0} /></Form.Item></Space>
+            <Button type="primary" loading={busy} onClick={() => void start().catch((cause: Error) => setError(cause.message))}>启动压测</Button>
+          </Form>
+          {taskId && <Space style={{ margin: '16px 0' }}><Button onClick={() => openTask(taskId)}>任务、取消与原始日志</Button><Typography.Text>{metrics?.status}</Typography.Text></Space>}
+          {metrics && <><Space wrap size={40}><Statistic title="汇总 TPS" value={metrics.summary.tps ?? '—'} precision={2} /><Statistic title="平均延迟（ms）" value={metrics.summary.latency_ms ?? '—'} precision={3} /></Space>
+            {!metrics.available && <Alert type="info" message="采样尚未产生或运行产物已清理；任务状态仍可查看。" />}
+            <Curve samples={metrics.samples} field="tps" label="TPS 实际采样" /><Curve samples={metrics.samples} field="latency_ms" label="平均延迟实际采样（ms）" />
+            <Table size="small" rowKey={(_, i) => String(i)} dataSource={metrics.samples} columns={[{ title: '秒', dataIndex: 'elapsed' }, { title: 'TPS', dataIndex: 'tps' }, { title: '平均延迟 ms', dataIndex: 'latency_ms' }]} />
+          </>}
+        </Card>
+      ),
+    }]} />
+  </div>;
 }
