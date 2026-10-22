@@ -227,7 +227,7 @@ fbasecman、多活和等保的既有回归实现是迁移行为基准，参考�
 
 - fbasecman：`/home/postgres/fly_dev/fbasecman_dev/fbasecman_regress_v2`
 - FBase 多活/等保：`/home/postgres/fly_dev/postgresql_for_fbase_dev/fbase_regress`
-- 数据库集群部署：`/home/postgres/fly_dev/pgcluster`
+- 数据库集群部署：`backend/pgcluster`（已收编入当前仓库，不再依赖外部同级 `pgcluster` 仓库）
 
 迁移只替换执行宿主和平台集成方式。产品配置、测试准备、步骤顺序、断言内容、
 资源清理、报告证据和判定语义必须保持一致。旧版本已失败的用例迁入后继续 FAIL；

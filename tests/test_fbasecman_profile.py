@@ -13,10 +13,9 @@ from platform_app.topology import configured_topology
 
 def settings_for(tmp_path: Path) -> Settings:
     repo_root = Path(__file__).resolve().parent.parent
-    fly_root = repo_root.parent
     return Settings(
         data_dir=tmp_path / "data",
-        pgcluster_root=fly_root / "pgcluster",
+        pgcluster_root=repo_root / "backend" / "pgcluster",
         license_key_dir=tmp_path / "keys",
         license_vendor="测试厂商",
     )

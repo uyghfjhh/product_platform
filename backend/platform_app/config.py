@@ -77,7 +77,7 @@ def load_settings():
     return Settings(
         data_dir=data,
         config_dir=directory('PRODUCT_PLATFORM_CONFIG_DIR', data.parent / 'config'),
-        pgcluster_root=directory('PRODUCT_PLATFORM_PGCLUSTER_ROOT', ROOT.parent / 'pgcluster'),
+        pgcluster_root=directory('PRODUCT_PLATFORM_PGCLUSTER_ROOT', ROOT / 'backend' / 'pgcluster'),
         license_key_dir=directory('PRODUCT_PLATFORM_LICENSE_KEYS', data / 'license' / 'keys'),
         license_vendor=os.environ.get('PRODUCT_PLATFORM_LICENSE_VENDOR', '飞象'),
         output_dir=directory('PRODUCT_PLATFORM_OUTPUT_DIR', data.parent / 'output'),

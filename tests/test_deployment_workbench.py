@@ -22,9 +22,7 @@ from test_api import settings_for
 
 @pytest.fixture
 def workbench(tmp_path):
-    engine = ROOT.parent / "pgcluster"
-    if not engine.is_dir():
-        pytest.skip("Integration contract requires sibling pgcluster checkout")
+    engine = ROOT / "backend" / "pgcluster"
     settings = replace(settings_for(tmp_path), pgcluster_root=engine, regress_roots={})
     home = tmp_path / "installation"
     (home / "bin").mkdir(parents=True)

@@ -1,0 +1,307 @@
+"""Full-screen deployment map for pgcluster."""
+
+import re
+import time
+
+from rich.align import Align
+from rich.columns import Columns
+from rich.console import Console, Group
+from rich.markup import escape
+from rich.panel import Panel
+from rich.text import Text
+from textual import work
+from textual.app import App, ComposeResult
+from textual.widgets import Static
+
+from .errors import OperationError
+from .tui import (_instance_states, _metrics, _operational_metrics,
+                  _topology_targets, format_bytes)
+
+
+STATUS_STYLES = {
+    "运行中": "green",
+    "部分停止": "yellow",
+    "已停止": "red",
+    "未知": "grey70",
+}
+
+
+def _stream_status(runtime, states, stream):
+    values = [states[item]["running"] for item in runtime.target_instances("streaming." + stream)]
+    if all(value is True for value in values):
+        return "运行中"
+    if any(value is None for value in values):
+        return "未知"
+    if any(value for value in values):
+        return "部分停止"
+    return "已停止"
+
+
+def _tone(status):
+    return STATUS_STYLES.get(status, "grey70")
+
+
+def _short_instance(name):
+    name = name.removesuffix("_node")
+    aliases = (
+        ("logical_pub_", "pub."),
+        ("logical_sub_", "sub."),
+        ("citus_coordinator_", "coord."),
+        ("citus_worker_1_", "worker1."),
+        ("citus_worker_2_", "worker2."),
+        ("mmr_a_", "mmr-a."),
+        ("mmr_b_", "mmr-b."),
+        ("basic_", "basic."),
+    )
+    for prefix, replacement in aliases:
+        if name.startswith(prefix):
+            return replacement + name[len(prefix):]
+    return name
+
+
+def _pid(state):
+    message = state.get("message", "") if state else ""
+    match = re.search(r"\bPID\s*:\s*(\d+)|\bpid\s*=\s*(\d+)", message, re.IGNORECASE)
+    return (match.group(1) or match.group(2)) if match else "-"
+
+
+def _short_data_dir(value):
+    value = str(value).rstrip("/")
+    prefix = "PGDATA "
+    lines = []
+    remaining = value
+    while len(prefix) + len(remaining) > 40:
+        cut = remaining.rfind("/", 0, 40 - len(prefix) + 1)
+        if cut <= 0:
+            cut = 40 - len(prefix)
+        lines.append(prefix + remaining[:cut + 1])
+        remaining = remaining[cut + 1:]
+        prefix = "       "
+    lines.append(prefix + remaining)
+    return "\n".join(escape(line) for line in lines)
+
+
+def _database_node(config, states, name):
+    """Render exactly one PostgreSQL instance as one box."""
+    state = states.get(name, {})
+    running = state.get("running")
+    status = "运行中" if running is True else "已停止" if running is False else "未知"
+    instance = config.instance(name)
+    content = Text.from_markup(
+        "[b bright_cyan]▣ %s[/]\n"
+        "[%s]● %s[/]\n"
+        "[dim]%s:%s  pid=%s[/]\n"
+        "[dim]%s[/]" %
+        (_short_instance(name), _tone(status), status,
+         instance["host_config"]["address"], instance["port"], _pid(state),
+         _short_data_dir(instance["data_dir"]))
+    )
+    return Panel(content, border_style=_tone(status), width=46, padding=(0, 1))
+
+
+def _physical_arrow():
+    return Text("\n  ────▶\n PHYSICAL", style="bold bright_cyan", justify="center")
+
+
+def _stream_pair(config, runtime, states, stream):
+    primary = runtime._primary(stream)
+    standbys = runtime._streaming_standbys(stream)
+    nodes = [_database_node(config, states, primary)]
+    for standby in standbys:
+        nodes.extend((_physical_arrow(), _database_node(config, states, standby)))
+    return Columns(nodes, expand=False)
+
+
+def _logical_arrow():
+    return Text("  │\n  ▼  LOGICAL REPLICATION", style="bold yellow")
+
+
+def _lane(title, status, content, width, metric=None):
+    if metric:
+        content = Group(Text(metric, style="dim"), content)
+    return Panel(Align.center(content), title=title, title_align="left", border_style=_tone(status),
+                 padding=(0, 1), width=width)
+
+
+def _metric_line(operational, detail, target, tps):
+    connections = operational.get("connections", 0)
+    max_connections = operational.get("max_connections") or "?"
+    cache_hit = operational.get("cache_hit")
+    common = "指标 连接=%s/%s | TPS=%.1f 次/秒 | 缓存命中=%s" % (
+        connections, max_connections, tps,
+        "%s%%" % cache_hit if cache_hit is not None else "未知")
+    kind = target.split(".", 1)[0]
+    if kind == "streaming":
+        extra = ("流复制指标 %s | WAL lag(发送/写入/刷盘/回放)=%s/%s/%s/%s | 回放时间=%ss" %
+                 (detail.get("replication", "未知"),
+                  format_bytes(detail.get("sent_lag_bytes")), format_bytes(detail.get("write_lag_bytes")),
+                  format_bytes(detail.get("flush_lag_bytes")), format_bytes(detail.get("replay_lag_bytes")),
+                  detail.get("replay_lag_seconds", "未知")))
+    elif kind == "logical":
+        subscription = {"enabled": "启用", "disabled": "停用", "missing": "缺失"}.get(
+            detail.get("subscription"), "未知")
+        extra = ("逻辑复制 订阅=%s | publisher_current=%s | subscriber_received=%s | subscriber_latest=%s\n"
+                 "slot restart_lsn=%s | confirmed_flush_lsn=%s | retained=%s | confirmed_lag=%s | apply=%ss" %
+                 (subscription, detail.get("publisher_current_lsn", "-"),
+                  detail.get("subscriber_received_lsn", "-"), detail.get("subscriber_latest_lsn", "-"),
+                  detail.get("slot_restart_lsn", "-"), detail.get("slot_confirmed_flush_lsn", "-"),
+                  format_bytes(detail.get("slot_retained_bytes")), format_bytes(detail.get("slot_confirmed_lag_bytes")),
+                  detail.get("apply_lag_seconds", "-")))
+    else:
+        extra = detail.get("replication", "未知").replace("workers=", "Worker=").replace("active=", "活跃成员=")
+    return "METRIC  %s | %s" % (common, extra)
+
+
+def _deployment_map(config, runtime, states, targets, operational, details, tps):
+    """Render all configured databases and their dependency relationships."""
+    blocks = []
+    target_set = set(targets)
+    standalone_streams = [target.split(".", 1)[1] for target in targets
+                          if target.startswith("streaming.")]
+    for stream in standalone_streams:
+        status = _stream_status(runtime, states, stream)
+        blocks.append(_lane("物理流复制  %s" % stream, status,
+                            _stream_pair(config, runtime, states, stream), 110,
+                            _metric_line(operational, details.get("streaming.%s" % stream, {}),
+                                         "streaming.%s" % stream, tps)))
+
+    for name, link in config.logical_replications.items():
+        if "logical.%s" % name not in target_set:
+            continue
+        pub = link["pub"]["streaming_cluster"]
+        sub = link["sub"]["streaming_cluster"]
+        statuses = [_stream_status(runtime, states, pub), _stream_status(runtime, states, sub)]
+        status = "运行中" if all(item == "运行中" for item in statuses) else "部分停止"
+        blocks.append(_lane("逻辑复制  %s" % name, status,
+                            Group(_stream_pair(config, runtime, states, pub),
+                                  _logical_arrow(),
+                                  _stream_pair(config, runtime, states, sub)), 110,
+                            _metric_line(operational, details.get("logical.%s" % name, {}),
+                                         "logical.%s" % name, tps)))
+
+    for name, cluster in config.citus_clusters.items():
+        if "citus.%s" % name not in target_set:
+            continue
+        coordinator = cluster["coordinator"]["streaming_cluster"]
+        workers = [("WORKER %s" % worker, value["streaming_cluster"])
+                   for worker, value in cluster["workers"].items()]
+        streams = [coordinator] + [stream for _label, stream in workers]
+        statuses = [_stream_status(runtime, states, stream) for stream in streams]
+        status = "运行中" if all(item == "运行中" for item in statuses) else "部分停止"
+        nodes = [_stream_pair(config, runtime, states, coordinator)]
+        nodes.append(Text("     ╰═════════ CITUS DISTRIBUTION ═════════▶", style="bold yellow"))
+        nodes.extend(_stream_pair(config, runtime, states, stream) for _label, stream in workers)
+        blocks.append(_lane("Citus  %s" % name, status, Group(*nodes), 110,
+                            _metric_line(operational, details.get("citus.%s" % name, {}),
+                                         "citus.%s" % name, tps)))
+
+    for name, cluster in config.mmr_clusters.items():
+        if "mmr.%s" % name not in target_set:
+            continue
+        members = [("MMR MEMBER %s" % member, value["streaming_cluster"])
+                   for member, value in cluster["members"].items()]
+        statuses = [_stream_status(runtime, states, stream) for _label, stream in members]
+        status = "运行中" if all(item == "运行中" for item in statuses) else "部分停止"
+        nodes = []
+        for index, (label, stream) in enumerate(members):
+            if index:
+                nodes.append(Text("     ╰═════════ MMR MULTI-MASTER ═════════↔", style="bold yellow"))
+            nodes.append(_stream_pair(config, runtime, states, stream))
+        blocks.append(_lane("MMR  %s" % name, status, Group(*nodes), 110,
+                            _metric_line(operational, details.get("mmr.%s" % name, {}),
+                                         "mmr.%s" % name, tps)))
+
+    return Group(*blocks)
+
+
+class PgClusterApp(App):
+    CSS = """
+    Screen { background: #10161c; color: #d8e2ea; }
+    #topology { height: 1fr; margin: 1 2; padding: 1; border: round #2b7189; overflow: hidden; content-align: center middle; }
+    """
+    BINDINGS = [("q", "quit", "退出"), ("r", "refresh_now", "刷新"),
+                ("c", "copy_map", "复制拓扑")]
+
+    def __init__(self, config, runtime, refresh_seconds, once=False, target=None):
+        super().__init__()
+        self.config = config
+        self.runtime = runtime
+        self.refresh_seconds = max(1, int(refresh_seconds))
+        self.once = once
+        self.target = target
+        self.last_transactions = None
+        self.last_sample_at = None
+        self.copy_text = ""
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="topology")
+
+    def _snapshot(self):
+        targets = _topology_targets(self.config, self.target)
+        names = []
+        for target in targets:
+            for name in self.runtime.target_instances(target):
+                if name not in names:
+                    names.append(name)
+        states = _instance_states(self.config, self.runtime, names)
+        operational = _operational_metrics(self.config, self.runtime, states)
+        details = {}
+        for target in targets:
+            try:
+                details[target] = _metrics(self.config, self.runtime, target)
+            except (KeyError, OperationError):
+                details[target] = {"replication": "未知"}
+        return states, targets, operational, details
+
+    def on_mount(self):
+        if self.once:
+            self.set_timer(0.05, self.refresh_once)
+        else:
+            self.refresh_dashboard()
+            self.set_interval(self.refresh_seconds, self.refresh_dashboard)
+
+    def refresh_once(self):
+        states, targets, operational, details = self._snapshot()
+        self.apply_snapshot(states, targets, operational, details)
+        self.set_timer(0.15, self.exit)
+
+    def action_quit(self):
+        self.exit()
+
+    def action_refresh_now(self):
+        self.refresh_dashboard()
+
+    def action_copy_map(self):
+        if not self.copy_text:
+            self.notify("拓扑尚未完成采样", severity="warning")
+            return
+        self.copy_to_clipboard(self.copy_text)
+        self.notify("部署图已复制到剪贴板", severity="information")
+
+    @work(thread=True, exclusive=True)
+    def refresh_dashboard(self):
+        states, targets, operational, details = self._snapshot()
+        self.call_from_thread(self.apply_snapshot, states, targets, operational, details)
+
+    def apply_snapshot(self, states, targets, operational, details):
+        now = time.monotonic()
+        transactions = operational.get("transactions", 0)
+        tps = 0.0
+        if self.last_transactions is not None and self.last_sample_at is not None:
+            tps = max(0, transactions - self.last_transactions) / max(1, now - self.last_sample_at)
+        self.last_transactions = transactions
+        self.last_sample_at = now
+        diagram = _deployment_map(self.config, self.runtime, states, targets, operational, details, tps)
+        plain = Console(record=True, width=max(120, self.size.width - 4), color_system=None)
+        plain.print(diagram)
+        self.copy_text = plain.export_text(styles=False).rstrip()
+        self.query_one("#topology", Static).update(
+            Align.center(diagram, vertical="middle")
+        )
+        if self.once:
+            self.exit()
+
+
+def run(config, runtime, refresh_seconds=3, once=False, target=None):
+    PgClusterApp(config, runtime, refresh_seconds, once, target).run()
+    return 0

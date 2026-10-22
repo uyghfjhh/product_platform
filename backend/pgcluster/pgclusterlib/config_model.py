@@ -1,0 +1,505 @@
+import re
+from pathlib import Path
+
+from .config import _expand
+from .errors import ConfigError
+
+
+class ConfigModel:
+    """Validated desired-state model for the cluster configuration.
+
+    This model owns the complete versionless configuration contract. Runtime
+    operations consume this validated model directly.
+    """
+
+    def __init__(self, path, raw):
+        self.path = Path(path).resolve()
+        self.raw = _expand(raw)
+        self.hosts = self.raw.get("hosts") or {}
+        self.installations = self.raw.get("postgresql_installations") or {}
+        self.instances = self.raw.get("instances") or {}
+        self.streaming_clusters = self.raw.get("streaming_clusters") or {}
+        self.logical_replications = self.raw.get("logical_replications") or {}
+        self.citus_clusters = self.raw.get("citus_clusters") or {}
+        self.mmr_clusters = self.raw.get("mmr_clusters") or {}
+        self._validate()
+
+    @staticmethod
+    def _bool(value, field):
+        if not isinstance(value, bool):
+            raise ConfigError("%s 必须是布尔值" % field)
+
+    @staticmethod
+    def _identifier(value, field):
+        if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 63:
+            raise ConfigError("%s 必须是非空 PostgreSQL 标识符" % field)
+        if not (value[0].isalpha() or value[0] == "_") or any(
+            not (char.isalnum() or char in "_$") for char in value
+        ):
+            raise ConfigError("%s 不是合法 PostgreSQL 标识符: %r" % (field, value))
+
+    def _validate_hosts(self):
+        if not self.hosts:
+            raise ConfigError("hosts 不能为空")
+        addresses = set()
+        for name, host in self.hosts.items():
+            if not isinstance(host, dict) or not isinstance(host.get("address"), str):
+                raise ConfigError("hosts.%s.address 必须是非空地址" % name)
+            if not host["address"]:
+                raise ConfigError("hosts.%s.address 必须是非空地址" % name)
+            if host["address"] in addresses:
+                raise ConfigError("hosts.%s.address 与其他主机重复" % name)
+            addresses.add(host["address"])
+            if "transport" in host:
+                raise ConfigError("hosts.%s 不需要配置 transport，连接方式由地址推断" % name)
+            ssh = host.get("ssh")
+            if ssh is not None:
+                if not isinstance(ssh, dict):
+                    raise ConfigError("hosts.%s.ssh 必须是对象" % name)
+                unknown = set(ssh) - {"user", "port", "identity_file", "connect_timeout"}
+                if unknown:
+                    raise ConfigError("hosts.%s.ssh 含未知字段: %s" % (name, ", ".join(sorted(unknown))))
+                if ssh.get("user") is not None:
+                    if not isinstance(ssh["user"], str) or not re.fullmatch(
+                        r"[a-zA-Z_][a-zA-Z0-9_.-]*", ssh["user"]
+                    ):
+                        raise ConfigError("hosts.%s.ssh.user 必须是合法登录名" % name)
+                if ssh.get("port") is not None:
+                    if not isinstance(ssh["port"], int) or not 1 <= ssh["port"] <= 65535:
+                        raise ConfigError("hosts.%s.ssh.port 必须是 1-65535 的整数" % name)
+                if ssh.get("identity_file") is not None:
+                    if not isinstance(ssh["identity_file"], str) or not Path(ssh["identity_file"]).is_absolute():
+                        raise ConfigError("hosts.%s.ssh.identity_file 必须是绝对路径" % name)
+                if ssh.get("connect_timeout") is not None:
+                    if not isinstance(ssh["connect_timeout"], int) or ssh["connect_timeout"] < 1:
+                        raise ConfigError("hosts.%s.ssh.connect_timeout 必须是正整数秒" % name)
+
+    def _validate_installations(self):
+        if not self.installations:
+            raise ConfigError("postgresql_installations 不能为空")
+        for name, installation in self.installations.items():
+            if not isinstance(installation, dict):
+                raise ConfigError("postgresql_installations.%s 必须是对象" % name)
+            if installation.get("provider") not in {"postgres", "fbase"}:
+                raise ConfigError("postgresql_installations.%s.provider 不支持" % name)
+            home = installation.get("home")
+            if not isinstance(home, str) or not (Path(home).is_absolute() or home.startswith("/")):
+                raise ConfigError("postgresql_installations.%s.home 必须是绝对路径" % name)
+            if installation["provider"] == "fbase":
+                license_config = installation.get("license")
+                if not isinstance(license_config, dict):
+                    raise ConfigError("FBase 安装必须配置 license")
+                source = license_config.get("source_file")
+                if not isinstance(source, str) or not (Path(source).is_absolute() or source.startswith("/")):
+                    raise ConfigError("postgresql_installations.%s.license.source_file 必须是绝对路径" % name)
+                data_file = license_config.get("data_file", "license.dat")
+                if not isinstance(data_file, str) or not data_file or "/" in data_file:
+                    raise ConfigError("postgresql_installations.%s.license.data_file 必须是 PGDATA 内的文件名" % name)
+            for plugin_name, plugin in (installation.get("plugins") or {}).items():
+                if not isinstance(plugin, dict):
+                    raise ConfigError("安装插件 %s.%s 必须是对象" % (name, plugin_name))
+                if "required" in plugin:
+                    self._bool(plugin["required"], "安装插件 %s.%s.required" % (name, plugin_name))
+                if "install" in plugin:
+                    self._bool(plugin["install"], "安装插件 %s.%s.install" % (name, plugin_name))
+                source = plugin.get("source_dir")
+                if source is not None and (not isinstance(source, str) or not (Path(source).is_absolute() or source.startswith("/"))):
+                    raise ConfigError("安装插件 %s.%s.source_dir 必须是绝对路径" % (name, plugin_name))
+                extension = plugin.get("extension")
+                if extension is not None:
+                    self._identifier(extension, "安装插件 %s.%s.extension" % (name, plugin_name))
+                preload = plugin.get("preload_library")
+                if preload is not None and (not isinstance(preload, str) or not preload):
+                    raise ConfigError("安装插件 %s.%s.preload_library 必须是非空字符串" % (name, plugin_name))
+
+    def _validate_instances(self):
+        if not self.instances:
+            raise ConfigError("instances 不能为空")
+        endpoints = set()
+        locations = set()
+        for name, instance in self.instances.items():
+            if not isinstance(instance, dict):
+                raise ConfigError("instances.%s 必须是对象" % name)
+            host_name = instance.get("host")
+            if host_name not in self.hosts:
+                raise ConfigError(
+                    "instances.%s.host=%r 未在 hosts 中定义；可用 host: %s" %
+                    (name, host_name, ", ".join(sorted(self.hosts)) or "无")
+                )
+            installation_name = instance.get("installation")
+            if installation_name not in self.installations:
+                raise ConfigError(
+                    "instances.%s.installation=%r 未在 postgresql_installations 中定义；可用安装: %s。"
+                    "请将该实例的 installation 改为可用名称，或补充对应安装定义。" %
+                    (name, installation_name, ", ".join(sorted(self.installations)) or "无")
+                )
+            try:
+                port = int(instance.get("port"))
+            except (TypeError, ValueError):
+                raise ConfigError("instances.%s.port 必须是整数" % name)
+            if not 1 <= port <= 65535:
+                raise ConfigError("instances.%s.port 超出范围" % name)
+            data_dir = instance.get("data_dir")
+            if not isinstance(data_dir, str) or not (Path(data_dir).is_absolute() or data_dir.startswith(("/", "\\"))) or data_dir in {"/", "\\"}:
+                raise ConfigError("instances.%s.data_dir 必须是非根绝对路径" % name)
+            endpoint = (self.hosts[host_name]["address"], port)
+            location = (self.hosts[host_name]["address"], data_dir)
+            if endpoint in endpoints:
+                raise ConfigError("重复实例端口: %s" % (endpoint,))
+            if location in locations:
+                raise ConfigError("同一主机存在重复 data_dir: %s" % data_dir)
+            endpoints.add(endpoint)
+            locations.add(location)
+
+    def _validate_streaming(self):
+        if not self.streaming_clusters:
+            raise ConfigError("streaming_clusters 不能为空")
+        owners = {}
+        for name, cluster in self.streaming_clusters.items():
+            if not isinstance(cluster, dict):
+                raise ConfigError("streaming_clusters.%s 必须是对象" % name)
+            primary = cluster.get("primary")
+            if primary not in self.instances:
+                raise ConfigError("streaming_clusters.%s.primary 引用了未知实例" % name)
+            members = [primary]
+            standbys = cluster.get("standbys") or []
+            if not isinstance(standbys, list):
+                raise ConfigError("streaming_clusters.%s.standbys 必须是列表" % name)
+            for index, standby in enumerate(standbys):
+                if not isinstance(standby, dict) or standby.get("instance") not in self.instances:
+                    raise ConfigError("streaming_clusters.%s.standbys[%d] 无效" % (name, index))
+                instance = standby["instance"]
+                if instance in members:
+                    raise ConfigError("streaming_clusters.%s 存在重复实例: %s" % (name, instance))
+                members.append(instance)
+                slot = standby.get("slot") or "%s_%s_slot" % (name, instance)
+                self._identifier(slot, "streaming_clusters.%s standby slot" % name)
+                if standby.get("application_name") is not None:
+                    self._identifier(standby["application_name"],
+                                     "streaming_clusters.%s standby application_name" % name)
+            mode = (cluster.get("replication") or {}).get("mode", "async")
+            if mode not in {"async", "sync"}:
+                raise ConfigError("streaming_clusters.%s.replication.mode 无效" % name)
+            if mode == "sync" and not standbys:
+                raise ConfigError("streaming_clusters.%s 同步复制至少需要一个备库" % name)
+            extensions = cluster.get("extensions")
+            if extensions is not None:
+                if not isinstance(extensions, list):
+                    raise ConfigError("streaming_clusters.%s.extensions 必须是列表" % name)
+                for extension in extensions:
+                    self._identifier(extension, "streaming_clusters.%s.extensions" % name)
+            databases = cluster.get("databases")
+            if databases is not None:
+                if not isinstance(databases, dict) or not databases:
+                    raise ConfigError("streaming_clusters.%s.databases 必须是非空对象" % name)
+                for database, options in databases.items():
+                    self._identifier(database, "streaming_clusters.%s.databases 名称" % name)
+                    if options is None:
+                        db_extensions = []
+                    elif isinstance(options, list):
+                        db_extensions = options
+                    elif isinstance(options, dict):
+                        db_extensions = options.get("extensions") or []
+                        if not isinstance(db_extensions, list):
+                            raise ConfigError(
+                                "streaming_clusters.%s.databases.%s.extensions 必须是列表" % (name, database))
+                    else:
+                        raise ConfigError(
+                            "streaming_clusters.%s.databases.%s 必须是扩展列表或对象" % (name, database))
+                    for extension in db_extensions:
+                        self._identifier(
+                            extension, "streaming_clusters.%s.databases.%s.extensions" % (name, database))
+            for instance in members:
+                previous = owners.setdefault(instance, name)
+                if previous != name:
+                    raise ConfigError("实例 %s 同时属于 %s 和 %s" % (instance, previous, name))
+
+    def _streaming_ref(self, value, field):
+        if value not in self.streaming_clusters:
+            raise ConfigError("%s 必须引用 streaming_clusters 中的集群" % field)
+
+    def _validate_logical(self):
+        for name, link in self.logical_replications.items():
+            if not isinstance(link, dict) or set(link) != {"pub", "sub"}:
+                raise ConfigError("logical_replications.%s 必须包含 pub 和 sub" % name)
+            self._streaming_ref(link["pub"].get("streaming_cluster"), "%s.pub.streaming_cluster" % name)
+            self._streaming_ref(link["sub"].get("streaming_cluster"), "%s.sub.streaming_cluster" % name)
+            tables = link["pub"].get("tables")
+            if tables is not None and tables != "all":
+                if not isinstance(tables, list) or not tables:
+                    raise ConfigError("%s.pub.tables 必须是 all 或非空表名列表" % name)
+                for table in tables:
+                    if not isinstance(table, str):
+                        raise ConfigError("%s.pub.tables 必须是 all 或非空表名列表" % name)
+                    for part in table.split("."):
+                        self._identifier(part, "%s.pub.tables" % name)
+            pub = link["pub"]
+            if "via_partition_root" in pub:
+                self._bool(pub["via_partition_root"], "%s.pub.via_partition_root" % name)
+            publish = pub.get("publish")
+            if publish is not None:
+                if (not isinstance(publish, str) or not publish
+                        or any(item.strip() not in {"insert", "update", "delete", "truncate"}
+                               for item in publish.split(","))):
+                    raise ConfigError(
+                        "%s.pub.publish 必须是 insert,update,delete,truncate 的子集" % name)
+            sub = link["sub"]
+            if "copy_data" in sub:
+                self._bool(sub["copy_data"], "%s.sub.copy_data" % name)
+            slot = sub.get("slot") or {}
+            if not isinstance(slot, dict):
+                raise ConfigError("%s.sub.slot 必须是对象" % name)
+            if "name" in slot:
+                self._identifier(slot["name"], "%s.sub.slot.name" % name)
+            if "failover" in slot:
+                self._bool(slot["failover"], "%s.sub.slot.failover" % name)
+
+    def _validate_citus(self):
+        for name, cluster in self.citus_clusters.items():
+            if not isinstance(cluster, dict):
+                raise ConfigError("citus_clusters.%s 必须是对象" % name)
+            self._streaming_ref(cluster.get("coordinator", {}).get("streaming_cluster"),
+                                "%s.coordinator.streaming_cluster" % name)
+            workers = cluster.get("workers")
+            if not isinstance(workers, dict) or not workers:
+                raise ConfigError("citus_clusters.%s.workers 必须是非空对象" % name)
+            for worker_name, worker in workers.items():
+                self._streaming_ref(worker.get("streaming_cluster"),
+                                    "%s.workers.%s.streaming_cluster" % (name, worker_name))
+            extensions = cluster.get("extensions")
+            if not isinstance(extensions, list) or "citus" not in extensions:
+                raise ConfigError("citus_clusters.%s.extensions 必须包含 citus" % name)
+            factor = (cluster.get("postgresql_config") or {}).get("parameters", {}).get(
+                "citus.shard_replication_factor", 1)
+            if not isinstance(factor, int) or factor < 1 or factor > len(workers):
+                raise ConfigError("%s 的 citus.shard_replication_factor 必须在 1 到 Worker 数量之间" % name)
+
+    def _validate_mmr(self):
+        for name, cluster in self.mmr_clusters.items():
+            if not isinstance(cluster, dict):
+                raise ConfigError("mmr_clusters.%s 必须是对象" % name)
+            extensions = cluster.get("extensions")
+            if not isinstance(extensions, list) or "fdd_mmr" not in extensions:
+                raise ConfigError("mmr_clusters.%s.extensions 必须包含 fdd_mmr" % name)
+            for extension in extensions:
+                self._identifier(extension, "mmr_clusters.%s.extensions" % name)
+            members = cluster.get("members")
+            if not isinstance(members, dict) or not members:
+                raise ConfigError("mmr_clusters.%s.members 必须是非空对象" % name)
+            auxiliary = cluster.get("auxiliary_instances", [])
+            if (not isinstance(auxiliary, list)
+                    or any(not isinstance(node, str) or node not in self.instances for node in auxiliary)
+                    or len(set(auxiliary)) != len(auxiliary)):
+                raise ConfigError("mmr_clusters.%s.auxiliary_instances 必须是唯一的已声明实例列表" % name)
+            for member_name, member in members.items():
+                self._streaming_ref(member.get("streaming_cluster"),
+                                    "%s.members.%s.streaming_cluster" % (name, member_name))
+                options = member.get("mmr_node") or {}
+                if options.get("streaming", "off") not in {"off", "on", "parallel"}:
+                    raise ConfigError("%s.members.%s.mmr_node.streaming 无效" % (name, member_name))
+                for field in ("failover_slot", "two_phase"):
+                    if field in options:
+                        self._bool(options[field], "%s.members.%s.mmr_node.%s" % (name, member_name, field))
+                join = member.get("join")
+                if join is not None:
+                    if not isinstance(join, dict):
+                        raise ConfigError("%s.members.%s.join 必须是对象" % (name, member_name))
+                    if join.get("synchronize_structure", "all") not in {"none", "all", "schema-only", "data-only"}:
+                        raise ConfigError("%s.members.%s.join.synchronize_structure 无效" % (name, member_name))
+                    if join.get("precheck", "table_exist_error") not in {"ignore", "table_exist_error"}:
+                        raise ConfigError("%s.members.%s.join.precheck 无效" % (name, member_name))
+
+    def _validate_global_config(self):
+        postgres_config = self.raw.get("postgresql_config", {})
+        capacity = postgres_config.get("replication_capacity", {})
+        if not isinstance(capacity, dict):
+            raise ConfigError("postgresql_config.replication_capacity 必须是对象")
+        for field in ("wal_senders", "replication_slots"):
+            value = capacity.get(field, "auto")
+            if value != "auto" and (not isinstance(value, int) or value < 1):
+                raise ConfigError("postgresql_config.replication_capacity.%s 必须是 auto 或正整数" % field)
+        hba = postgres_config.get("hba")
+        if hba is not None:
+            if not isinstance(hba, list) or not hba:
+                raise ConfigError("postgresql_config.hba 必须是非空列表")
+            for index, rule in enumerate(hba):
+                if not isinstance(rule, dict) or rule.get("type") not in {"local", "host", "hostssl", "hostnossl"}:
+                    raise ConfigError("postgresql_config.hba[%d].type 无效" % index)
+                fields = ["database", "user", "auth_method"]
+                if rule["type"] != "local":
+                    fields.append("address")
+                for field in fields:
+                    value = rule.get(field)
+                    if not isinstance(value, str) or not value or any(char.isspace() for char in value):
+                        raise ConfigError("postgresql_config.hba[%d].%s 无效" % (index, field))
+
+    def _validate(self):
+        self._validate_hosts()
+        self._validate_installations()
+        self._validate_global_config()
+        self._validate_instances()
+        self._validate_streaming()
+        self._validate_logical()
+        self._validate_citus()
+        self._validate_mmr()
+
+    def validate(self, target):
+        collections = self._collections()
+        self._target(collections, target)
+        return "配置有效: %s" % target
+
+    def _collections(self):
+        return {
+            "streaming": self.streaming_clusters,
+            "logical": self.logical_replications,
+            "citus": self.citus_clusters,
+            "mmr": self.mmr_clusters,
+        }
+
+    @staticmethod
+    def _target(collections, target):
+        if "." not in target:
+            raise ConfigError("目标必须使用 kind.name，例如 citus.citus_cluster")
+        kind, name = target.split(".", 1)
+        if kind not in collections or name not in collections[kind]:
+            raise ConfigError("未知集群: %s" % target)
+
+    def graph(self, target):
+        collections = self._collections()
+        self._target(collections, target)
+        kind, name = target.split(".", 1)
+        lines = ["CLUSTER %s [%s]" % (target, kind)]
+        if kind == "streaming":
+            cluster = self.streaming_clusters[name]
+            lines.append("  primary: %s" % cluster["primary"])
+            for standby in cluster.get("standbys") or []:
+                lines.append("  standby: %s (slot: %s)" % (
+                    standby["instance"], standby.get("slot") or "auto"
+                ))
+        elif kind == "logical":
+            link = self.logical_replications[name]
+            lines.append("  pub: %s" % link["pub"]["streaming_cluster"])
+            lines.append("  sub: %s" % link["sub"]["streaming_cluster"])
+        elif kind == "citus":
+            cluster = self.citus_clusters[name]
+            lines.append("  coordinator: %s" % cluster["coordinator"]["streaming_cluster"])
+            for worker_name, worker in cluster["workers"].items():
+                lines.append("  worker %s: %s" % (worker_name, worker["streaming_cluster"]))
+        else:
+            cluster = self.mmr_clusters[name]
+            for member_name, member in cluster["members"].items():
+                lines.append("  member %s: %s" % (member_name, member["streaming_cluster"]))
+        return "\n".join(lines)
+
+    def list_tree(self, target=None, deployment=None, color=False, instance_status=None):
+        """Render the declared topology without probing hosts or instances."""
+        collections = self._collections()
+        if target:
+            self._target(collections, target)
+            targets = [target]
+        else:
+            referenced = set()
+            for link in self.logical_replications.values():
+                referenced.update((link["pub"]["streaming_cluster"], link["sub"]["streaming_cluster"]))
+            for cluster in self.citus_clusters.values():
+                referenced.add(cluster["coordinator"]["streaming_cluster"])
+                referenced.update(item["streaming_cluster"] for item in cluster["workers"].values())
+            for cluster in self.mmr_clusters.values():
+                referenced.update(item["streaming_cluster"] for item in cluster["members"].values())
+            targets = (["streaming.%s" % name for name in self.streaming_clusters if name not in referenced] +
+                       ["logical.%s" % name for name in self.logical_replications] +
+                       ["citus.%s" % name for name in self.citus_clusters] +
+                       ["mmr.%s" % name for name in self.mmr_clusters])
+
+        lines = []
+        colors = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m",
+                  "gray": "\033[90m", "cyan": "\033[36m", "blue": "\033[34m",
+                  "reset": "\033[0m"}
+        state_colors = {"已部署": "green", "部分部署": "yellow", "未部署": "red", "未知": "gray",
+                        "运行中": "green", "部分停止": "yellow", "已停止": "red"}
+        type_colors = {"streaming": "cyan", "logical": "cyan", "citus": "cyan", "mmr": "cyan"}
+        def paint(value, tone):
+            return "%s%s%s" % (colors[tone], value, colors["reset"]) if color else value
+
+        def streaming_members(cluster_name, prefix):
+            cluster = self.streaming_clusters[cluster_name]
+            members = [("primary", cluster["primary"])] + [
+                ("standby", item["instance"])
+                for item in cluster.get("standbys") or []
+            ]
+            for pos, (role, instance) in enumerate(members):
+                branch = "└─" if pos == len(members) - 1 else "├─"
+                config = self.instance(instance)
+                endpoint = "%s:%s" % (config["host_config"]["address"], config["port"])
+                status = ""
+                if instance_status is not None:
+                    running = instance_status.get(instance, {}).get("running")
+                    label = "运行中" if running is True else "已停止" if running is False else "未知"
+                    status = " [%s]" % paint(label, state_colors[label])
+                lines.append("%s%s %s: %s%s (%s)" %
+                             (prefix, branch, role, instance, status, endpoint))
+                data_prefix = prefix + ("│  " if pos != len(members) - 1 else "   ")
+                data_dir = paint(config["data_dir"], "blue")
+                lines.append("%s└─ data: %s" % (data_prefix, data_dir))
+
+        def streaming_reference(label, cluster_name, prefix, last):
+            branch = "└─" if last else "├─"
+            lines.append("%s%s %s: streaming.%s" % (prefix, branch, label, cluster_name))
+            streaming_members(cluster_name, prefix + ("   " if last else "│  "))
+
+        for index, item in enumerate(targets):
+            kind, name = item.split(".", 1)
+            if index:
+                lines.append("")
+            state = ""
+            if deployment is not None:
+                deployment_state = deployment.get(item, "未知")
+                state = " [%s]" % paint(deployment_state, state_colors.get(deployment_state, "gray"))
+            type_name = {"streaming": "流复制", "logical": "逻辑复制", "citus": "Citus", "mmr": "MMR"}[kind]
+            lines.append("%s [%s]%s" % (item, paint(type_name, type_colors[kind]), state))
+            if kind == "streaming":
+                streaming_members(name, "")
+            elif kind == "logical":
+                link = self.logical_replications[name]
+                streaming_reference("pub", link["pub"]["streaming_cluster"], "", False)
+                streaming_reference("sub", link["sub"]["streaming_cluster"], "", True)
+            elif kind == "citus":
+                cluster = self.citus_clusters[name]
+                references = [("coordinator", cluster["coordinator"]["streaming_cluster"])] + [
+                    ("worker %s" % worker, value["streaming_cluster"])
+                    for worker, value in cluster["workers"].items()
+                ]
+                for pos, (label, stream) in enumerate(references):
+                    streaming_reference(label, stream, "", pos == len(references) - 1)
+            else:
+                members = list(self.mmr_clusters[name]["members"].items())
+                for pos, (member, value) in enumerate(members):
+                    streaming_reference("member %s" % member, value["streaming_cluster"], "",
+                                        pos == len(members) - 1)
+        return "\n".join(lines)
+
+    def host(self, name):
+        if name not in self.hosts:
+            raise ConfigError("未知 host: %s" % name)
+        return self.hosts[name]
+
+    def installation(self, name):
+        if name not in self.installations:
+            raise ConfigError("未知安装: %s" % name)
+        return self.installations[name]
+
+    def instance(self, name):
+        if name not in self.instances:
+            raise ConfigError("未知实例: %s" % name)
+        value = dict(self.instances[name])
+        value["name"] = name
+        value["host_config"] = self.host(value["host"])
+        value["installation_config"] = self.installation(value["installation"])
+        return value
+
+    def cluster_instances(self, name):
+        """Return instance names in a streaming cluster, in primary order."""
+        cluster = self.streaming_clusters.get(name)
+        if cluster is None:
+            raise ConfigError("未知流复制集群: %s" % name)
+        return [cluster["primary"]] + [item["instance"] for item in cluster.get("standbys") or []]

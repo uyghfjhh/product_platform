@@ -1,0 +1,330 @@
+operation_log: ${PGCLUSTER_LOG:-/home/postgres/operation.log}
+
+timeouts:
+  instance_start_seconds: 30
+  replication_ready_seconds: 60
+
+hosts:
+  # transport is inferred: local address uses direct execution; other hosts use SSH.
+  pg17_host:
+    address: 192.168.0.15
+  fbase15_host:
+    address: 127.0.0.1
+
+postgresql_installations:
+  postgresql17:
+    provider: postgres
+    home: ${PGCLUSTER_PG17_HOME:-/usr/local/pgsql17.2}
+    plugins:
+      # Citus is expected to be installed in the PostgreSQL 17 distribution;
+      # pgcluster verifies the extension files before creating the cluster.
+      citus:
+        required: true
+        extension: citus
+        preload_library: citus
+
+  fbase15:
+    provider: fbase
+    home: ${PGCLUSTER_FBASE15_HOME:-/usr/local/fbase15.15}
+    license:
+      source_file: ${FBASE_LICENSE_FILE:-/home/postgres/license/license.dat}
+      data_file: license.dat
+    plugins:
+      fbase_mac:
+        source_dir: ${FBASE_MAC_SOURCE:-/home/postgres/fly_dev/postgresql_for_fbase_dev/contrib/fbase_mac_dev/fbase_mac}
+        install: true
+        extension: fbase_mac
+        preload_library: fbase_mac
+      fdd_mmr:
+        source_dir: ${FDD_MMR_SOURCE:-/home/postgres/fly_dev/postgresql_for_fbase_dev/contrib/fdd_mmr_dev/fdd_mmr}
+        install: true
+        extension: fdd_mmr
+        preload_library: fdd_mmr
+      fb_license:
+        source_dir: ${FB_LICENSE_SOURCE:-/home/postgres/fly_dev/postgresql_for_fbase_dev/contrib/fb_license}
+        install: true
+        extension: fb_license
+
+# Applied to every managed instance. A resource-level postgresql_config merges
+# with this section and overrides parameters with the same name.
+postgresql_config:
+  parameters:
+    listen_addresses: "*"
+    logging_collector: "on"
+    log_destination: stderr
+    log_directory: log
+    log_statement: all
+  # Capacity is calculated from physical standbys, logical subscriptions and
+  # MMR internal slots; numeric values may override auto sizing when required.
+  replication_capacity:
+    wal_senders: auto
+    replication_slots: auto
+
+  hba:
+    - type: local
+      database: all
+      user: all
+      auth_method: trust
+    - type: host
+      database: all
+      user: all
+      address: 0.0.0.0/0
+      auth_method: trust
+    - type: host
+      database: replication
+      user: all
+      address: 0.0.0.0/0
+      auth_method: trust
+
+instances:
+  basic_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 15432
+    data_dir: ${STREAM_PRIMARY_DATA:-/home/postgres/pgcluster/data/stream/primary}
+
+  basic_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 15433
+    data_dir: ${STREAM_STANDBY_DATA:-/home/postgres/pgcluster/data/stream/standby}
+
+  logical_pub_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 16432
+    data_dir: ${LOGICAL_PUB_PRIMARY_DATA:-/home/postgres/pgcluster/data/logical/publisher/primary}
+
+  logical_pub_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 16433
+    data_dir: ${LOGICAL_PUB_STANDBY_DATA:-/home/postgres/pgcluster/data/logical/publisher/standby}
+
+  logical_sub_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 17432
+    data_dir: ${LOGICAL_SUB_PRIMARY_DATA:-/home/postgres/pgcluster/data/logical/subscriber/primary}
+
+  logical_sub_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 17433
+    data_dir: ${LOGICAL_SUB_STANDBY_DATA:-/home/postgres/pgcluster/data/logical/subscriber/standby}
+
+  citus_coordinator_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 20432
+    data_dir: ${CITUS_COORDINATOR_PRIMARY_DATA:-/home/postgres/pgcluster/data/citus/coordinator/primary}
+
+  citus_coordinator_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 20433
+    data_dir: ${CITUS_COORDINATOR_STANDBY_DATA:-/home/postgres/pgcluster/data/citus/coordinator/standby}
+
+  citus_worker_1_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 21432
+    data_dir: ${CITUS_WORKER_1_PRIMARY_DATA:-/home/postgres/pgcluster/data/citus/worker_1/primary}
+
+  citus_worker_1_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 21433
+    data_dir: ${CITUS_WORKER_1_STANDBY_DATA:-/home/postgres/pgcluster/data/citus/worker_1/standby}
+
+  citus_worker_2_primary_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 22432
+    data_dir: ${CITUS_WORKER_2_PRIMARY_DATA:-/home/postgres/pgcluster/data/citus/worker_2/primary}
+
+  citus_worker_2_standby_node:
+    host: pg17_host
+    installation: postgresql17
+    port: 22433
+    data_dir: ${CITUS_WORKER_2_STANDBY_DATA:-/home/postgres/pgcluster/data/citus/worker_2/standby}
+
+  mmr_a_primary_node:
+    host: fbase15_host
+    installation: fbase15
+    port: 18432
+    data_dir: ${MMR_A_PRIMARY_DATA:-/home/postgres/pgcluster/data/mmr/a/primary}
+
+  mmr_a_standby_node:
+    host: fbase15_host
+    installation: fbase15
+    port: 18433
+    data_dir: ${MMR_A_STANDBY_DATA:-/home/postgres/pgcluster/data/mmr/a/standby}
+
+  mmr_b_primary_node:
+    host: fbase15_host
+    installation: fbase15
+    port: 19432
+    data_dir: ${MMR_B_PRIMARY_DATA:-/home/postgres/pgcluster/data/mmr/b/primary}
+
+  mmr_b_standby_node:
+    host: fbase15_host
+    installation: fbase15
+    port: 19433
+    data_dir: ${MMR_B_STANDBY_DATA:-/home/postgres/pgcluster/data/mmr/b/standby}
+
+streaming_clusters:
+  basic_cluster:
+    primary: basic_primary_node
+    standbys:
+      - instance: basic_standby_node
+        slot: basic_streaming_standby_slot
+    replication:
+      mode: async
+    # Extensions created on the primary after the cluster is ready; physical
+    # replication carries them to standbys. Each member host still needs the
+    # extension binaries declared under postgresql_installations.<name>.plugins.
+    # extensions: [pg_deltax, timescaledb]
+
+  logical_pub_cluster:
+    primary: logical_pub_primary_node
+    standbys:
+      - instance: logical_pub_standby_node
+        slot: logical_publisher_standby_slot
+    replication:
+      mode: async
+
+  logical_sub_cluster:
+    primary: logical_sub_primary_node
+    standbys:
+      - instance: logical_sub_standby_node
+        slot: logical_subscriber_standby_slot
+    replication:
+      mode: async
+
+  citus_coordinator_cluster:
+    primary: citus_coordinator_primary_node
+    standbys:
+      - instance: citus_coordinator_standby_node
+        slot: citus_coordinator_standby_slot
+    replication:
+      mode: async
+
+  citus_worker_1_cluster:
+    primary: citus_worker_1_primary_node
+    standbys:
+      - instance: citus_worker_1_standby_node
+        slot: citus_worker_1_standby_slot
+    replication:
+      mode: async
+
+  citus_worker_2_cluster:
+    primary: citus_worker_2_primary_node
+    standbys:
+      - instance: citus_worker_2_standby_node
+        slot: citus_worker_2_standby_slot
+    replication:
+      mode: async
+
+  mmr_a_cluster:
+    primary: mmr_a_primary_node
+    standbys:
+      - instance: mmr_a_standby_node
+        slot: mmr_a_standby_slot
+    replication:
+      mode: async
+
+  mmr_b_cluster:
+    primary: mmr_b_primary_node
+    standbys:
+      - instance: mmr_b_standby_node
+        slot: mmr_b_standby_slot
+    replication:
+      mode: async
+
+# User-managed logical replication. Each link contains both endpoints; each
+# endpoint is a streaming cluster and resolves to its current primary.
+logical_replications:
+  pub_sub:
+    pub:
+      streaming_cluster: logical_pub_cluster
+      database: postgres
+      tables: all
+    sub:
+      streaming_cluster: logical_sub_cluster
+      database: postgres
+      slot:
+        name: sub_failover_slot
+        failover: true
+
+# A Citus cluster has one coordinator and one or more worker clusters. Each
+# listed Worker is registered on the Coordinator's current primary; a Worker
+# standby is never registered as a separate Citus node.
+citus_clusters:
+  citus_cluster:
+    database: postgres
+    coordinator:
+      streaming_cluster: citus_coordinator_cluster
+    workers:
+      worker_1:
+        streaming_cluster: citus_worker_1_cluster
+      worker_2:
+        streaming_cluster: citus_worker_2_cluster
+    extensions:
+      - citus
+    postgresql_config:
+      parameters:
+        # Resource-level preload entries are merged as a set by pgcluster.
+        shared_preload_libraries:
+          - citus
+        # Applies to newly created distributed tables, not Worker HA.
+        citus.shard_replication_factor: 2
+
+# Each MMR member is a complete streaming cluster. MMR's internal logical
+# replication objects are owned by the MMR runtime and are not declared in
+# user-managed logical_replications above.
+mmr_clusters:
+  mmr_cluster:
+    database: postgres
+    group_name: mmr_group
+
+    extensions:
+      - fbase_mac
+      - fdd_mmr
+      - fb_license
+
+    postgresql_config:
+      parameters:
+        # Resource-level preload entries are merged as a set by pgcluster.
+        shared_preload_libraries:
+          - fdd_mmr
+          - fbase_mac
+        fdd.running_databases: postgres
+        fdb.enable_audit: 1
+        fdb.audit_log_directory: fdb_audit
+        wal_level: logical
+        track_commit_timestamp: "on"
+        max_worker_processes: 16
+        max_logical_replication_workers: 8
+
+    # node_a creates the group. Later members join node_a by default.
+    # Add a member.join block only when overriding join_group defaults.
+    members:
+      node_a:
+        streaming_cluster: mmr_a_cluster
+        node_name: mmr_a_node
+        mmr_node:
+          failover_slot: true
+          # off | on | parallel; controls fdd_mmr logical replication streaming.
+          streaming: parallel
+          # Enable two-phase logical replication for this MMR node.
+          two_phase: false
+      node_b:
+        streaming_cluster: mmr_b_cluster
+        node_name: mmr_b_node
+        mmr_node:
+          failover_slot: true
+          # off | on | parallel; controls fdd_mmr logical replication streaming.
+          streaming: parallel
+          # Enable two-phase logical replication for this MMR node.
+          two_phase: false
