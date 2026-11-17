@@ -273,6 +273,16 @@ def provider_for(settings: Settings, product_id: str) -> ProductProvider:
     return registry_for(settings).entry(product_id)[0]
 
 
+def provider_option(settings, product_id, name, default=None):
+    """Read an optional product extension, including declaration-only packages."""
+    if settings is None or not product_id:
+        return default
+    manifest = discover_products(settings.products_root).get(product_id)
+    if manifest is None or manifest.provider_path is None:
+        return default
+    return getattr(provider_for(settings, product_id), name, default)
+
+
 def provider_extensions(settings, product_id) -> ProviderExtensions:
     return registry_for(settings).entry(product_id)[1]
 
@@ -285,6 +295,9 @@ def command_for(settings: Settings, environment: dict, action: str,
     if environment["product_id"] not in discover_products(settings.products_root):
         raise ValueError("产品未安装: %s" % environment["product_id"])
     if action.startswith("deployment."):
+        native = provider_option(settings, environment['product_id'], 'lifecycle_command')
+        if callable(native):
+            return native(settings, environment, action, target, parameters)
         from .deployment.role_change import ACTIONS
         if action in ACTIONS:
             if not target.startswith('streaming.'):

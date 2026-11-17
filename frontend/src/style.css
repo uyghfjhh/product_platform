@@ -822,7 +822,7 @@ button, input, textarea { font-family: inherit; }
 }
 
 .database-studio .ps [data-testid="studio-shell"] > div:first-child a,
-.database-studio .ps [data-testid="studio-shell"] > div:first-child button,
+.database-studio .ps [data-testid="studio-shell"] > div:first-child button:not([data-testid="navigation-resize-handle"]),
 .database-studio .ps [data-testid="studio-shell"] > div:first-child li {
   width: 100% !important;
   max-width: 100% !important;

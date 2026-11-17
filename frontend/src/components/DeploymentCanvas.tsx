@@ -36,12 +36,12 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
     // 自适应列数：当备库数量 >= 4 时采用 3 列排布，大幅压缩垂直层高（从 3 排降至 2 排，立省 100px+）
     const standbyCols = nonPrimaries.length >= 4 ? 3 : (nonPrimaries.length > 1 ? 2 : 1);
     const colWidth = 305;
-    const rowGap = 82;
+    const rowGap = 120;
     const primaryRows = Math.max(1, primaries.length);
     const standbyRows = Math.max(1, Math.ceil(nonPrimaries.length / standbyCols));
     const rows = Math.max(primaryRows, standbyRows);
     const groupHeight = 42 + rows * rowGap + 18;
-    const groupWidth = Math.max(720, 360 + standbyCols * colWidth + 24);
+    const groupWidth = Math.max(720, 390 + standbyCols * colWidth + 24);
 
     let groupTitle = `${group.toUpperCase()} 复制组`;
     let groupTag = `${group.toUpperCase()} 复制组 (${primaries.length} 主 + ${nonPrimaries.length} 备)`;
@@ -76,7 +76,7 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
 
     primaries.forEach((priNode, pIdx) => {
       nodePositions[priNode.id] = {
-        x: 45,
+        x: 80,
         y: currentY + 38 + (rows - primaryRows) * rowGap / 2 + pIdx * rowGap,
         compact: false,
       };
@@ -86,7 +86,7 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
       const col = sIdx % standbyCols;
       const row = Math.floor(sIdx / standbyCols);
       nodePositions[stdNode.id] = {
-        x: 355 + col * colWidth,
+        x: 390 + col * colWidth,
         y: currentY + 38 + row * rowGap,
         compact: true,
       };
@@ -243,10 +243,20 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
   ), [reference]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const availableWidth = containerRef.current.clientWidth - 40;
-    setScale(Math.min(1, Math.max(0.2, Math.floor(availableWidth / bounds.width * 100) / 100)));
-    setPan({ x: 10, y: 10 });
+    const container = containerRef.current;
+    if (!container) return;
+    let previousWidth = -1;
+    const fit = () => {
+      if (container.clientWidth === previousWidth) return;
+      previousWidth = container.clientWidth;
+      const availableWidth = container.clientWidth - 40;
+      setScale(Math.min(1, Math.max(0.2, Math.floor(availableWidth / bounds.width * 100) / 100)));
+      setPan({ x: 10, y: 10 });
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, [topology.target, bounds.width]);
 
   // GSAP Choreographed Node & Link Animations on status/topology update
@@ -366,8 +376,8 @@ export default function DeploymentCanvas({ topology, observed, onSelectNode, onO
     const dx = e.clientX - panStartRef.current.startX;
     const dy = e.clientY - panStartRef.current.startY;
     setPan({
-      x: panStartRef.current.initialPanX + dx,
-      y: panStartRef.current.initialPanY + dy,
+      x: Math.max(10, panStartRef.current.initialPanX + dx),
+      y: Math.max(10, panStartRef.current.initialPanY + dy),
     });
   }
 

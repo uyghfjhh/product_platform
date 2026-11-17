@@ -16,7 +16,14 @@ import importlib
 from .config import Settings
 
 
-def _driver(environment: dict):
+def _driver(environment: dict, settings: Settings):
+    if environment.get('product_id'):
+        from .providers import provider_option
+        topology = provider_option(settings, environment['product_id'], 'topology')
+        status = provider_option(settings, environment['product_id'], 'status')
+        if callable(topology) and callable(status):
+            from types import SimpleNamespace
+            return SimpleNamespace(topology=topology, status=status)
     name = environment.get("deployment_driver") or "pgcluster"
     if name == "pgcluster":
         from . import pgcluster_topology
@@ -25,8 +32,8 @@ def _driver(environment: dict):
 
 
 def configured_topology(settings: Settings, environment: dict) -> dict:
-    return _driver(environment).topology(settings, environment)
+    return _driver(environment, settings).topology(settings, environment)
 
 
 def observed_status(settings: Settings, environment: dict) -> dict:
-    return _driver(environment).status(settings, environment)
+    return _driver(environment, settings).status(settings, environment)

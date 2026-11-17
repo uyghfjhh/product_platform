@@ -48,7 +48,7 @@ export default function StudioOperations({ url }: { url: string }) {
       <Tabs activeKey={view} items={views.map(([key, label]) => ({ key, label }))} onChange={(key) => { setView(key); setSearch(''); }} />
       <Space style={{ marginBottom: 12 }}><Input.Search aria-label="筛选运维数据" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="筛选当前快照" />
         <Button icon={<ReloadOutlined />} onClick={() => setRevision((value) => value + 1)}>刷新</Button></Space>
-      {view === 'settings' && <Alert type="info" message="参数变更通过部署方案审阅、执行及验收；此处查看数据库实际值。" style={{ marginBottom: 12 }} />}
+      {view === 'settings' && <Alert type="info" message="此处查看数据库实际参数值，不修改配置。" style={{ marginBottom: 12 }} />}
       {error && <Alert type="error" message={error} />}
       <Table loading={busy} size="small" scroll={{ x: 'max-content' }} rowKey={(_, index) => String(index)}
         dataSource={rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search.toLowerCase()))}

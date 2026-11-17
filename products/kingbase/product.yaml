@@ -1,0 +1,28 @@
+id: kingbase
+title: 金仓 KingbaseES
+plugin_api: v1
+provider: provider.py
+capabilities:
+  database: postgresql-compatible
+  monitoring: kingbase
+versions:
+  - id: V9
+actions:
+  - id: deployment.start
+    title: 启动金仓实例
+    capability: deployment
+    changes_environment: true
+  - id: deployment.stop
+    title: 停止金仓实例
+    capability: deployment
+    changes_environment: true
+  - id: deployment.restart
+    title: 重启金仓实例
+    capability: deployment
+    changes_environment: true
+  - id: deployment.doctor
+    title: 检查金仓实例状态
+    capability: deployment
+  - id: database.check
+    title: 检查金仓数据库连接
+    capability: database

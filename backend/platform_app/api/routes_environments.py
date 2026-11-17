@@ -20,6 +20,12 @@ from .schemas import (
 
 
 def register(app, settings: Settings, store) -> None:
+    def validate_environment(owner, payload):
+        from ..providers import provider_option
+        validate = provider_option(settings, payload['product_id'], 'validate_environment')
+        if callable(validate):
+            validate(payload)
+        validate_registration(owner, payload)
 
     @app.get("/api/v1/environments", response_model=list[Environment])
     def environments():
@@ -50,7 +56,10 @@ def register(app, settings: Settings, store) -> None:
     def add_environment(item: EnvironmentInput):
         if not get_product(item.product_id, settings):
             raise HTTPException(status_code=422, detail="未知产品")
-        return store.environments.put_environment(item.model_dump(), validator=validate_registration)
+        try:
+            return store.environments.put_environment(item.model_dump(), validator=validate_environment)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/v1/environments/{environment_id}")
     def environment(environment_id: str):
@@ -65,7 +74,10 @@ def register(app, settings: Settings, store) -> None:
             raise HTTPException(status_code=422, detail="环境 ID 不可修改")
         if not get_product(item.product_id, settings):
             raise HTTPException(status_code=422, detail="未知产品")
-        updated = store.environments.update_environment(environment_id, item.model_dump(), validator=validate_registration)
+        try:
+            updated = store.environments.update_environment(environment_id, item.model_dump(), validator=validate_environment)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
         if updated is None:
             raise HTTPException(status_code=404, detail="环境不存在")
         return updated

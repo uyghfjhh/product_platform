@@ -259,12 +259,13 @@ def studio_dispatch(environment, body, request_id=None):
             return [None, snapshot(environment, body.get('limit',50))]
         if procedure == 'inspect':
             from .studio_operations import QUERIES
-            if body.get('view') not in QUERIES:
+            queries = environment.get('_studio_inspect_queries', QUERIES)
+            if body.get('view') not in queries:
                 raise ValueError('未知数据库运维视图')
             with _studio_connection(environment, request_id, autocommit=False) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute('SET TRANSACTION READ ONLY')
-                    return [None,_run_query(cursor,{'sql':QUERIES[body['view']]})]
+                    return [None,_run_query(cursor,{'sql':queries[body['view']]})]
         if procedure == 'cancel-session':
             if body.get('acknowledge_change') is not True:
                 raise ValueError('请确认取消目标会话的当前查询')

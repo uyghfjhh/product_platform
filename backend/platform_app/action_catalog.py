@@ -74,7 +74,10 @@ def actions_for_environment(environment: dict, settings: Settings) -> list[dict]
     if environment.get("deployment_config") and "deployment" in manifest.capabilities:
         declared.update({item.id: item for item in ACTIONS.values() if item.id in DEPLOYMENT_ACTIONS})
     if "database" in manifest.capabilities:
-        declared.update({item.id: item for item in ACTIONS.values() if item.capability == "workload"})
+        from .providers import provider_option
+        supported = provider_option(settings, manifest.id, 'workload_actions')
+        declared.update({item.id: item for item in ACTIONS.values()
+                         if item.capability == "workload" and (supported is None or item.id in supported)})
 
     def parameter_schema(item):
         if item.capability == "workload":

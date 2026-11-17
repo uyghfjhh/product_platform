@@ -60,7 +60,7 @@ def collect(service, environment, nodes):
         host=canonical_host(node['host'])
         group=groups.setdefault(host,{'address':node['host'],'paths':set()})
         if node.get('data_dir'):
-            group['paths'].update([node['data_dir'],str(Path(node['data_dir'])/'pg_wal')])
+            group['paths'].update([node['data_dir'], node.get('wal_directory') or str(Path(node['data_dir'])/'pg_wal')])
     observations=[]
     for host,group in groups.items():
         matches=[h for h in declared if canonical_host(h.get('address',''))==host]

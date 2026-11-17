@@ -20,6 +20,11 @@ type CanvasProps = {
 };
 
 export type ProductFrontend = {
+  environmentRegistration?: {
+    defaults: Record<string, unknown>;
+    Fields: ComponentType;
+    submit: (values: Record<string, unknown>) => Promise<Environment>;
+  };
   TestPreparation?: ComponentType<{ environment: Environment; profileId?: string; tasks: Task[]; onTask: (taskId: string) => void; onChanged: () => Promise<void> | void }>;
   TestSettings?: ComponentType<{ environment: Environment; onChanged: () => Promise<void> | void }>;
   deployment?: () => DeploymentProductAdapter;

@@ -328,12 +328,12 @@ export default function DeploymentPage({
                     label: '编辑当前环境',
                     onClick: () => { setEnvEditing(environment); setEnvModalOpen(true); },
                   },
-                  {
+                  ...(product?.capabilities.includes('deployment') ? [{
                     key: 'wizard',
                     icon: <DeploymentUnitOutlined />,
                     label: '配置部署方案',
                     onClick: () => { setWizardEnvironment(environment); setWizardOpen(true); },
-                  },
+                  }] : []),
                 ],
               }}
             >
@@ -435,7 +435,7 @@ export default function DeploymentPage({
                         ['heal', '自愈修复'],
                         ['reset', '重置集群'],
                         ['clean', '清理集群'],
-                      ].map(([name, label]) => ({
+                      ].filter(([name]) => actions.some(action => action.id === `deployment.${name}`)).map(([name, label]) => ({
                         key: name,
                         label,
                         danger: name === 'clean' || name === 'reset',

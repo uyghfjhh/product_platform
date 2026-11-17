@@ -78,6 +78,10 @@ def templates(settings):
 
 
 def compile_spec(settings, spec, environment_id):
+    from ..product_catalog import discover_products
+    manifest = discover_products(settings.products_root).get(spec.product_id)
+    if manifest is None or 'deployment' not in manifest.capabilities:
+        raise ValueError('产品尚未提供部署生命周期能力，请使用现有环境登记')
     if any(
         key in PROTECTED or not re.fullmatch(r"[a-zA-Z_]\w*(?:\.\w+)*", key)
         for key in spec.parameters

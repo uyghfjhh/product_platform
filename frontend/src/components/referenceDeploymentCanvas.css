@@ -750,3 +750,9 @@
 .deployment-mmr-summary .ant-table-wrapper .ant-table.ant-table-small .ant-table-thead > tr > th { padding:5px 10px;font-size:11px;font-weight:500;color:#94a3b8;background:transparent; }
 .deployment-mmr-summary .ant-table-wrapper .ant-table.ant-table-small .ant-table-tbody > tr > td { padding:5px 10px; }
 .deployment-mmr-summary .ant-table-wrapper .ant-table .ant-tag { font-size:10px;line-height:17px;padding:0 5px;margin:0; }
+
+/* Keep node identity, version and process metadata on separate readable rows. */
+.topo-node-version { display: block; color: #cbd5e1; font-size: 11px; line-height: 16px; white-space: nowrap; }
+.topo-node:has(.topo-node-version) { height: auto !important; min-height: 98px; gap: 4px; }
+.topo-node-subline { flex-wrap: wrap; row-gap: 4px; }
+.topo-node-subline .topo-node-meta { margin-left: auto; }

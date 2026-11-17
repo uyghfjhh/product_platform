@@ -279,7 +279,8 @@ export type ReferenceDeployment = {
       }).join('');
       const pluginsRow = pluginsHtml ? `<div class="topo-node-plugins">${pluginsHtml}</div>` : '';
 
-      const versionHtml = n.serverVersion ? `<span style="font-size:10px;opacity:.8;margin-left:6px" title="数据库版本">PG ${escapeHtml(n.serverVersion)}</span>` : '';
+      const versionLabel = n.serverVersion && (/^\d/.test(n.serverVersion) ? `PG ${n.serverVersion}` : n.serverVersion);
+      const versionHtml = versionLabel ? `<span class="topo-node-version" title="数据库版本">${escapeHtml(versionLabel)}</span>` : '';
       const cardTitle = `点击查看节点详情 (${escapeHtml(n.label || n.id)}) 与单节点运维`;
 
       // PostgreSQL 根守护进程 (postmaster/pgmaster) PID，重启后 PID 变化直观可见
@@ -294,12 +295,13 @@ export type ReferenceDeployment = {
           <div class="topo-node-header">
             <div class="topo-node-title">
               <span class="topo-node-pulse ${statusClass}"></span>
-              <span class="node-label-text" title="${escapeHtml(n.label)}">${escapeHtml(n.label)}</span>${versionHtml}
+              <span class="node-label-text" title="${escapeHtml(n.label)}">${escapeHtml(n.label)}</span>
             </div>
             <div class="topo-node-badges">
               <span class="topo-node-role-badge ${statusClass === 'down' ? 'down' : roleColorClass}">${escapeHtml(roleBadge)}</span>
             </div>
           </div>
+          ${versionHtml}
           ${pluginsRow}
           <div class="topo-node-subline">
             <span class="topo-node-endpoint" title="连接地址: ${escapeHtml(endpoint)}">${escapeHtml(endpoint)}</span>
@@ -364,4 +366,3 @@ export type ReferenceDeployment = {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
-

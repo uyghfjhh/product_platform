@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { App, Form, Input, InputNumber, Modal, Select } from 'antd';
 
 import { api, put, type Environment, type Product } from '../platform/api';
+import { productFrontends } from '../products/generated';
 
 /** 环境登记/编辑弹窗：保存后落盘为 data/environments/<id>.yaml。 */
 export default function EnvironmentModal({ open, editing, products, onClose, onSaved }: {
@@ -15,6 +16,9 @@ export default function EnvironmentModal({ open, editing, products, onClose, onS
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const productId = Form.useWatch('product_id', form) as string | undefined;
+  const registration = productId ? productFrontends[productId]?.environmentRegistration : undefined;
+  const ProductFields = !editing ? registration?.Fields : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -31,6 +35,8 @@ export default function EnvironmentModal({ open, editing, products, onClose, onS
       setSaving(true);
       if (editing) {
         await put(`/environments/${encodeURIComponent(editing.id)}`, values);
+      } else if (registration) {
+        await registration.submit(values);
       } else {
         await api('/environments', { method: 'POST', body: JSON.stringify(values) });
       }
@@ -62,7 +68,12 @@ export default function EnvironmentModal({ open, editing, products, onClose, onS
           </Form.Item>
           <Form.Item label="名称" name="title" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="产品" name="product_id" rules={[{ required: true }]}>
-            <Select options={products.map((item) => ({ label: item.title, value: item.id }))} />
+            <Select disabled={!!editing} options={products.map((item) => ({ label: item.title, value: item.id }))}
+              onChange={(id: string) => {
+                if (!editing) form.setFieldsValue(productFrontends[id]?.environmentRegistration?.defaults || {
+                  port: 5432, database_name: 'postgres', database_user: 'postgres',
+                });
+              }} />
           </Form.Item>
           <Form.Item label="主机" name="host" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="端口" name="port" rules={[{ required: true }]}>
@@ -70,11 +81,11 @@ export default function EnvironmentModal({ open, editing, products, onClose, onS
           </Form.Item>
           <Form.Item label="数据库名" name="database_name"><Input /></Form.Item>
           <Form.Item label="数据库用户" name="database_user"><Input /></Form.Item>
-          <Form.Item label="部署目标" name="deployment_target"><Input placeholder="streaming.demo" /></Form.Item>
+          {!ProductFields && <Form.Item label="部署目标" name="deployment_target"><Input placeholder="streaming.demo" /></Form.Item>}
         </div>
-        <Form.Item label="部署配置文件" name="deployment_config">
+        {ProductFields ? <ProductFields /> : <Form.Item label="部署配置文件" name="deployment_config">
           <Input placeholder="/path/to/pgcluster.yaml" />
-        </Form.Item>
+        </Form.Item>}
       </Form>
     </Modal>
   );
