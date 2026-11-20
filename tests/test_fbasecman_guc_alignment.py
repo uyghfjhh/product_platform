@@ -114,7 +114,7 @@ def test_partial_wire_is_preserved_on_disconnect(tmp_path):
 
 def test_all_design_items_and_acceptance_have_registered_scenarios():
     names = {s for values in alignment.SCENARIOS.values() for s in values}
-    assert len(names) == 28
+    assert len(names) == 29
     assert set(alignment.DESIGN_ITEMS) == set(range(1, 17))
     assert len(alignment.ACCEPTANCE) == 13
     assert all(set(v).issubset(names) for v in alignment.DESIGN_ITEMS.values())
@@ -305,16 +305,12 @@ def test_reset_defaults_do_not_use_sdk_startup_timeout(tmp_path, monkeypatch):
     assert calls[0]['connect_timeout'] == 10
 
 
-def test_frozen_baseline_detects_changed_sql_parse_result(tmp_path):
-    context = CaseContext('guc.extended_boundary_hint', tmp_path / 'out', environment={
-        'fbasecman_bin': '/bin/true', 'guc_alignment_baseline_dir': str(tmp_path / 'baselines')})
-    runner = alignment.ScenarioRunner(context, alignment.CheckPlan('mmr', 'transaction', True, 'E', 'extended_execute_apply'), 'hint', 1)
-    initial = {'received': ['C', 'Z'], 'sqlstates': [], 'tags': ['SET'], 'ready': ['I']}
-    measured = {'rows': [['32MB']]}
-    alignment.freeze_mixed_baseline(runner, True, False, initial, measured, True)
-    alignment.freeze_mixed_baseline(runner, True, False, initial, measured, True)
-    with pytest.raises(AssertionError, match='基线'):
-        alignment.freeze_mixed_baseline(runner, True, False, initial, {'rows': [['64MB']]}, True)
+def test_mixed_protocol_expectation_keeps_request_order_and_skips_after_error():
+    assert alignment.mixed_protocol_expectation(True, False)["tags"] == ["SELECT 1", "SET"]
+    assert alignment.mixed_protocol_expectation(False, False)["tags"] == ["SET", "SELECT 1"]
+    assert alignment.mixed_protocol_expectation(True, True) == {
+        "received": ["1", "E", "Z"], "sqlstates": ["22012"], "tags": [], "ready": ["I"],
+    }
 
 
 def test_test_proxy_requires_build_artifacts_not_product_business_hooks(tmp_path):

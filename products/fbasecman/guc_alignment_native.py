@@ -26,7 +26,8 @@ SCENARIOS = {
     "extended_boundary": (
         "extended_parse_no_execute", "extended_bind_describe_no_execute",
         "extended_execute_apply", "extended_statement_isolation",
-        "extended_portal_isolation", "extended_candidate_cleanup", "local_commit_failure", "compatibility_scope",
+        "extended_portal_isolation", "extended_candidate_cleanup", "extended_local_set_rollback",
+        "local_commit_failure", "compatibility_scope",
     ),
     "transaction_sync": (
         "tx_set_commit", "tx_set_rollback", "tx_reset_commit_rollback",
@@ -128,6 +129,9 @@ def make_plan(group):
             if name in INTERNAL:
                 plans.append(CheckPlan(topology, "transaction", True, "product", name))
                 continue
+            if name == "extended_local_set_rollback":
+                plans.append(CheckPlan(topology, "transaction", True, "E", name, True))
+                continue
             configs = [(pool, True, "E") for pool in ("transaction", "session")]
             if group != "extended_boundary" and name not in {"local_backend_reclaim", "mode_owner_isolation"}:
                 configs += [(pool, reserve, "Q") for pool in ("transaction", "session") for reserve in (True, False)]
@@ -172,6 +176,7 @@ SCENARIO_LABELS = {
     "extended_parse_no_execute": "仅解析、不执行", "extended_bind_describe_no_execute": "绑定和描述不提前生效",
     "extended_execute_apply": "Execute 后参数生效", "extended_statement_isolation": "语句候选互不覆盖",
     "extended_portal_isolation": "Portal 候选隔离", "extended_candidate_cleanup": "未执行候选关闭与清理",
+    "extended_local_set_rollback": "本地 SET 随扩展协议周期回滚",
     "tx_set_commit": "事务提交保留参数", "tx_set_rollback": "事务回滚恢复参数",
     "tx_reset_commit_rollback": "RESET 提交与回滚", "tx_reset_all_commit_rollback": "RESET ALL 提交与回滚",
     "tx_error_abort": "失败事务不提交参数", "tx_batch_segments": "多语句事务段独立收口",
@@ -500,7 +505,7 @@ class ScenarioRunner:
             if name == "product_cache_boundaries":
                 return checks.boundary()
             if name == "local_commit_failure":
-                return checks.faults([("E", point) for point in ("response_construct", "apply", "response_queue")])
+                return checks.faults([("E", point) for point in ("deploy_bind", "apply", "response_queue")])
             return checks.faults([(protocol, point) for protocol in ("Q", "E")
                                   for point in ("pre_record", "pending", "outstanding", "forward")])
         if name == 'psql_switch_and_reuse':
@@ -729,6 +734,8 @@ class ScenarioRunner:
             return wire.message("E", wire.execute_payload(portal))
         def describe(portal):
             return wire.message("D", wire.describe_portal_payload(portal))
+        if name == "extended_local_set_rollback":
+            return self.extended_guc_commit_rollback(probe)
         if name in {"extended_parse_no_execute", "extended_bind_describe_no_execute", "extended_execute_apply"}:
             for transaction in (False, True):
                 for index, sql in enumerate(("SET work_mem='32MB'", "SET SESSION work_mem='32MB'", "RESET work_mem", "RESET ALL")):
@@ -793,7 +800,7 @@ class ScenarioRunner:
                 probe.snapshot({"work_mem": "32MB"})
                 local = extended_packet("SET work_mem='16MB'", "all_local_1", "all_local_p1")[:-5]
                 local += extended_packet("SET statement_timeout='9s'", "all_local_2", "all_local_p2")[:-5]
-                probe.exchange(local + wire.sync_message(), "全本地双 Execute，共一个 Sync",
+                probe.exchange(local + wire.sync_message(), "两个 GUC Execute 共用一个 Sync",
                                {"tags": ["SET", "SET"], "ready": ["I"], "sqlstates": []})
                 probe.snapshot({"work_mem": "16MB", "statement_timeout": "9s"})
                 self.mixed(probe)
@@ -822,9 +829,14 @@ class ScenarioRunner:
             packet = parse("SET work_mem='32MB'", "shared") + bind("shared", "p1") + bind("shared", "p2")
             packet += wire.message("C", wire.close_portal_payload("p1")) + execute("p2")
             packet += parse("SET statement_timeout='9s'", "other") + bind("other", "p3") + execute("p3")
-            packet += execute("p2") + wire.sync_message()
-            probe.exchange(packet, "双 portal、关闭 p1、交错及重复执行 p2",
-                           {"tags": ["SET", "SET", "SET"], "ready": ["I"], "sqlstates": []})
+            probe.exchange(packet + wire.sync_message(), "关闭 p1 后交错执行 p2 和 p3",
+                           {"tags": ["SET", "SET"], "ready": ["I"], "sqlstates": []})
+            probe.snapshot({"work_mem": "32MB", "statement_timeout": "9s"})
+
+            packet = parse("SET work_mem='64MB'", "repeat_set") + bind("repeat_set", "repeat_p")
+            packet += execute("repeat_p") * 2 + wire.sync_message()
+            probe.exchange(packet, "重复 Execute 已完成的 GUC Portal",
+                           {"tags": ["SET"], "ready": ["I"], "sqlstates": ["55000"]})
             probe.snapshot({"work_mem": "32MB", "statement_timeout": "9s"})
             return
         if name == "extended_candidate_cleanup":
@@ -844,6 +856,52 @@ class ScenarioRunner:
             self.unexecuted_disconnect(probe)
             return
         raise ValueError(name)
+
+    def extended_guc_commit_rollback(self, probe):
+        def execute_packet(sql, name):
+            return extended_packet(sql, name, f"{name}_portal")[:-5]
+
+        sync = wire.sync_message()
+        set_work_mem = execute_packet("SET work_mem='32MB'", "rollback_set")
+        error = execute_packet("SELECT 1/0", "rollback_error")
+        probe.exchange(set_work_mem + error + sync, "P1-1：SET 后同轮除零",
+                       {"sqlstates": ["22012"], "tags": ["SET"], "ready": ["I"]})
+        probe.snapshot({"work_mem": "8MB"})
+
+        query = "SELECT current_setting('work_mem')"
+        query_bind = wire.message("P", wire.parse_payload("guc_read", query))
+        query_bind += wire.message("B", wire.bind_payload("guc_read_portal", "guc_read"))
+        query_execute = wire.message("E", wire.execute_payload("guc_read_portal"))
+        set_success = execute_packet("SET work_mem='32MB'", "successful_set")
+        probe.exchange(query_bind + set_success + query_execute + sync,
+                       "P1-1：先绑定查询，执行 SET 后再执行已有 Portal",
+                       {"sqlstates": [], "tags": ["SET", "SELECT 1"], "ready": ["I"],
+                        "rows": [["32MB"]]})
+        probe.snapshot({"work_mem": "32MB"})
+
+        set_timezone = execute_packet("SET TimeZone='Asia/Tokyo'", "rollback_timezone")
+        timezone_error = execute_packet("SELECT 1/0", "timezone_error")
+        probe.exchange(set_timezone + timezone_error + sync,
+                       "P1-1：TimeZone 变更与除零共用 Sync",
+                       {"sqlstates": ["22012"], "tags": ["SET"], "ready": ["I"]})
+        self.verify("TimeZone 回滚通知", "UTC", probe.parameters.get("TimeZone"),
+                    probe.parameters.get("TimeZone") == "UTC")
+        probe.snapshot({"TimeZone": "UTC"})
+
+        first = execute_packet("SET work_mem='16MB'", "pipeline_commit")
+        second = execute_packet("SET work_mem='64MB'", "pipeline_rollback")
+        second += execute_packet("SELECT 1/0", "pipeline_error")
+        probe.exchange(first + sync + second + sync, "P1-1：连续发送两个周期，读取第一个 Sync",
+                       {"sqlstates": [], "tags": ["SET"], "ready": ["I"]})
+        probe.exchange(b"", "P1-1：读取已发送的第二个 Sync",
+                       {"sqlstates": ["22012"], "tags": ["SET"], "ready": ["I"]})
+        probe.snapshot({"work_mem": "16MB"})
+
+        reset_all = execute_packet("RESET ALL", "rollback_reset")
+        unknown_bind = wire.message("B", wire.bind_payload("unknown_portal", "unknown_stmt"))
+        probe.exchange(reset_all + unknown_bind + sync, "P1-1：RESET ALL 后同轮 Bind 报错",
+                       {"sqlstates": ["26000"], "tags": ["RESET"], "ready": ["I"]})
+        probe.snapshot({"work_mem": "16MB", "statement_timeout": "7s", "TimeZone": "UTC"})
 
     def unexecuted_disconnect(self, probe):
         self.baseline(probe)
@@ -895,45 +953,24 @@ class ScenarioRunner:
                 self.context.attach_file(f"{self.plan.key}-sql-parse-baseline.log", log)
 
     def mixed(self, probe, errors_only=False):
-        # These complex combinations are gated by a real sql_parse execution
-        # in this same proxy/configuration, never inferred from PG support.
+        variants = [(True, True)] if errors_only else [(True, False), (False, False), (True, True)]
         with self.sql_parse_baseline_runner() as baseline_runner:
-            supported_count = 0
-            limits = []
-            variants = [(True, False), (False, False), (True, True)] if not errors_only else [(True, True)]
             for backend_first, error in variants:
                 backend = "SELECT 1/0" if error else "SELECT 42::int"
-                def cycle(sql, stem):
-                    return extended_packet(sql, f"{stem}_stmt", f"{stem}_portal")[:-5]
-                backend_packet = cycle(backend, "backend")
-                local_packet = cycle("SET work_mem='32MB'", "local")
+                suffix = f"{int(backend_first)}_{int(error)}"
+                backend_packet = extended_packet(backend, f"backend_stmt_{suffix}", f"backend_portal_{suffix}")[:-5]
+                local_packet = extended_packet("SET work_mem='32MB'", f"local_stmt_{suffix}", f"local_portal_{suffix}")[:-5]
                 packet = (backend_packet + local_packet if backend_first else local_packet + backend_packet) + wire.sync_message()
+                expected = mixed_protocol_expectation(backend_first, error)
+                work_mem = "8MB" if error else "32MB"
                 with baseline_runner.client(f"sql_parse_baseline_{backend_first}_{error}") as baseline:
                     baseline.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
-                    base = baseline.exchange(packet, "sql_parse 混合请求基线（一次发送，无客户端 Flush）", {}, intent="action")
-                    measured = baseline.exchange(wire.simple_query_message(PROBE_SQL), "sql_parse 基线参数观测", {}, intent="action")
-                    supported = (base["sqlstates"] == (["22012"] if error else []) and base["ready"] == ["I"]
-                                 and base["tags"] == (["SELECT 1", "SET"] if backend_first and not error else
-                                                       ["SET", "SELECT 1"] if not backend_first else [])
-                                 and len(measured["rows"]) == 1
-                                 and measured["rows"][0][0] == ("8MB" if error else "32MB"))
-                    freeze_mixed_baseline(self, backend_first, error, base, measured, supported)
-                    if not supported:
-                        reason = f"sql_parse 既有混合限制：前序后端={backend_first}、错误={error}，实际={base}"
-                        limits.append(reason)
-                        self.context.step(f'{self.plan.key}-baseline-limit-{backend_first}-{error}',
-                                          '记录开发前已存在的混合组合限制', status='SKIPPED', details={
-                                              'intent': 'verify', 'expected': '仅对已支持组合要求 Hint 等价',
-                                              'actual': base, 'analysis': reason})
-                        continue
-                    supported_count += 1
-                probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
-                actual = probe.exchange(packet, "混合请求按 sql_parse 基线核对", {
-                    field: base[field] for field in ("received", "sqlstates", "tags", "ready")})
-                self.verify("混合周期响应及 RFQ 归属", base["received"], actual["received"], actual["received"] == base["received"])
-                probe.snapshot({"work_mem": "8MB" if error else "32MB"})
-            if not supported_count and limits:
-                raise BaselineLimit('; '.join(limits))
+                    baseline.exchange(packet, "sql_parse 混合请求（一次发送，无客户端 Flush）", expected)
+                    baseline.snapshot({"work_mem": work_mem})
+                if self.mode == "hint":
+                    probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+                    probe.exchange(packet, "Hint 混合请求按协议顺序核对", expected)
+                    probe.snapshot({"work_mem": work_mem})
 
     def psql_switch_and_reuse(self):
         defaults = self.default_values()
@@ -1153,26 +1190,16 @@ def clean_backend_defaults(context, node):
     return defaults
 
 
-def freeze_mixed_baseline(runner, backend_first, error, response, measured, supported):
-    """Freeze actual sql_parse observations once, compare on every later run."""
-    root = Path(runner.context.environment.get("guc_alignment_baseline_dir") or
-                Path(__file__).resolve().parents[2] / "data/regression/fbasecman/guc-alignment-baselines")
-    root.mkdir(parents=True, exist_ok=True)
-    key = f"{runner.plan.topology}-{runner.plan.pool}-{runner.plan.reserve}-{backend_first}-{error}.json"
-    path = root / key
-    observation = {field: response[field] for field in ("received", "sqlstates", "tags", "ready")}
-    observation['work_mem'] = measured['rows'][0][0] if len(measured['rows']) == 1 else None
-    if path.exists():
-        reference = json.loads(path.read_text())
-        runner.verify('sql_parse 混合结果保持开发前基线', reference['observation'], observation,
-                      reference['observation'] == observation)
-    else:
-        reference = {'observation': observation, 'supported': supported,
-                     'binary_sha256': hashlib.sha256(Path(runner.context.environment['fbasecman_bin']).read_bytes()).hexdigest()}
-        temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(reference, ensure_ascii=False, indent=2))
-        temporary.replace(path)
-    runner.context.attach_text(f'mixed-baseline-{key}', json.dumps(reference, ensure_ascii=False, indent=2))
+def mixed_protocol_expectation(backend_first, error):
+    """Replies follow request order. An extended error skips messages until Sync."""
+    local = ["1", "2", "n", "C"]
+    backend = ["1", "2", "T", "D", "C"]
+    if error:
+        return {"received": ["1", "E", "Z"], "sqlstates": ["22012"], "tags": [], "ready": ["I"]}
+    if backend_first:
+        return {"received": backend + local + ["Z"], "sqlstates": [], "tags": ["SELECT 1", "SET"], "ready": ["I"]}
+    return {"received": local + backend + ["Z"], "sqlstates": [], "tags": ["SET", "SELECT 1"], "ready": ["I"]}
+
 
 
 def render_alignment_config(context, path, plan, mode):
@@ -1333,8 +1360,8 @@ class GucAlignmentCase:
                         # Keep the required design branch blocked, never silently
                         # turn off reserve and pretend to test the original config.
                         startup_log = "\n".join(p.read_text(errors="replace") for p in context.output_dir.glob("process-*.log"))
-                        if "pool type can only be 'transaction'" in startup_log and plan.pool == "session" and self.mode == "hint":
-                            startup_failure = ("SKIPPED", "当前构建的 Hint 只允许 transaction pool；session 设计分支无法执行")
+                        if "pool type can only be 'transaction'" in startup_log and plan.pool == "session":
+                            startup_failure = ("SKIPPED", f"当前构建的 {self.mode} 只允许 transaction pool；session 设计分支无法执行")
                         elif 'prepared statements support in session pool' in startup_log and plan.pool == "session" and plan.reserve:
                             startup_failure = ("SKIPPED", "当前构建拒绝 session pool + prepared statement reserve；设计配置分支无法执行")
                         else:
@@ -1375,7 +1402,11 @@ class GucAlignmentCase:
         if "FAIL" in statuses:
             raise AssertionError("GUC 对齐存在业务断言失败，详见子场景与报文证据")
         if "ERROR" in statuses:
-            raise RuntimeError("GUC 对齐存在基础设施/协议异常，详见子场景证据")
+            reasons = dict.fromkeys(
+                row["reason"].splitlines()[0]
+                for row in self.coverage if row["status"] == "ERROR" and row.get("reason")
+            )
+            raise RuntimeError("GUC 执行异常：" + "；".join(list(reasons)[:3] or ["详见子场景证据"]))
         if not statuses.issubset({"PASS", "SKIPPED"}) or "PASS" not in statuses:
             reasons = list(dict.fromkeys(row.get("reason", "未执行") for row in self.coverage if row["status"] in {"BLOCKED", "CANCELLED"}))
             raise Blocked("GUC 必需检查未完成：" + "；".join(reasons[:3] or ["没有支持范围内的通过检查"]))

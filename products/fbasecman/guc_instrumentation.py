@@ -11,7 +11,7 @@ from platform_regress.sdk import Blocked
 
 WRAPPED = (
     'fb_guc_cache_insert_or_update', 'fb_guc_cache_copy', 'fb_guc_cache_clear', 'fb_guc_cache_free',
-    'fb_add_outstanding_request', 'machine_msg_create', 'machine_iov_add',
+    'fb_add_outstanding_request', 'machine_iov_add',
     'machine_iov_add_pointer', 'machine_msg_write', 'mm_io_write',
     'mm_socket_writev', 'fb_sql_parse_client_state_prepare_forbidden', 'od_reset',
 )
@@ -120,11 +120,20 @@ class ProductChecks:
                 p.snapshot({'work_mem': '8MB'})
             self.stage('E')
             p.exchange(wire.message('B', wire.bind_payload('', 'cache_stmt')) +
-                       wire.message('E', wire.execute_payload('')) + wire.sync_message(),
-                       'E 后真实缓存提交', {'tags': ['SET'], 'sqlstates': [], 'ready': ['I']})
+                       wire.message('E', wire.execute_payload('')) + wire.flush_message(),
+                       'E/Flush 确认 GUC', {'tags': ['SET'], 'sqlstates': [], 'ready': []},
+                       terminal={'C'})
             records = self.events('E')
-            changes = [r for r in records if r['event'] == 'cache_after' and r['cache'] == 'frontend' and r['key'] == 'work_mem' and r['result']]
-            self.verify('E 正式缓存写入当前候选', '至少一次 frontend work_mem 写入', changes, bool(changes))
+            working = [r for r in records if r['event'] == 'cache_after' and r['cache'] == 'transaction'
+                       and r['key'] == 'work_mem' and r['value'].strip("'") == '32MB' and r['result']]
+            formal = [r for r in records if r['event'] in {'cache_after', 'cache_copy'} and r['cache'] == 'frontend']
+            self.verify('E 确认后更新工作缓存', {'working': 1, 'formal': 0},
+                        {'working': working, 'formal': formal}, len(working) == 1 and not formal)
+            self.stage('sync')
+            p.exchange(wire.sync_message(), 'Sync 提交 GUC', {'tags': [], 'sqlstates': [], 'ready': ['I']})
+            promoted = [r for r in self.events('sync') if r['event'] == 'cache_copy' and
+                        r['cache'] == 'frontend' and r['value'].strip("'") == '32MB' and r['result']]
+            self.verify('Sync 后正式缓存提升', 1, promoted, len(promoted) == 1)
             self.stage('observe')
             p.snapshot({'work_mem': '32MB'})
         # Separate E/Q transactions prove working-cache writes and no formal
@@ -189,10 +198,10 @@ class ProductChecks:
             p.sql("SET work_mem='32MB'", protocol='E', tag='SET')
             p.snapshot({'work_mem': '32MB'})
             events = self.events('reclaim')
-            backend_changes = [r for r in events if r['event'] == 'cache_after' and r['cache'] == 'backend' and r['key'] == 'work_mem']
-            frontend_changes = [r for r in events if r['event'] == 'cache_after' and r['cache'] == 'frontend' and r['key'] == 'work_mem']
-            self.verify('本地 E 正式提交与真实部署分别取证', '正式写入后才由后端部署写入', events,
-                        bool(frontend_changes) and (not backend_changes or events.index(frontend_changes[0]) < events.index(backend_changes[-1])))
+            confirmed = [r for r in events if r['event'] == 'cache_copy' and
+                         r['value'].strip("'") == '32MB' and r['result']]
+            self.verify('真实 Execute 成功后更新前后端缓存', ['frontend', 'backend'],
+                        confirmed, {'frontend', 'backend'} <= {r['cache'] for r in confirmed})
 
     def faults(self, points):
         from products.fbasecman.guc_alignment_native import (
@@ -234,7 +243,7 @@ class ProductChecks:
                     self.verify(f'{protocol}/{point} 故障点确实触发', 1, injected, len(injected) == 1)
                     self.verify('故障后代理进程仍可服务其他客户端', None, self.process.poll(), self.process.poll() is None)
                     self.verify(f'{protocol}/{point} 不发送错误成功响应', [], facts['tags'], not facts['tags'])
-                    if point in {'apply', 'response_queue', 'response_construct'}:
+                    if point in {'apply', 'response_queue', 'deploy_bind'}:
                         self.verify(f'{point} 失败后终止连接', True, disconnected, disconnected)
                     promotions = [r for r in records if r['event'] == 'cache_copy' and r['cache'] == 'frontend']
                     self.verify(f'{protocol}/{point} 失败候选不提升', [], promotions, not promotions)

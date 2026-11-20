@@ -546,7 +546,14 @@ class CommandExecutor:
             while time.monotonic() < deadline:
                 self.context.check_cancel()
                 if process.poll() is not None:
-                    raise RuntimeError(f"产品进程提前退出: rc={process.returncode}")
+                    with log_path.open("rb") as log_reader:
+                        log_reader.seek(max(0, log_path.stat().st_size - 16384))
+                        lines = log_reader.read().decode("utf-8", errors="replace").splitlines()
+                    errors = [match.group(1) for line in lines
+                              if (match := re.search(r"\b(?:error|fatal|panic)\b[ :]+(.+)", line, re.IGNORECASE))]
+                    detail = _SECRET_DSN.sub(r"\1<redacted>", errors[-1])[:500] if errors else ""
+                    message = f"产品进程提前退出: rc={process.returncode}"
+                    raise RuntimeError(f"{message}；{detail}" if detail else message)
                 try:
                     with socket.create_connection(
                         (ready_host, ready_port), timeout=0.2
@@ -562,7 +569,7 @@ class CommandExecutor:
                         return process
                 except OSError:
                     time.sleep(0.1)
-            raise TimeoutError(f"产品进程未在 {timeout_seconds:g} 秒内就绪")
+            raise TimeoutError(f"产品进程未在 {timeout_seconds:g} 秒内就绪，无法连接 {ready_host}:{ready_port}")
         return process
 
     @staticmethod

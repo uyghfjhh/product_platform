@@ -52,6 +52,7 @@ export type ReferenceCluster = {
 export type ReferenceClusterHealth = {
   total_alive: number;
   total_count: number;
+  total_unknown?: number;
 };
 
 export type ReferenceHealth = {
@@ -85,11 +86,14 @@ export type ReferenceDeployment = {
         const clHealth = typeof rawHealth === 'object' && rawHealth !== null ? rawHealth : undefined;
         const alive = clHealth ? clHealth.total_alive : 0;
         const total = clHealth ? clHealth.total_count : 7;
-        const isAllDown = health.probed === false ? false : alive === 0;
+        const unknown = clHealth?.total_unknown ?? (clHealth ? 0 : total);
+        const isAllDown = health.probed !== false && total > 0 && unknown === 0 && alive === 0;
 
         let statusPill = '';
         if (health.probed === false) {
           statusPill = `<span class="cluster-status-pill unknown">状态探测中…</span>`;
+        } else if (unknown > 0) {
+          statusPill = `<span class="cluster-status-pill unknown">${alive}/${total} 在线 · ${unknown} 个未确认</span>`;
         } else if (isAllDown) {
           statusPill = `<span class="cluster-status-pill down">已离线 / 未部署 (0/${total})</span>`;
         } else if (alive === total) {
@@ -267,7 +271,7 @@ export type ReferenceDeployment = {
       const statusClass = isDown ? 'down' : (isUnknown ? 'unknown' : 'active');
       const isPrimary = n.type === 'db_master';
       const accentClass = isDown ? 'accent-down' : (isPrimary ? 'accent-primary' : 'accent-standby');
-      const roleBadge = isDown ? '离线 DOWN' : (isUnknown ? '探测中' : (n.role || (isPrimary ? 'Primary (写)' : 'Standby (读)')));
+      const roleBadge = isDown ? '离线 DOWN' : (isUnknown ? (n.statusText || '探测中') : (n.role || (isPrimary ? 'Primary (写)' : 'Standby (读)')));
       const roleColorClass = isPrimary ? 'role-primary' : 'role-standby';
       const endpoint = n.endpoint || (n.host && n.port ? `${n.host}:${n.port}` : (n.host || ''));
 

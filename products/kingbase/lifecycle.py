@@ -10,28 +10,34 @@ from pathlib import Path
 from platform_app.resources import canonical_host
 
 
+def control_command(node):
+    owner = pwd.getpwnam('kingbase')
+    prefix = [] if os.getuid() == owner.pw_uid else ['sudo', '-n', '-u', owner.pw_name]
+    installations = (Path('/opt/Kingbase/ES/V9/Server'), Path(owner.pw_dir) / 'ES/V9/Server')
+    if canonical_host(node['host']) != 'local':
+        raise ValueError('金仓原生启停当前仅支持本机实例')
+    directory = Path(node['data_dir'])
+    if directory == Path('/') or not directory.is_absolute():
+        raise ValueError('无效数据目录')
+    ownership = subprocess.run(prefix + ['stat', '-c', '%u', '--', str(directory)],
+                               capture_output=True, text=True, check=False)
+    if ownership.returncode or ownership.stdout.strip() != str(owner.pw_uid):
+        raise ValueError('数据目录不属于 kingbase 用户')
+    probe = subprocess.run(prefix + ['test', '-f', str(directory / 'kingbase.conf')], check=False)
+    candidates = [home / 'bin/sys_ctl' for home in installations
+                  if subprocess.run(prefix + ['test', '-x', str(home / 'bin/sys_ctl')]).returncode == 0]
+    if probe.returncode or len(candidates) != 1:
+        raise ValueError('无法唯一确定金仓安装或数据目录配置')
+    return prefix + [str(candidates[0]), '-D', node['data_dir']]
+
+
 def run(action, nodes):
     if action not in ('start', 'stop', 'restart', 'doctor'):
         raise ValueError('不支持的金仓操作')
-    checked = []
-    for node in nodes:
-        if canonical_host(node['host']) != 'local':
-            raise ValueError('金仓原生启停当前仅支持本机实例')
-        directory = Path(node['data_dir'])
-        owner = pwd.getpwuid(directory.stat().st_uid)
-        if directory == Path('/') or not directory.is_absolute():
-            raise ValueError('无效数据目录')
-        # Use the installation validated for this first native integration.
-        ctl = Path('/opt/Kingbase/ES/V9/Server/bin/sys_ctl')
-        prefix = [] if os.getuid() == owner.pw_uid else ['sudo', '-n', '-u', owner.pw_name]
-        probe = subprocess.run(prefix + ['test', '-f', str(directory / 'kingbase.conf')], check=False)
-        if probe.returncode or not ctl.is_file() or owner.pw_name != 'kingbase':
-            raise ValueError('数据目录或金仓安装身份不匹配')
-        checked.append((node, prefix, ctl))
+    checked = [(node, control_command(node)) for node in nodes]
     if action == 'stop':
         checked.reverse()
-    for node, prefix, ctl in checked:
-        base = prefix + [str(ctl), '-D', node['data_dir']]
+    for node, base in checked:
         state = subprocess.run(base + ['status'], capture_output=True, text=True, check=False)
         if state.returncode not in (0, 3):
             raise RuntimeError(state.stderr or state.stdout)

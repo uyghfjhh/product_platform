@@ -7,8 +7,6 @@
 #include <odyssey.h>
 #include <fb_guc_cache.h>
 #include <fb_outstanding_request.h>
-#include <execinfo.h>
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -49,22 +47,13 @@ static int fail(const char *point) {
     int expected=0; if(!atomic_compare_exchange_strong(&injected,&expected,1)) return 0;
     event("injected",NULL,point,"",0); errno=ENOMEM;return 1;
 }
-static int execute_stack(void) {
-    void *frames[32]; int count=backtrace(frames,32);
-    for(int i=1;i<count;i++) {
-        Dl_info info;
-        if(dladdr(frames[i],&info) && info.dli_sname &&
-           (strstr(info.dli_sname,"handle_execute") || strstr(info.dli_sname,"execute_forward"))) return 1;
-    }
-    return 0;
-}
 extern bool __real_fb_guc_cache_insert_or_update(fb_guc_cache_t*,const char*,size_t,const char*,size_t,uint64_t,int,fb_guc_value_source_t);
 bool __wrap_fb_guc_cache_insert_or_update(fb_guc_cache_t *c,const char *k,size_t kl,const char *v,size_t vl,uint64_t hash,int idx,fb_guc_value_source_t src) {
     char key[128],value[512];snprintf(key,sizeof(key),"%.*s",(int)kl,k);snprintf(value,sizeof(value),"%.*s",(int)vl,v);
     event("cache_before",c,key,value,1);
     if(!strcmp(key,"work_mem") && c->cache_name &&
-       ((!strcmp(c->cache_name,"frontend") && fail("apply")) ||
-        (!strcmp(c->cache_name,"transaction") && fail("pre_record")))) return false;
+       !strcmp(c->cache_name,"transaction") &&
+       (fail("apply") || fail("pre_record"))) return false;
     bool rc=__real_fb_guc_cache_insert_or_update(c,k,kl,v,vl,hash,idx,src);
     event("cache_after",c,key,value,rc);return rc;
 }
@@ -81,13 +70,9 @@ void __wrap_fb_guc_cache_free(fb_guc_cache_t *c) {event("cache_free",c,"","",1);
 extern od_frontend_status_t __real_fb_add_outstanding_request(od_server_t*,char,od_hashmap_list_item_t*,od_hash_t,fb_internal_request_kind_t,fb_global_ps_entry_t*,fb_outstanding_request_t**);
 od_frontend_status_t __wrap_fb_add_outstanding_request(od_server_t *s,char type,od_hashmap_list_item_t *item,od_hash_t hash,fb_internal_request_kind_t internal,fb_global_ps_entry_t *entry,fb_outstanding_request_t **out) {
     char kind[2]={type,0};event("outstanding",NULL,kind,"",internal);
+    if(internal==FB_INTERNAL_REQ_DEPLOY_BIND && type=='B' && fail("deploy_bind")) return OD_EOOM;
     if(internal==FB_INTERNAL_REQ_NONE && (type=='E' || type=='Q') && fail("outstanding")) return OD_EOOM;
     return __real_fb_add_outstanding_request(s,type,item,hash,internal,entry,out);
-}
-extern machine_msg_t *__real_machine_msg_create(int);
-machine_msg_t *__wrap_machine_msg_create(int size) {
-    if(execute_stack() && fail("response_construct")) return NULL;
-    return __real_machine_msg_create(size);
 }
 static int set_complete(void *data,int size) {
     unsigned char *p=data;return size>=9 && p[0]=='C' &&

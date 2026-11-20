@@ -58,7 +58,8 @@ def create_router(settings, store):
             verify_pair(environment, primary, standby_endpoint, standby)
         except Exception as exc:
             raise HTTPException(422, str(exc) if isinstance(exc, ValueError) else '金仓实例连接或身份探测失败，请检查地址、用户和免密认证') from exc
-        config = {'product_id': 'kingbase', 'hosts': {'primary_host': {'address': item.host}},
+        config = {'product_id': 'kingbase', 'database_mode': primary.get('database_mode'),
+                  'hosts': {'primary_host': {'address': item.host}},
                   'instances': {'primary': {'host': 'primary_host', 'port': item.port, 'data_dir': primary['data_dir']}},
                   'streaming_clusters': {'kingbase': {'primary': 'primary', 'standbys': [], 'replication': {'mode': 'async'}}}}
         if standby:

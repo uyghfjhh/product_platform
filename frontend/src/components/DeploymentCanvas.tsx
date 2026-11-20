@@ -141,7 +141,7 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
       serverVersion: node.server_version,
       pid: probe?.pid,
       status: probe?.running == null ? 'unknown' : (probe.running ? 'active' : 'down'),
-      statusText: probe?.running == null ? '探测中' : (probe.running ? '运行中' : '已停止'),
+      statusText: probe?.running == null ? (observed == null ? '探测中' : '状态未确认') : (probe.running ? '运行中' : '已停止'),
       x: pos.x,
       y: pos.y,
       compact: pos.compact,
@@ -197,6 +197,7 @@ function toReference(topology: TopologyData, observed: Observed, mmrStatus?: Mmr
     const members = topology.nodes.filter((node) => (node.group || 'cluster') === group);
     return [group, {
       total_alive: members.filter((node) => observed?.[node.id]?.running === true).length,
+      total_unknown: members.filter((node) => observed?.[node.id]?.running == null).length,
       total_count: members.length
     }];
   }));

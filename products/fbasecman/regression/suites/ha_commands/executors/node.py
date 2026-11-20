@@ -336,6 +336,20 @@ def _run_set_node_weight_idempotent(context):
                      {"pg_3": {"weight": "10"}})
 
 
+def _wait_mmr_target_ready(ops, node):
+    ops.assert_table(
+        "SHOW GROUP_ROUTING mmr_group;",
+        f"等待 {node} 的主库角色和可用路由发布",
+        {f"postgres|{node}": {
+            "current_primary": node,
+            "effective_grouprole": "non-write-leader",
+            "effective_state": "active",
+            "route_status": "AVAILABLE",
+        }},
+        key=("user_name", "candidate_node"), retry_timeout=30,
+    )
+
+
 def _run_missing_promoted_set_promoted(context):
     ops = context.ops
     conf = ops.start(transform=_without_promoted)
@@ -345,6 +359,7 @@ def _run_missing_promoted_set_promoted(context):
         "查看命令前的缺省 promoted 状态",
         {"mmr_group": {"write_cluster": "pg_cluster_2",
                        "promoted_cluster": ""}})
+    _wait_mmr_target_ready(ops, "pg_1")
     ops.psql('SET NODE PROMOTED pg_1 IN GROUP mmr_group;',
             "补写 promoted_cluster 为 pg_cluster_1",
             '返回 SET NODE', lambda output: "SET NODE" in output and "ERROR" not in output)
@@ -453,6 +468,7 @@ def _run_set_node_write_switch_and_restore(context):
     ops.assert_routing(
         "mmr_group", "查看切换前的写节点状态",
         write_cluster="pg_cluster_2", write_leader="pg_2")
+    _wait_mmr_target_ready(ops, "pg_1")
     ops.psql(
         'SET NODE WRITE pg_1 IN GROUP mmr_group;',
         "切换 mmr_group 写中心到 pg_1",
@@ -468,6 +484,7 @@ def _run_set_node_write_switch_and_restore(context):
         "SELECT inet_server_addr(), inet_server_port(), pg_backend_pid(), current_user;",
         "验证切换后的实际写路由",
         port=ops.env.config["database"]["ports"]["mmr1"], retry_timeout=30)
+    _wait_mmr_target_ready(ops, "pg_2")
     ops.psql(
         'SET NODE WRITE pg_2 IN GROUP mmr_group;', "切回 mmr_group 写中心到 pg_2",
         '返回 SET NODE', lambda output: "SET NODE" in output and "ERROR" not in output,

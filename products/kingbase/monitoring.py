@@ -3,18 +3,21 @@
 from platform_app.postgres_monitoring import section
 from platform_app.postgres_monitoring import snapshot as base_snapshot
 
-from products.kingbase.database import RECEIVER, upstream_matches
+from products.kingbase.database import receiver_query, stats_prefix, upstream_matches
+from products.kingbase.topology import database_mode
 
 
 def snapshot(environment, nodes):
+    mode = database_mode(environment)
+    prefix = stats_prefix(mode)
     return base_snapshot(environment, nodes, query_overrides={
         'wal': None,
-        'receivers': RECEIVER,
+        'receivers': receiver_query(mode),
         'system': 'SELECT system_identifier::text FROM pg_control_system()',
         'senders': 'SELECT r.pid,r.backend_start,r.application_name,r.state,r.sync_state,'
                    'r.sent_lsn::text,r.write_lsn::text,r.flush_lsn::text,r.replay_lsn::text,'
-                   's.slot_name FROM sys_stat_replication r '
-                   'LEFT JOIN sys_replication_slots s ON s.active_pid=r.pid',
+                   f's.slot_name FROM {prefix}_stat_replication r '
+                   f'LEFT JOIN {prefix}_replication_slots s ON s.active_pid=r.pid',
     })
 
 

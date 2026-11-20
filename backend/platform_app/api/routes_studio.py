@@ -19,7 +19,7 @@ def register(app, settings: Settings, store) -> None:
         from ..providers import provider_option
         queries = provider_option(settings, environment.get('product_id'), 'studio_inspect_queries')
         if callable(queries):
-            target['_studio_inspect_queries'] = queries()
+            target['_studio_inspect_queries'] = queries(environment)
         if node_id:
             try:
                 nodes = routes_environments.configured_topology(settings, environment)["nodes"]

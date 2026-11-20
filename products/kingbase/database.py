@@ -16,6 +16,14 @@ IDENTITY = ("SELECT version() AS version,pg_is_in_recovery() AS recovery,"
             "(SELECT system_identifier::text FROM pg_control_system()) AS system_identifier")
 
 
+def stats_prefix(mode):
+    return 'pg' if mode == 'pg' else 'sys'
+
+
+def receiver_query(mode):
+    return RECEIVER.replace('sys_stat_wal_receiver', stats_prefix(mode) + '_stat_wal_receiver')
+
+
 def upstream_matches(source, target, receiver):
     upstream = receiver.get('sender_host') or ''
     local = upstream.startswith('/') or upstream.lower() == 'localhost'
@@ -44,12 +52,13 @@ def identity(environment, node=None):
         result = connection.execute(IDENTITY).fetchone()
         if not result['version'].startswith('KingbaseES'):
             raise ValueError('目标实例不是 KingbaseES')
-        result['receivers'] = connection.execute(RECEIVER).fetchall()
+        result['receivers'] = connection.execute(receiver_query(result['database_mode'])).fetchall()
         result['senders'] = connection.execute(
             'SELECT application_name,state,sync_state,client_addr::text,'
-            'sent_lsn::text,replay_lsn::text FROM sys_stat_replication').fetchall()
+            f"sent_lsn::text,replay_lsn::text FROM {stats_prefix(result['database_mode'])}_stat_replication").fetchall()
         return result
 
 
-def inspect_queries():
-    return {**QUERIES, 'receiver': RECEIVER}
+def inspect_queries(environment=None):
+    from products.kingbase.topology import database_mode
+    return {**QUERIES, 'receiver': receiver_query(database_mode(environment or {}))}

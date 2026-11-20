@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import subprocess
 
 import psycopg
 import yaml
@@ -26,6 +27,11 @@ def local_server_pid(node):
         except (OSError, UnicodeError):
             continue
     return None
+
+
+def database_mode(environment):
+    path = environment.get('deployment_config')
+    return yaml.safe_load(Path(path).read_text()).get('database_mode') if path else None
 
 
 def inventory(environment):
@@ -111,7 +117,20 @@ def status(settings, environment):
     result = {}
     for node, value in zip(nodes, observed):
         live = value.get('live')
-        result[node['id']] = {'running': True if live else None, 'pid': local_server_pid(node) if live else None,
+        running = True if live else None
+        message = value.get('error')
+        if not live and canonical_host(node['host']) == 'local' and node['data_dir']:
+            from products.kingbase.lifecycle import control_command
+            try:
+                check = subprocess.run(control_command(node) + ['status'],
+                                       capture_output=True, timeout=3)
+                if check.returncode == 3:
+                    running, message = False, 'sys_ctl 确认实例已停止'
+                elif check.returncode == 0:
+                    running = True
+            except (KeyError, ValueError, OSError, subprocess.TimeoutExpired):
+                pass
+        result[node['id']] = {'running': running, 'pid': local_server_pid(node) if live else None,
             'message': ('KingbaseES · ' + ('备库' if live['recovery'] else '主库') +
-                        ' · ' + live['database_mode']) if live else value['error']}
+                        ' · ' + live['database_mode']) if live else message}
     return result
