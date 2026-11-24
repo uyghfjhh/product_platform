@@ -162,6 +162,7 @@ def response_facts(messages):
     return {
         "received": [kind for kind, _ in messages],
         "rows": wire.data_rows(messages),
+        "copy_data": [body.hex() for kind, body in messages if kind == "d"],
         "sqlstates": [wire.error_fields(body).get("C") for kind, body in messages if kind == "E"],
         "errors": [wire.error_fields(body) for kind, body in messages if kind == "E"],
         "tags": [body.rstrip(b"\0").decode("utf-8", "replace") for kind, body in messages if kind == "C"],
@@ -871,6 +872,48 @@ class ScenarioRunner:
             return extended_packet(sql, name, f"{name}_portal")[:-5]
 
         sync = wire.sync_message()
+        for label, sql, expected, work_mem, timeout in (
+            ("ok", "SELECT current_setting('work_mem')",
+             {"tags": ["SET", "SELECT 1"], "rows": [["29MB"]], "sqlstates": []}, "29MB", "1s"),
+            ("error", "SELECT 1/0", {"tags": ["SET"], "sqlstates": ["22012"]}, "8MB", "1s"),
+            ("rollback", "BEGIN; ROLLBACK; SET statement_timeout='2s'; SELECT 1",
+             {"tags": ["SET", "BEGIN", "ROLLBACK", "SET", "SELECT 1"], "sqlstates": []}, "8MB", "2s"),
+        ):
+            probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+            probe.sql("SET statement_timeout='1s'", tag="SET", protocol="Q")
+            packet = execute_packet("SET work_mem='29MB'", f"simple_boundary_{label}")
+            probe.exchange(packet + wire.simple_query_message(sql),
+                           f"P1-1：Prepared SET 后用 Simple Query 收口：{sql}",
+                           {**expected, "ready": ["I"]})
+            probe.snapshot({"work_mem": work_mem, "statement_timeout": timeout})
+
+        probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+        deallocate_set = execute_packet("SET work_mem='29MB'", "deallocate_set")
+        probe.exchange(deallocate_set + wire.simple_query_message("DEALLOCATE deallocate_set"),
+                       "P1-1：本地 DEALLOCATE 确认前序 Prepared SET",
+                       {"tags": ["SET", "DEALLOCATE"], "sqlstates": [], "ready": ["I"]})
+        probe.sql("SELECT 1/0", error="22012", protocol="Q")
+        probe.snapshot({"work_mem": "29MB"})
+        probe.sql("DEALLOCATE deallocate_set", error="26000", protocol="Q")
+
+        verify_copy_switch = self.mode == "hint" and self.plan.topology == "replication"
+        if verify_copy_switch:
+            probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", protocol="Q")
+            self.verify_route(probe.snapshot(), "write")
+        probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+        copy_set = parse("SET work_mem='29MB'", "copy_set") + bind("copy_set", "copy_set") + execute("copy_set")
+        copy_query = wire.simple_query_message("COPY (SELECT current_setting('work_mem')) TO STDOUT")
+        probe.exchange(copy_set + copy_query, "P1-1：Prepared SET 后直接执行 COPY TO STDOUT",
+                       {"received": ["1", "2", "C", "H", "d", "c", "C", "Z"],
+                        "tags": ["SET", "COPY 1"], "sqlstates": [], "ready": ["I"],
+                        "copy_data": [b"29MB\n".hex()]})
+        probe.snapshot({"work_mem": "29MB"})
+        if verify_copy_switch:
+            probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY", protocol="Q")
+            self.verify_route(probe.snapshot({"work_mem": "29MB"}), "read")
+            probe.sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", protocol="Q")
+
+        probe.sql("SET statement_timeout='7s'", tag="SET", protocol="Q")
         probe.exchange(parse("select 1", "warm_heartbeat") + sync,
                        "P1-1：预先准备心跳语句",
                        {"received": ["1", "Z"], "sqlstates": [], "ready": ["I"]})
@@ -1006,6 +1049,52 @@ class ScenarioRunner:
                 self.begin_write_transaction(probe, protocol="Q")
                 self.verify_route(probe.snapshot(after if end == "COMMIT" else before, ready="T"), "write")
                 probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
+
+            for flush in (False, True):
+                for end in ("ROLLBACK", "COMMIT"):
+                    label = f"{'flush' if flush else 'batch'}_{end.lower()}"
+                    work_mem, timezone, begin = (f"tz_{label}_{name}" for name in ("mem", "value", "begin"))
+                    before = {"work_mem": "8MB", "TimeZone": "UTC"}
+                    after = {"work_mem": "29MB", "TimeZone": "Asia/Tokyo"}
+                    probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+                    probe.sql("SET TimeZone='UTC'", tag="SET", protocol="Q")
+                    memory_set = parse("SET work_mem='29MB'", work_mem) + bind(work_mem, work_mem) + execute(work_mem)
+                    timezone_set = parse("SET TimeZone='Asia/Tokyo'", timezone) + bind(timezone, timezone) + execute(timezone)
+                    suffix = parse("BEGIN READ ONLY", begin) + bind(begin, begin) + execute(begin) + sync
+                    if flush:
+                        for packet in (memory_set, timezone_set):
+                            probe.exchange(packet + wire.flush_message(), "P1-1：Flush 交付 SET 后再发 BEGIN",
+                                           {"received": ["1", "2", "C"], "sqlstates": [], "parameters": []},
+                                           terminal={"C"})
+                    probe.exchange(suffix if flush else memory_set + timezone_set + suffix,
+                                   "P1-1：混合 TimeZone 的只读事务走备库",
+                                   {"received": ["1", "2", "C"] * (1 if flush else 3) + ["S", "Z"],
+                                    "sqlstates": [], "ready": ["T"], "parameters": [("TimeZone", "Asia/Tokyo")]})
+                    self.verify_route(probe.snapshot(after, ready="T"), "read")
+                    probe.exchange(wire.simple_query_message(end), f"P1-1：核对 {end} 的时区通知",
+                                   {"tags": [end], "sqlstates": [], "ready": ["I"],
+                                    "parameters": [("TimeZone", "UTC")] if end == "ROLLBACK" else []})
+                    self.begin_write_transaction(probe, protocol="Q")
+                    self.verify_route(probe.snapshot(after if end == "COMMIT" else before, ready="T"), "write")
+                    probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
+
+        if self.mode == "hint":
+            with self.client("mixed_session_defaults_peer") as peer:
+                default_sql = "SHOW default_transaction_read_only"
+                initial = peer.sql(default_sql, protocol="Q")["rows"][0][0]
+                mode, changed = ("READ ONLY", "on") if initial == "off" else ("READ WRITE", "off")
+                writer = probe.snapshot()
+                packet = execute_packet("SET work_mem='29MB'", "mixed_session_defaults")
+                packet += wire.simple_query_message(f"SET SESSION CHARACTERISTICS AS TRANSACTION {mode}")
+                probe.exchange(packet, "P1-1：混合周期执行 SET SESSION CHARACTERISTICS",
+                               {"tags": ["SET", "SET"], "sqlstates": [], "ready": ["I"]})
+                actual = probe.sql(default_sql, protocol="Q")["rows"][0][0]
+                self.verify("原会话保留新的默认事务模式", changed, actual, actual == changed)
+                reused = peer.snapshot()
+                self.verify("两个会话复用同一物理后端", identity(writer), identity(reused),
+                            identity(writer) == identity(reused))
+                actual = peer.sql(default_sql, protocol="Q")["rows"][0][0]
+                self.verify("复用连接的会话保留自己的默认事务模式", initial, actual, actual == initial)
 
     def unexecuted_disconnect(self, probe):
         self.baseline(probe)
