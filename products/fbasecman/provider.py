@@ -334,7 +334,37 @@ class FbasecmanProvider:
                 "--profile", str(profile), "--override", str(override),
             ], settings.data_dir)
         if action == "stability.fbasecman":
+            from products.fbasecman.longrun import TARGET, selected_workloads, suite_directory
+
             product = discover_products(settings.products_root)["fbasecman"]
+            if target == TARGET:
+                from products.fbasecman.test_settings import regression_snapshot
+
+                suite = suite_directory(product.source_root)
+                deployment, override = profile_paths(settings, environment["id"])
+                if not deployment.is_file() or not override.is_file():
+                    raise ValueError("请先准备所绑定的平台 fbasecman 部署环境")
+                duration, selected = selected_workloads(parameters)
+                build = regression_snapshot(settings, environment)["regress_extra_configs"][0]
+                output = settings.artifact_dir("fbasecman", environment["id"])
+                regress_root = settings.product_regress_root("fbasecman")
+                import yaml
+                topology = yaml.safe_load(deployment.read_text(encoding="utf-8"))
+                first = next(iter(topology["instances"].values()))
+                installation = topology["postgresql_installations"][first["installation"]]
+                license_source = (installation.get("license") or {}).get("source_file")
+                license_args = ["--database-license", license_source] if license_source else []
+                profiling_args = []
+                if parameters.get("memory_profile"):
+                    interval = parameters.get("profile_interval", 30)
+                    if not isinstance(interval, int) or isinstance(interval, bool) or not 20 <= interval <= 36:
+                        raise ValueError("heap 导出间隔指数必须在 20 至 36 之间")
+                    profiling_args = ["--profile-interval", str(interval)]
+                return CommandSpec([
+                    sys.executable, "-m", "products.fbasecman.longrun",
+                    str(suite), str(regress_root), build, str(output),
+                    str(settings.runtime_dir / "fbasecman-longrun"), str(duration), *selected, *license_args, *profiling_args,
+                ], settings.data_dir)
             script = product.cli_path("stable")
             from products.fbasecman.test_settings import regression_snapshot
             snapshot = regression_snapshot(settings, environment)

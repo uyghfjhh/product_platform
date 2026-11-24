@@ -5,12 +5,15 @@ Shared environment persistence, topology validation, and task execution remain
 platform services; this module owns product-specific request shapes and URLs.
 """
 
+import json
 import os
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, model_validator
 
+from platform_app.product_catalog import discover_products
 from platform_app.topology import configured_topology
 from products.fbasecman.deployment.profile import profile_paths, save_profile
 from products.fbasecman.reports.artifacts import (
@@ -67,6 +70,74 @@ def create_router(settings, store) -> APIRouter:
         if environment is None or environment["product_id"] != "fbasecman":
             raise HTTPException(status_code=404, detail="fbasecman 环境不存在")
         return environment
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun")
+    def longrun_catalog(environment_id: str):
+        from products.fbasecman.longrun import DEFAULT_SECONDS, TARGET, WORKLOADS, suite_directory
+        from products.fbasecman.longrun_memory import tools_for
+
+        product_environment(environment_id)
+        issue = None
+        try:
+            product = discover_products(settings.products_root)["fbasecman"]
+            suite_directory(product.source_root)
+            deployment, override = profile_paths(settings, environment_id)
+            if not deployment.is_file() or not override.is_file():
+                issue = "请先准备所绑定的平台 fbasecman 部署环境"
+        except (OSError, ValueError) as exc:
+            issue = str(exc)
+        memory_issue = None
+        try:
+            tools_for(settings.runtime_dir)
+        except ValueError as exc:
+            memory_issue = str(exc)
+        return {
+            "target": TARGET,
+            "duration_seconds": DEFAULT_SECONDS,
+            "workloads": [{"id": name, "title": title} for name, title in WORKLOADS.items()],
+            "issue": issue,
+            "memory_issue": memory_issue,
+        }
+
+    def memory_directory(environment_id: str, task_id: UUID):
+        from products.fbasecman.longrun import TARGET
+
+        product_environment(environment_id)
+        task = store.tasks.get_task(str(task_id))
+        if (not task or task["environment_id"] != environment_id or task["target"] != TARGET
+                or task["action"] != "stability.fbasecman"):
+            raise HTTPException(404, "常稳任务不存在")
+        root = settings.artifact_dir("fbasecman", environment_id).resolve()
+        path = (root / "runs" / str(task_id) / "memory").resolve()
+        if not path.is_relative_to(root):
+            raise HTTPException(404, "内存诊断不存在")
+        return path
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory")
+    def memory_report(environment_id: str, task_id: UUID):
+        from products.fbasecman.longrun_memory import ARTIFACTS
+
+        path = memory_directory(environment_id, task_id)
+        summary = path / "summary.json"
+        if not summary.is_file() or summary.resolve().parent != path:
+            return {"available": False}
+        result = json.loads(summary.read_text(encoding="utf-8"))
+        return {**result, "available": True, "files": [
+            {"name": name, "title": title} for name, (title, _) in ARTIFACTS.items()
+            if (path / name).is_file() and (path / name).resolve().parent == path
+        ]}
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory/{name}")
+    def memory_artifact(environment_id: str, task_id: UUID, name: str):
+        from products.fbasecman.longrun_memory import ARTIFACTS
+
+        directory = memory_directory(environment_id, task_id)
+        path = (directory / name).resolve()
+        if name not in ARTIFACTS or path.parent != directory or not path.is_file():
+            raise HTTPException(404, "内存诊断证据不存在")
+        return FileResponse(path, media_type=ARTIFACTS[name][1], headers={
+            "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'",
+        })
 
     @router.get('/api/v1/environments/{environment_id}/fbasecman-test-settings')
     def test_settings(environment_id: str):

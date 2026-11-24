@@ -40,3 +40,41 @@ MMR 多节点路由、读写切换、HA 并发变更、PreparedStatement 泄漏�
 保存时检查当前版本的文件、License、版本输出和 SHA256。其他版本可先保存路径，切换生效时再检查。
 任务快照和负载证据保留版本 ID、名称、路径和文件指纹，切换配置不会改写已创建的执行快照。
 修改版本配置后，常稳负载计划需要重新审阅。
+
+## 标准常稳全套
+
+稳定性测试页的「标准常稳全套」使用上游 7×24 小时脚本的全部 12 项负载，
+默认运行 600 秒，可取消勾选和修改时长。pgbench 沿用上游 SQL、连接账号、
+端口、并发和长短连接参数，仅覆盖 `-T`。循环 JDBC 运行上游
+`test_Jdbc.sh`，保留北京时间每小时 00–05 分钟的避让及轮次结束后 600 秒
+间隔。会话巡检运行上游 `SessionMonitor.java`，保留其采样和重连配置。
+时限内 JDBC 至少完成一轮才有通过证据，途中新开始的轮次在时限结束时停止。
+
+入口使用当前环境选择的 fbasecman 构建与授权，读取产品声明的源码目录
+（默认同级的 `fbasecman_dev`）。平台按上游 `set_stabilize.sh` 准备两组
+MMR 节点及三加一物理备库，保留 PostgreSQL 参数、业务账号与授权、
+SQL Parse 夹具、首节点 pg_cron 和整点维护过程。代理直接使用上游
+`test.conf.bak` 和 `userlist.conf`。平台分配本机回环端口与任务目录，
+沿用绑定环境的数据库 License 文件，并在任务结束时停止独立实例。
+如本机 FBase 安装不在 `/usr/local/pgsql`，服务可用
+`PRODUCT_PLATFORM_FBASECMAN_STABLE_PG_HOME` 指定包含 FDD MMR 的安装。
+如未安装 pg_cron，平台将上游源码编译到任务私有 FBase 安装中。
+原始负载日志保存在 `output/fbasecman/<环境 ID>/runs/<任务 ID>/longrun/`。
+代理路由组、HA 混沌组和 SQL 性能基准在数据库压测工作台中提供。
+
+## jemalloc 内存排查
+
+在「修改负载与时长」勾选「jemalloc 内存排查」。每次只给该任务的独立
+fbasecman 代理注入 jemalloc，平均每 512 KiB 分配量采样一次。
+heap 默认每累计分配 1 GiB 导出，可按负载预期选择 64 MiB 或 4 GiB。
+RSS 每 5 秒采样一次。任务结束后在「本次内存诊断」查看 RSS 曲线和
+`jeprof --inuse_space --base` 差分调用图，也可下载 CSV 和差分明细。
+
+差分使用同一个代理 PID 在运行期间的首尾快照，排除退出时的堆清理。若可用快照少于两份，页面显示原因并保留
+RSS 曲线。图中调用栈表示对象的分配来源；对象归属哪个队列或缓存需要进一步
+验证。对照长稳报告时可在差分明细中查找 `od_route_signal`。10 分钟默认用于
+验证流程，长时复现需按原报告的采样窗口比较。
+
+控制机需要支持 profiling 的 jemalloc、`jeprof` 和 Graphviz `dot`。
+平台优先读取 `runtime/jemalloc/install` 中的工具，也支持使用服务环境变量
+`PRODUCT_PLATFORM_JEMALLOC_SO` 和 `PRODUCT_PLATFORM_JEPROF` 显式指定。

@@ -101,6 +101,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
   const [workspace, setWorkspace] = useState('configure');
   const [stableDuration, setStableDuration] = useState<number>(0);
   const [stableTaskId, setStableTaskId] = useState<string | null>(null);
+  const [stableRunning, setStableRunning] = useState(false);
   const [activePreset, setActivePreset] = useState<string>('sql-compare');
   const storageKey = 'workload-run:' + environment.id;
   const [runId, setRunId] = useState(() => sessionStorage.getItem(storageKey) || '');
@@ -203,6 +204,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
       if (options.enabled_workloads?.length) params.enabled_workloads = options.enabled_workloads;
       const task = await operationRequest(environment.id, 'stability.fbasecman', target, params, true);
       setStableTaskId(task.id);
+      setStableRunning(true);
       message.success(`已提交 fbasecman 常稳任务：${options.label || target}`);
     } catch (cause) {
       setError((cause as Error).message);
@@ -210,18 +212,11 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
       setBusy(false);
     }
   }
-  function applyPreset(presetKey: 'full-stable' | 'routing-pool' | 'ha-chaos' | 'sql-compare') {
+  function applyPreset(presetKey: 'routing-pool' | 'ha-chaos' | 'sql-compare') {
     setActivePreset(presetKey);
     setCategory('全部');
     setQuery('');
-    if (presetKey === 'full-stable') {
-      setOpenGroups(['产品常稳', 'HA / 配置变更']);
-      setDrafts((entries) => entries.map((entry) => ({
-        ...entry,
-        selected: Boolean(entry.stable_meta),
-      })));
-      if (routingEntries[0]) setActive(routingEntries[0].key);
-    } else if (presetKey === 'routing-pool') {
+    if (presetKey === 'routing-pool') {
       setOpenGroups(['产品常稳']);
       setDrafts((entries) => entries.map((entry) => ({
         ...entry,
@@ -283,34 +278,6 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
 
   const scenarioPresetsBar = stableEntries.length > 0 && (
     <div className="wb-presets-strip">
-      <div className="wb-preset-card" data-active={activePreset === 'full-stable'}
-        onClick={() => applyPreset('full-stable')}>
-        <div className="wb-preset-top">
-          <span className="wb-preset-icon"><SafetyCertificateOutlined /></span>
-          <Tag color={activePreset === 'full-stable' ? 'blue' : 'default'}>
-            {activePreset === 'full-stable' ? '✓ 已选中 · 13 路并发' : '点击切换 · 13 路并发'}
-          </Tag>
-        </div>
-        <strong>标准常稳全套（Full Soak）</strong>
-        <p>自动勾选下方 8 路代理路由 + 5 路 HA/Reload 混沌扰动，四维判点全检</p>
-        <div className="wb-preset-actions" onClick={(e) => e.stopPropagation()}>
-          <Button size="small" icon={<ThunderboltOutlined />} loading={busy}
-            onClick={() => {
-              applyPreset('full-stable');
-              void launchStableSuite('all', { smoke: true, label: '标准常稳全套 · 20s 冒烟' });
-            }}>
-            20s 冒烟
-          </Button>
-          <Button size="small" type={activePreset === 'full-stable' ? 'primary' : 'default'} icon={<PlayCircleOutlined />} loading={busy}
-            onClick={() => {
-              applyPreset('full-stable');
-              void launchStableSuite('all', { duration_seconds: stableDuration || undefined, label: '标准常稳全套 (13 路)' });
-            }}>
-            启动全套
-          </Button>
-        </div>
-      </div>
-
       <div className="wb-preset-card" data-active={activePreset === 'routing-pool'}
         onClick={() => applyPreset('routing-pool')}>
         <div className="wb-preset-top">
@@ -681,7 +648,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
                 selectedStable.length === stableEntries.length ? 'all' : (selectedStable.length === 1 ? selectedStable[0].stable_meta!.name : 'all'),
                 {
                   smoke: true,
-                  enabled_workloads: selectedStable.length === stableEntries.length ? undefined : selectedStable.map((e) => e.id),
+                  enabled_workloads: selectedStable.map((e) => e.id),
                   label: `常稳冒烟试跑 (${selectedStable.length} 项 · 20s)`,
                 },
               )}>
@@ -692,7 +659,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
                 selectedStable.length === stableEntries.length ? 'all' : (selectedStable.length === 1 ? selectedStable[0].stable_meta!.name : 'all'),
                 {
                   duration_seconds: stableDuration || undefined,
-                  enabled_workloads: selectedStable.length === stableEntries.length ? undefined : selectedStable.map((e) => e.id),
+                  enabled_workloads: selectedStable.map((e) => e.id),
                   label: `fbasecman 常稳执行 (${selectedStable.length} 项)`,
                 },
               )}>
@@ -787,7 +754,7 @@ export default function WorkloadWorkbench({ environment, openTask }: { environme
     {error && <Alert closable type="error" showIcon message={error} onClose={() => setError('')} />}
     {!catalog ? catalogLoading ? <div className="wb-loading"><Spin /> 正在读取负载目录</div> : <div className="workload-empty"><Empty description="负载目录读取失败，请确认后端已加载新接口" /><Button onClick={() => window.location.reload()}>重新读取</Button></div> : <Tabs activeKey={workspace} onChange={setWorkspace} items={[{ key: 'configure', label: '配置方案', children: configure }, { key: 'dashboard', label: '综合监控大屏', children: dashboardView }, { key: 'observe', label: <>运行观察 {run && <Tag>{LABELS[run.status] || run.status}</Tag>}</>, children: observe }]} />}
     <ExecutionTerminal taskId={stableTaskId} onInspect={openTask} initiallyExpanded
-      onFinished={() => undefined} onClose={() => setStableTaskId(null)} />
+      onFinished={() => setStableRunning(false)} onClose={() => { if (!stableRunning) setStableTaskId(null); }} />
     <Modal title={plan?.smoke ? '审阅小规模试跑' : '审阅执行计划'} open={Boolean(plan)} width={840} onCancel={() => !busy && setPlan(null)} onOk={() => void start()} confirmLoading={busy} okText="确认启动" okButtonProps={{ disabled: !plan?.ready || running }}>
       {plan && <><div className="wb-review-summary"><strong>{plan.environment.title}</strong><code>{plan.environment.host}:{plan.environment.port}/{plan.environment.database_name}</code><span>用户：{plan.environment.database_user} · 顺序执行 · 峰值 {plan.peak_clients} 个客户端 · 总运行配置时长 {plan.duration_seconds} 秒（不含准备及连接开销）</span></div>
         {plan.issues.map((issue) => <Alert key={issue} type="error" showIcon message={issue} />)}
