@@ -858,10 +858,33 @@ class ScenarioRunner:
         raise ValueError(name)
 
     def extended_guc_commit_rollback(self, probe):
+        def parse(sql, statement):
+            return wire.message("P", wire.parse_payload(statement, sql))
+
+        def bind(statement, portal):
+            return wire.message("B", wire.bind_payload(portal, statement))
+
+        def execute(portal):
+            return wire.message("E", wire.execute_payload(portal))
+
         def execute_packet(sql, name):
             return extended_packet(sql, name, f"{name}_portal")[:-5]
 
         sync = wire.sync_message()
+        probe.exchange(parse("select 1", "warm_heartbeat") + sync,
+                       "P1-1：预先准备心跳语句",
+                       {"received": ["1", "Z"], "sqlstates": [], "ready": ["I"]})
+        heartbeat = bind("warm_heartbeat", "heartbeat_portal") + execute("heartbeat_portal")
+        heartbeat_set = parse("SET work_mem='24MB'", "heartbeat_set")
+        heartbeat_set += bind("heartbeat_set", "heartbeat_set_portal") + execute("heartbeat_set_portal")
+        probe.exchange(heartbeat_set + heartbeat + sync,
+                       "P1-1：SET 后复用已准备的心跳语句",
+                       {"received": ["1", "2", "C", "2", "D", "C", "Z"],
+                        "sqlstates": [], "tags": ["SET", "SELECT 1"], "ready": ["I"],
+                        "rows": [["1"]]})
+        probe.snapshot({"work_mem": "24MB"})
+        probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+
         set_work_mem = execute_packet("SET work_mem='32MB'", "rollback_set")
         error = execute_packet("SELECT 1/0", "rollback_error")
         probe.exchange(set_work_mem + error + sync, "P1-1：SET 后同轮除零",
@@ -902,6 +925,87 @@ class ScenarioRunner:
         probe.exchange(reset_all + unknown_bind + sync, "P1-1：RESET ALL 后同轮 Bind 报错",
                        {"sqlstates": ["26000"], "tags": ["RESET"], "ready": ["I"]})
         probe.snapshot({"work_mem": "16MB", "statement_timeout": "7s", "TimeZone": "UTC"})
+
+        probe.exchange(execute_packet("SET work_mem='48MB'", "warm_discard_set") + sync,
+                       "P1-1：预热后端 SET 语句",
+                       {"sqlstates": [], "tags": ["SET"], "ready": ["I"]})
+        probe.sql("SET work_mem='16MB'", tag="SET", protocol="Q")
+        packet = parse("SET work_mem='48MB'", "discard_set") + bind("discard_set", "discard_set_portal")
+        packet += parse("DISCARD ALL", "discard_only") + bind("discard_only", "discard_only_portal")
+        probe.exchange(packet + execute("discard_set_portal") + sync,
+                       "P1-1：仅 Bind DISCARD ALL，继续执行先前绑定的 SET",
+                       {"received": ["1", "2", "1", "2", "C", "Z"],
+                        "sqlstates": [], "tags": ["SET"], "ready": ["I"]})
+        probe.snapshot({"work_mem": "48MB"})
+
+        if self.mode == "sql_parse" and self.plan.topology == "replication":
+            for flush in (False, True):
+                for end, expected in (("ROLLBACK", "8MB"), ("COMMIT", "29MB")):
+                    label = f"{'flush' if flush else 'batch'}_{end.lower()}"
+                    begin = f"readonly_{label}"
+                    setting = f"guc_{label}"
+                    probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+                    begin_bind = parse("BEGIN READ ONLY", begin) + bind(begin, begin)
+                    set_run = parse("SET work_mem='29MB'", setting) + bind(setting, setting) + execute(setting)
+                    begin_run = execute(begin) + sync
+                    if flush:
+                        probe.exchange(set_run + wire.flush_message(), "P1-1：Flush 确认可见 SET 后再发送 BEGIN",
+                                       {"received": ["1", "2", "C"], "sqlstates": [],
+                                        "tags": ["SET"], "ready": []}, terminal={"C"})
+                    probe.exchange(begin_bind + begin_run if flush else begin_bind + set_run + begin_run,
+                                   "P1-1：SET 后执行 BEGIN READ ONLY",
+                                   {"received": ["1", "2", "C", "Z"] if flush else ["1", "2", "1", "2", "C", "C", "Z"],
+                                    "sqlstates": [], "tags": ["BEGIN"] if flush else ["SET", "BEGIN"],
+                                    "ready": ["T"]})
+                    self.verify_route(probe.snapshot({"work_mem": "29MB"}, ready="T"), "read")
+                    probe.sql(end, tag=end, protocol="Q")
+                    self.begin_write_transaction(probe, protocol="Q")
+                    self.verify_route(probe.snapshot({"work_mem": expected}, ready="T"), "write")
+                    probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
+
+            for replace_unnamed in (True, False):
+                label = "unnamed" if replace_unnamed else "closed"
+                setting, begin = f"guc_{label}", f"readonly_{label}"
+                set_portal = "" if replace_unnamed else setting
+                begin_portal = "" if replace_unnamed else begin
+                probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+                packet = parse("SET work_mem='29MB'", setting) + bind(setting, set_portal) + execute(set_portal)
+                received = ["1", "2", "C"]
+                if not replace_unnamed:
+                    packet += wire.message("C", wire.close_portal_payload(set_portal))
+                    received.append("3")
+                packet += parse("BEGIN READ ONLY", begin) + bind(begin, begin_portal) + execute(begin_portal)
+                operation = "BEGIN 覆盖匿名 SET Portal" if replace_unnamed else "关闭 SET Portal 后执行 BEGIN"
+                probe.exchange(packet + sync, f"P1-1：{operation}",
+                               {"received": received + ["1", "2", "C", "Z"],
+                                "sqlstates": [], "tags": ["SET", "BEGIN"], "ready": ["T"]})
+                self.verify_route(probe.snapshot({"work_mem": "29MB"}, ready="T"), "read")
+                probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
+                self.begin_write_transaction(probe, protocol="Q")
+                self.verify_route(probe.snapshot({"work_mem": "8MB"}, ready="T"), "write")
+                probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
+
+            for end in ("ROLLBACK", "COMMIT"):
+                label = end.lower()
+                before = {"work_mem": "8MB", "statement_timeout": "1s"}
+                after = {"work_mem": "29MB", "statement_timeout": "7s"}
+                probe.sql("SET work_mem='8MB'", tag="SET", protocol="Q")
+                probe.sql("SET statement_timeout='1s'", tag="SET", protocol="Q")
+                packet = b""
+                for i, sql in enumerate(("SET work_mem='20MB'", "SET statement_timeout='7s'",
+                                         "SET work_mem='29MB'")):
+                    statement = f"multi_{label}_{i}"
+                    packet += parse(sql, statement) + bind(statement, statement) + execute(statement)
+                begin = f"multi_begin_{label}"
+                packet += parse("BEGIN READ ONLY", begin) + bind(begin, begin) + execute(begin)
+                probe.exchange(packet + sync, f"P1-1：顺序重放三条 SET 后执行 BEGIN，随后 {end}",
+                               {"received": ["1", "2", "C"] * 4 + ["Z"],
+                                "sqlstates": [], "tags": ["SET"] * 3 + ["BEGIN"], "ready": ["T"]})
+                self.verify_route(probe.snapshot(after, ready="T"), "read")
+                probe.sql(end, tag=end, protocol="Q")
+                self.begin_write_transaction(probe, protocol="Q")
+                self.verify_route(probe.snapshot(after if end == "COMMIT" else before, ready="T"), "write")
+                probe.sql("ROLLBACK", tag="ROLLBACK", protocol="Q")
 
     def unexecuted_disconnect(self, probe):
         self.baseline(probe)
