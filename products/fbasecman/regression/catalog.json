@@ -3107,6 +3107,18 @@
       "tags": []
     },
     {
+      "suite": "monitor",
+      "suite_title": "监控",
+      "suite_description": "fbasecman 监控探测、拓扑发布与业务路由回归",
+      "target": "monitor.scram_first_connect_degraded",
+      "name": "scram_first_connect_degraded",
+      "title": "主备降级后 SCRAM 冷用户首连保留写路由",
+      "core_id": "",
+      "summary": "启用监控并关闭严格唯一主库检查，在独立一主一备测试环境中缓存已有用户的 SCRAM key，停止旧主并提升备库。监控发布 VALID_DEGRADED 后，冷用户首次连接应到达新主，且已有用户仍可连到新主，两个用户的写目标均保持为新主。",
+      "enabled": true,
+      "tags": ["monitor", "scram", "replication"]
+    },
+    {
       "suite": "tmp",
       "suite_title": "临时/特定缺陷复现测试",
       "suite_description": "专项问题排查与临时 Bug 复现用例（如 reload 关闭监控路由丢失复现）",

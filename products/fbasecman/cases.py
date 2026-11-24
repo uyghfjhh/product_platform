@@ -15,6 +15,7 @@ from products.fbasecman.native import (HeartbeatBindCase, SavepointRecoveryCase,
 from products.fbasecman.native import (SetNodeWriteIdempotentCase, IdempotentHaCommandCase,
                                         SetNodeWeightIdempotentCase)
 from products.fbasecman.ha_native import HaCommandsCase
+from products.fbasecman.monitor_native import ScramFirstConnectDegradedCase
 from products.fbasecman.common_native import CommonCase
 from products.fbasecman.guc_alignment_native import GucAlignmentCase, SCENARIOS
 from products.fbasecman.runtime_cases import runtime_case
@@ -87,6 +88,7 @@ NATIVE_CASES = {
     "ha_commands.set_cluster_write_promoted_roundtrip": HaCommandsCase("set_cluster_write_promoted_roundtrip"),
     "ha_commands.set_node_promoted_write_cluster_conflict": HaCommandsCase("set_node_promoted_write_cluster_conflict"),
     "ha_commands.write_cluster_format_preservation": HaCommandsCase("write_cluster_format_preservation"),
+    "monitor.scram_first_connect_degraded": ScramFirstConnectDegradedCase(),
     "tmp.reload_disable_monitor_route_loss": ReloadDisableMonitorRouteLossCase(),
     **{
         "guc." + name: guc_case(name)
