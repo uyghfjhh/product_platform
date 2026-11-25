@@ -9,7 +9,10 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from products.fbasecman.longrun_heap import collect, write_json
 
 
 def binary_digest(path):
@@ -68,6 +71,12 @@ class MemoryProfile:
         self.rows = []
         self.next_sample = 0
         self.started = time.monotonic()
+        self.started_epoch = time.time()
+        self.analysis_pool = None
+        self.analysis_job = None
+        self.analysis_paths = ()
+        self.next_analysis = 0
+        self.measurement_start = None
 
     def attach(self, pid_file):
         self.pid = int(pid_file.read_text().strip())
@@ -75,8 +84,15 @@ class MemoryProfile:
         if str(self.library) not in maps:
             raise RuntimeError("被测代理未加载指定的 jemalloc")
         self.started = time.monotonic()
+        self.started_epoch = time.time()
+        write_json(self.output / "binary.json", {"path": self.binary, "sha256": self.binary_sha256})
+        self.analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="heap-analysis")
         self.sample(force=True)
         print(f"jemalloc 已加载，代理 PID {self.pid}，平均采样间隔 512 KiB", flush=True)
+
+    def begin_warmup(self, measurement_start):
+        self.measurement_start = measurement_start - self.started
+        write_json(self.output / "measurement.json", {"start": self.measurement_start})
 
     def snapshots(self):
         pattern = re.compile(rf"heap\.{self.pid}\.(\d+)\.i\d+\.heap")
@@ -108,11 +124,34 @@ class MemoryProfile:
                 writer.writerow(self.rows[-1])
         # Keep the baseline and most recent snapshots. An intermediate
         # snapshot is only pruned after later dumps have been observed.
-        for path in self.snapshots()[1:-12]:
-            path.unlink(missing_ok=True)
+        snapshots = self.snapshots()
+        if (self.analysis_pool and snapshots and now >= self.next_analysis
+                and (self.analysis_job is None or self.analysis_job.done())):
+            self.analysis_paths = tuple(snapshots)
+            self.analysis_job = self.analysis_pool.submit(
+                collect, self.output, self.analysis_paths, self.jeprof, self.binary,
+                self.binary_sha256, self.started_epoch,
+            )
+            self.next_analysis = now + 60
+        protected = set(self.analysis_paths) if self.analysis_job and not self.analysis_job.done() else set()
+        if self.measurement_start is not None:
+            baseline = next((path for path in snapshots
+                             if path.stat().st_mtime - self.started_epoch >= self.measurement_start), None)
+            if baseline:
+                protected.add(baseline)
+        for path in snapshots[1:-12]:
+            if path not in protected:
+                path.unlink(missing_ok=True)
 
     def finish(self):
+        if self.analysis_pool:
+            self.analysis_pool.shutdown(wait=True)
+            collect(self.output, self.snapshots(), self.jeprof, self.binary,
+                    self.binary_sha256, self.started_epoch, finished=True)
         snapshots = self.snapshots()
+        if self.measurement_start is not None:
+            snapshots = [path for path in snapshots
+                         if path.stat().st_mtime - self.started_epoch >= self.measurement_start]
         result = {
             "pid": self.pid, "samples": len(self.rows), "snapshots": len(snapshots),
             "sampling_bytes": 2**19, "dump_interval_bytes": 2**self.interval,
@@ -124,7 +163,9 @@ class MemoryProfile:
             (self.output / "rss.svg").write_text(rss_svg(self.rows), encoding="utf-8")
             result["rss_change_mib"] = round((self.rows[-1][1] - self.rows[0][1]) / 1024, 3)
         if len(snapshots) < 2:
-            result["issue"] = "同一代理进程运行期间的 heap 快照少于两份，无法生成差分。可延长压测或降低导出间隔。"
+            result["issue"] = (
+                "预热结束后" if self.measurement_start is not None else "代理运行期间"
+            ) + "的 heap 快照少于两份，无法生成差分。可延长压测或降低导出间隔。"
         else:
             baseline, later = snapshots[0], snapshots[-1]
             result.update(baseline=baseline.name, later=later.name,

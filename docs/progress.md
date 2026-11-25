@@ -1,4 +1,95 @@
-# 当前实施状态
+# 开发进度与交接
+
+进行中的事情先更新本页顶部。每条写清**当前状态、做到哪一步、下一步、证据或阻塞**。
+完成后把验收范围、提交和证据补齐，移入完成记录。功能使用方法见 [README](../README.md)，
+回归接口与报告规则见 [SDK](../backend/platform_regress/SDK.md)。
+
+## 进行中与待验证
+
+| 工作 | 当前状态 | 接下来从哪里继续 |
+| --- | --- | --- |
+| 文档收敛 | README、进度文档和 SDK 已整理为主入口。 | 已迁移并复核首批文件。其余候选按下方清单核对独有信息和引用。 |
+| fbasecman 运行时内存诊断 | 独立页面已有 RSS 与存活堆趋势、按完整栈筛选、预热基线、调用树及火焰图，支持忽略调用链和删除已结束任务的诊断。 | 继续记录长时任务的采样与报告行为。队列深度研究属于后续取证，页面现有的堆排行用于分配来源。 |
+| fbasecman ASan 踩内存排查 | 已接入已登记构建选择、插桩和指纹校验、报告摘要、路径／原文复制和原始文件下载。 | 可用真实负载继续复核 ASan 程序异常退出和日志捕获，当前真实构建仅跑过短时冒烟。 |
+| `od_route_signal` 积压修复复验 | 修复前在 30 分钟隔离常稳中观测到 `wait_bus` 增长，末段 heap 采样检出对应完整分配栈。fbasecman 源码提交 `b7e27e8` 已调整等待者登记。 | 用明确由修复提交构建的二进制复跑同一套负载，同时记录发送、入队、消费和深度。使用同一采样口径比较，并保留正常唤醒证据。 |
+| 常稳监控验收（MON-01 至 MON-03） | 真机常稳和内存诊断已有独立记录。通用监控的联合采集、代理池与缓存指标、P95／P99 仍需按原条目核对。 | 用真实端点验证主机／数据库／代理同窗口的观测，核对断连和过期样本。分位延迟需要事务样本或直方图。见[原待办](current-functional-status.md#2026-10-07稳定性测试与综合监控待办)。 |
+| 负载执行和恢复（EXEC、LIFE、PLAN、LOAD、JDBC） | fbasecman 标准全套已有隔离并发执行。通用场景依赖调度、HA 失败恢复、可复用方案、写入夹具和 JDBC 专项参数需要逐条核验，避免把标准套件的验收外推到其他工作台。 | 依据[原待办与验收条件](current-functional-status.md#2026-10-07稳定性测试与综合监控待办)更新可复现结果。 |
+
+## 近期验收
+
+- **2026-11-25，fbasecman 常稳**：关闭循环 JDBC 和独立会话巡检，10 路 pgbench
+  预热 60 秒后正式跑完 30 分钟，事务零失败。运行中观测到同一等待通道深度
+  从 1,482 增到 2,222。对应分配链在末段 heap 快照检出，采样估算约 0.50 MiB。
+  这是修复前的局部观测。15 分钟全套通过，JDBC 完成一轮，第二轮在测试结束时收尾。
+  本轮 30 分钟任务 ID 为 `a41ec013-9b61-4227-8bff-8e0412678e0a`，15 分钟任务 ID 为
+  `73988ce7-7bcf-490b-9649-2e3814c8216b`。30 分钟被测二进制 SHA256 为
+  `6f31bbf72ac514acbf1bc8e7821ed451f7e1557c5919fc28c26554eaee2a9286`。
+  对应构建提交未确认。执行日志使用 `logs/operations/<任务ID>.log`，诊断事实见
+  `output/fbasecman/<环境ID>/runs/<任务ID>/memory/summary.json` 和同目录的 `timeline.json`。
+  [历史对照报告](../fbasecman_v2.1长稳RSS持续增长分析报告_20261124.md)
+- **2026-11-25，ASan**：普通构建提交被拒绝，登记的 ASan 构建通过 10 秒真机冒烟。
+  独立探针生成了真实 sanitizer 报告，验证下载的字节与落盘一致，浏览器复制原文一致。
+  真机冒烟任务 ID 为 `2b0dc188-87ab-4777-91f0-431063223008`，被测二进制 SHA256 为
+  `b76150ff0a521d9e2bc301a44e08df32c1b162ed3289f53562f4a6ceb89d3355`，构建信息见
+  `output/fbasecman/<环境ID>/runs/<任务ID>/memory/asan/build.json`。
+  平台 ASan 实现仍在工作区，真机报告异常退出仍待专门验收。
+- **2026-11-24，标准常稳与 jemalloc**：`f8a5885` 接入独立六节点环境、12 项默认
+  负载和 jemalloc 报告。Extended GUC 两笔测试提交为 `0684c26`、`e607614`。
+
+## 已归并的旧文档
+
+- `docs/deployment-workbench-plan.md` 和 `docs/deployment-page-interaction.md` 的工作台、
+  计划校验及 Studio 入口并入 README。原等保环境通过只读检查恢复登记与绑定，
+  当时未启动实例或跑套件。部署迁移和角色操作的专项验收仍见对应文档。
+- `docs/sdk-v2-design.md` 的公开契约和验收要求并入 SDK。该阶段有 348 项平台测试及前端构建
+  通过的记录，真机保真验收按对应阶段另记。
+- `docs/regression-case-authoring.md` 的编写规范、SQL_PARSE 示例和报告样板并入 SDK。
+- 四份旧文件已从工作区移除。原文可用 `git show <提交>:<旧文档路径>` 核对。
+  SDK v2 设计对应 `fc1ffeb`，部署页面交互对应 `05427a4`，另外两份对应 `b9aaa47`。
+
+## 待核对的旧文档
+
+先保留以下文件。表中有待核对项的文档需要先完成证据与引用迁移。
+
+| 现有文件 | 归并状态和去向 |
+| --- | --- |
+| [design.md](design.md) | 核心结构已到 README。逐项核对仍适用的任务、存储和产品边界。 |
+| [current-functional-status.md](current-functional-status.md) | 关键操作边界已到 README，MON 等待核项进入本页。其余具体验收及限制待核对。 |
+| [deployment-role-actions.md](deployment-role-actions.md) | README 已补升主和重建限制。四类操作、MMR 同步与真机验收细节待归档。 |
+| [deployment-mmr-status.md](deployment-mmr-status.md) | README 已给监控入口，状态含义、告警和验收记录待核对。 |
+| [database-observability-plan.md](database-observability-plan.md) | 早期设计待与实际采集、保留和配置行为比对。 |
+| [database-monitoring-status.md](database-monitoring-status.md) | README 已补 Prometheus 出口与样本口径。权限、指标与边界细节待核对。 |
+| [mmr-monitoring-design.md](mmr-monitoring-design.md) | MMR 专项设计保留供核对，实际采样与不可观测指标优先保留。 |
+| [platform-v2-capabilities.md](platform-v2-capabilities.md) | SDK 已覆盖公共模块入口。仍有效的调用示例按需迁入。 |
+| [regression-preparation.md](regression-preparation.md) | SDK 已说明公共准备边界，仍依赖公共夹具的具体套件需核实。 |
+| [report-quality-review.md](report-quality-review.md) | SDK 已归并报告验收规则，既有核查问题及缺口待迁入进度。 |
+| [regression-status.md](regression-status.md) | 保留迁移保真、既有失败和待办证据，逐项核对当前状态后迁入本页。 |
+| [fbasecman-development-adoption.md](fbasecman-development-adoption.md) | 保留接管与执行范围记录，通用流程归 README。 |
+| [fbasecman-hint-guc-alignment-test-design.md](fbasecman-hint-guc-alignment-test-design.md) | 保留专项测试矩阵与真机证据，后续待验收项迁入本页。 |
+| [jemalloc 操作指南](../fbasecman使用jemalloc排查内存增长操作指南.md) | 平台入口已到 README。手工采集方法随历史报告保留供证据复核。 |
+| [长稳 RSS 分析](../fbasecman_v2.1长稳RSS持续增长分析报告_20261124.md) | 独立历史证据，本页引用。 |
+| [前端验收](../frontend/tests/README.md) | 浏览器脚本与运行参数在测试目录内保留。 |
+| [Demo](../products/demo/README.md) | README 已给可跑示例。产品包说明可供接入对照。 |
+| [KingbaseES](../products/kingbase/README.md) | 产品专属安装、认证和部署文档先保留。 |
+
+产品回归目录的下列材料与公共指南分别 review。问题单和专项矩阵保留对应的验证语义。
+
+- `products/fbase-database/regression/` 下的 `多活文档问题.md`、`多活问题.md`、
+  `等保问题.md` 是产品问题记录。
+- `products/fbasecman/docs-workload-comparison.md` 的平台入口已迁入 README。基准口径、
+  完整负载与诊断参数待保留为产品专属细节。
+- `products/fbasecman/regression/README.md` 和 `suites/global_cache/README.md`、
+  `suites/guc/README.md`、`suites/high_availability/README.md`、`suites/stable/README.md`
+  保留套件运行条件和断言。
+- `products/fbasecman/regression/docs/` 下的 `FBASECMAN_ISSUES.md`、
+  `HANDOVER_DOCUMENT_ISSUES.md`、`HANDOVER_ISSUES.md`、`STABLE_DOCUMENT_ISSUES.md`、
+  `STABLE_ISSUES.md`、`fbasecman第4章高可用自动化测试设计方案.md` 和
+  `fbasecman转测前核心功能测试执行方案.md` 保留问题、验收条件及场景证据。
+
+## 既有实施记录
+
+本节保留当时的实施与验收记录。日期、测试数量及待办是当时记录，当前工作状态以
+本页顶部和对应执行证据为准。
 
 ## 2026-10-20：PostgreSQL 部署支持通用扩展插件（pg_deltax / TimescaleDB）
 

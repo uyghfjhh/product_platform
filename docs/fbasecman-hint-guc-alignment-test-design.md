@@ -196,7 +196,7 @@ Flush 不产生额外客户端 RFQ，不提交未 E 候选。混合本地/后端
 
 ## 报告质量契约
 
-遵循 `docs/regression-case-authoring.md` 和 `docs/report-quality-review.md`。参考现有 SQL_PARSE 报告样板截图、`SqlParseExtendedProtocolCase.record_results()` 的分项结果记录，以及 `test_savepoint_failure_keeps_precise_failed_step` 的失败定位要求。旧归档中只有用例 target 作为目的、只有退出码作为实际结果、只检查 OK 标记的报告不作为新增模板。报告契约继续作为验收要求；定向真机报告已生成，尚未完成完整矩阵及浏览器报告验收。
+遵循 [回归 SDK 的报告与验收规则](../backend/platform_regress/SDK.md#报告与验收)，并参考 [历史报告质量核查](report-quality-review.md)。参考现有 SQL_PARSE 报告样板截图、`SqlParseExtendedProtocolCase.record_results()` 的分项结果记录，以及 `test_savepoint_failure_keeps_precise_failed_step` 的失败定位要求。旧归档中只有用例 target 作为目的、只有退出码作为实际结果、只检查 OK 标记的报告不作为新增模板。报告契约继续作为验收要求；定向真机报告已生成，尚未完成完整矩阵及浏览器报告验收。
 
 ### 报告概览和范围
 

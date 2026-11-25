@@ -7,6 +7,8 @@ platform services; this module owns product-specific request shapes and URLs.
 
 import json
 import os
+import shutil
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -62,6 +64,15 @@ class TestSettingsInput(BaseModel):
         return self
 
 
+class MemoryComparisonInput(BaseModel):
+    start: str | None = None
+    end: str | None = None
+    stack: str | None = None
+    query: str = Field(default="", max_length=160)
+    direction: Literal["growth", "reduction"] = "growth"
+    excluded: list[str] = Field(default_factory=list)
+
+
 def create_router(settings, store) -> APIRouter:
     router = APIRouter()
 
@@ -99,7 +110,7 @@ def create_router(settings, store) -> APIRouter:
             "memory_issue": memory_issue,
         }
 
-    def memory_directory(environment_id: str, task_id: UUID):
+    def memory_directory(environment_id: str, task_id: UUID, *, include_deleted=False):
         from products.fbasecman.longrun import TARGET
 
         product_environment(environment_id)
@@ -108,10 +119,68 @@ def create_router(settings, store) -> APIRouter:
                 or task["action"] != "stability.fbasecman"):
             raise HTTPException(404, "常稳任务不存在")
         root = settings.artifact_dir("fbasecman", environment_id).resolve()
-        path = (root / "runs" / str(task_id) / "memory").resolve()
-        if not path.is_relative_to(root):
+        run = (root / "runs" / str(task_id)).resolve()
+        path = run / "memory"
+        if not run.is_relative_to(root) or run != root / "runs" / str(task_id) or path.is_symlink():
             raise HTTPException(404, "内存诊断不存在")
+        if not include_deleted and (run / "memory.deleted").exists():
+            raise HTTPException(410, "这项内存诊断已删除")
         return path
+
+    @router.get("/api/v1/fbasecman-memory-tasks")
+    def memory_tasks(before: UUID | None = None):
+        from platform_app.api.schemas import public_task
+        from products.fbasecman.longrun import TARGET
+
+        cursor = str(before) if before else None
+        results = []
+        while True:
+            batch = store.tasks.list_tasks(100, before=cursor, include_archived=True)
+            for task in batch:
+                cursor = task["id"]
+                if (task["action"] != "stability.fbasecman" or task["target"] != TARGET
+                        or not any(json.loads(task["parameters"]).get(key) for key in ("memory_profile", "asan_build_id"))):
+                    continue
+                try:
+                    memory_directory(task["environment_id"], UUID(cursor))
+                except HTTPException as exc:
+                    if exc.status_code in (404, 410):
+                        continue
+                    raise
+                results.append(public_task(task))
+                if len(results) == 50:
+                    return {"tasks": results, "next": cursor}
+            if len(batch) < 100:
+                return {"tasks": results, "next": None}
+
+    @router.delete("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory")
+    def delete_memory_report(environment_id: str, task_id: UUID):
+        from platform_app.actions import TERMINAL
+        from platform_regress.execution.locking import ExclusiveFileLock
+
+        path = memory_directory(environment_id, task_id, include_deleted=True)
+        task = store.tasks.get_task(str(task_id))
+        if task["status"] not in TERMINAL:
+            raise HTTPException(409, "只能删除已结束任务的内存诊断")
+        if not any(json.loads(task["parameters"]).get(key) for key in ("memory_profile", "asan_build_id")):
+            raise HTTPException(404, "这项任务未开启内存诊断")
+        deleted = path.with_name("memory.deleted")
+        try:
+            with ExclusiveFileLock(path.with_name(".memory-delete.lock"), "删除内存诊断"):
+                if deleted.is_symlink() or (deleted.exists() and not deleted.is_dir()):
+                    raise HTTPException(409, "内存诊断删除目录异常")
+                if path.is_dir() and not deleted.exists():
+                    path.rename(deleted)
+                else:
+                    deleted.mkdir(exist_ok=True)
+                for item in deleted.iterdir():
+                    if item.is_dir() and not item.is_symlink():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"deleted": True}
 
     @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory")
     def memory_report(environment_id: str, task_id: UUID):
@@ -126,6 +195,64 @@ def create_router(settings, store) -> APIRouter:
             {"name": name, "title": title} for name, (title, _) in ARTIFACTS.items()
             if (path / name).is_file() and (path / name).resolve().parent == path
         ]}
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory-live")
+    def memory_live(environment_id: str, task_id: UUID):
+        from products.fbasecman.longrun_heap import index, measurement_start, rss_series
+
+        directory = memory_directory(environment_id, task_id)
+        task = store.tasks.get_task(str(task_id))
+        parameters = json.loads(task["parameters"])
+        return {**index(directory), "rss": rss_series(directory),
+                "asan": bool(parameters.get("asan_build_id")),
+                "measurement_start": measurement_start(directory),
+                "enabled": bool(json.loads(task.get("parameters") or "{}").get("memory_profile"))}
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/asan")
+    def asan_reports(environment_id: str, task_id: UUID):
+        from products.fbasecman.longrun_asan import report_paths, summarize
+
+        directory = memory_directory(environment_id, task_id) / "asan"
+        if directory.is_symlink():
+            raise HTTPException(404, "ASan 报告不存在")
+        build = directory / "build.json"
+        return {
+            "build": json.loads(build.read_text(encoding="utf-8")) if build.is_file() else None,
+            "files": [summarize(path) for path in report_paths(directory)],
+        }
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/asan/{name}")
+    def asan_report(environment_id: str, task_id: UUID, name: str):
+        from products.fbasecman.longrun_asan import report_paths
+
+        directory = memory_directory(environment_id, task_id) / "asan"
+        if not directory.is_symlink():
+            for path in report_paths(directory):
+                if path.name == name:
+                    return FileResponse(path, media_type="text/plain", headers={"X-Content-Type-Options": "nosniff"})
+        raise HTTPException(404, "ASan 原始报告不存在")
+
+    @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory-analysis")
+    def memory_analysis(
+        environment_id: str, task_id: UUID, start: str | None = None, end: str | None = None,
+        stack: str | None = None, query: str = Query(default="", max_length=160),
+        direction: str = Query(default="growth", pattern="^(growth|reduction)$"),
+    ):
+        from products.fbasecman.longrun_heap import compare
+
+        try:
+            return compare(memory_directory(environment_id, task_id), start, end, stack, query, direction)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory-analysis")
+    def memory_analysis_filtered(environment_id: str, task_id: UUID, item: MemoryComparisonInput):
+        from products.fbasecman.longrun_heap import compare
+
+        try:
+            return compare(memory_directory(environment_id, task_id), **item.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.get("/api/v1/environments/{environment_id}/fbasecman-longrun/{task_id}/memory/{name}")
     def memory_artifact(environment_id: str, task_id: UUID, name: str):

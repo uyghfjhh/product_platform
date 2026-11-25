@@ -18,24 +18,20 @@ type Selection = {
   workloads: string[];
   duration: number | null;
   memoryProfile: boolean;
+  asanMode?: boolean;
+  asanBuild?: string;
   profileInterval: number;
+  warmup: boolean;
+  warmupSeconds: number | null;
 };
-type MemoryReport = {
-  available: boolean;
-  samples: number;
-  snapshots: number;
-  rss_change_mib: number | null;
-  baseline_to_later_seconds?: number | null;
-  issue: string | null;
-  files: { name: string; title: string }[];
-};
-
 function defaults(catalog: Catalog): Selection {
   return {
     workloads: catalog.workloads.map(({ id }) => id),
     duration: catalog.duration_seconds,
     memoryProfile: false,
     profileInterval: 30,
+    warmup: false,
+    warmupSeconds: 60,
   };
 }
 
@@ -43,6 +39,7 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
   const storageKey = 'fbasecman-stability-task:' + environmentId;
   const [taskId, setTaskId] = useState(() => sessionStorage.getItem(storageKey));
   const [running, setRunning] = useState(Boolean(taskId));
+  const [builds, setBuilds] = useState<{ id: string; name: string; fbasecman_bin: string }[]>([]);
   const [catalog, setCatalog] = useState<Catalog>();
   const [selection, setSelection] = useState<Selection>();
   const [draft, setDraft] = useState<Selection>();
@@ -50,21 +47,21 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [memoryReport, setMemoryReport] = useState<MemoryReport>();
-  const memoryPath = `/environments/${encodeURIComponent(environmentId)}/fbasecman-longrun/${taskId}/memory`;
-
+  const [diagnosticTask, setDiagnosticTask] = useState<string>();
   useEffect(() => {
-    if (!taskId || running) return;
+    if (!taskId) return;
     const controller = new AbortController();
-    void api<MemoryReport>(memoryPath, { signal: controller.signal })
-      .then(setMemoryReport)
-      .catch((cause: Error) => { if (!controller.signal.aborted) setError(cause.message); });
+    const endpoint = `/environments/${encodeURIComponent(environmentId)}/fbasecman-longrun/${taskId}/memory-live`;
+    void api<{ enabled: boolean; asan: boolean }>(endpoint, { signal: controller.signal })
+      .then((data) => { if ((data.enabled || data.asan) && !controller.signal.aborted) setDiagnosticTask(taskId); })
+      .catch(() => undefined);
     return () => controller.abort();
-  }, [taskId, running, memoryPath]);
-
+  }, [environmentId, taskId]);
 
   useEffect(() => {
     const controller = new AbortController();
+    void api<{ builds: typeof builds }>(`/environments/${encodeURIComponent(environmentId)}/fbasecman-test-settings`,
+      { signal: controller.signal }).then((data) => setBuilds(data.builds)).catch(() => undefined);
     void api<Catalog>(`/environments/${encodeURIComponent(environmentId)}/fbasecman-longrun`,
       { signal: controller.signal })
       .then((result) => {
@@ -79,13 +76,17 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
   async function start() {
     if (!catalog || !selection?.duration || !selection.workloads.length || catalog.issue || busy || running) return;
     setBusy(true);
-    setMemoryReport(undefined);
     setError('');
     try {
       const task = await operationRequest(environmentId, 'stability.fbasecman', catalog.target, {
         duration_seconds: selection.duration,
         enabled_workloads: selection.workloads,
-        ...(selection.memoryProfile ? { memory_profile: true, profile_interval: selection.profileInterval } : {}),
+        ...(selection.asanMode ? { asan_build_id: selection.asanBuild,
+          warmup_seconds: selection.warmup ? selection.warmupSeconds : 0 } : {}),
+        ...(selection.memoryProfile ? {
+          memory_profile: true, profile_interval: selection.profileInterval,
+          warmup_seconds: selection.warmup ? selection.warmupSeconds : 0,
+        } : {}),
       }, true);
       sessionStorage.setItem(storageKey, task.id);
       setTaskId(task.id);
@@ -107,7 +108,7 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
         {catalog?.issue && <Alert type="warning" showIcon message={catalog.issue} />}
         {loading ? <Space><Spin size="small" /> 正在读取常稳配置</Space> : catalog && selection ? <>
           <Typography.Text strong>
-            已选 {selection.workloads.length} / {catalog.workloads.length} 项 · {selection.duration === 600 ? '10 分钟' : `${selection.duration} 秒`}{selection.memoryProfile && ' · jemalloc 内存排查'}
+            已选 {selection.workloads.length} / {catalog.workloads.length} 项 · {selection.duration === 600 ? '10 分钟' : `${selection.duration} 秒`}{selection.memoryProfile && ' · jemalloc 内存排查'}{selection.asanMode && ' · ASan 踩内存排查'}{selection.memoryProfile && selection.warmup && ` · 预热 ${selection.warmupSeconds} 秒`}
           </Typography.Text>
           <Space wrap>
             <Button type="primary" icon={<PlayCircleOutlined />} loading={busy}
@@ -117,6 +118,9 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
             </Button>
             <Button disabled={busy} onClick={() => setDraft(selection)}>修改负载与时长</Button>
             {taskId && <Button type="link" onClick={() => openTask(taskId)}>查看本次任务</Button>}
+            {taskId && diagnosticTask === taskId && <Button href={`?page=memory%3Afbasecman&env=${encodeURIComponent(environmentId)}&memory_task=${taskId}`}>
+              查看内存诊断
+            </Button>}
           </Space>
         </> : <Button onClick={() => {
           setError('');
@@ -125,28 +129,12 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
         }}>重新读取</Button>}
       </Space>
     </Card>
-    {memoryReport?.available && <Card title="本次内存诊断" style={{ marginTop: 16, maxWidth: 960 }}>
-      <Space direction="vertical" style={{ width: '100%' }}>
-        <Typography.Text>
-          RSS 采样 {memoryReport.samples} 次 · 保留同进程 heap 快照 {memoryReport.snapshots} 份
-          {memoryReport.baseline_to_later_seconds != null && ` · 差分跨度 ${Math.round(memoryReport.baseline_to_later_seconds)} 秒`}
-          {memoryReport.rss_change_mib !== null && ` · RSS 变化 ${memoryReport.rss_change_mib} MiB`}
-        </Typography.Text>
-        {memoryReport.issue && <Alert type="warning" showIcon message={memoryReport.issue} />}
-        {memoryReport.files.map(({ name, title }) => {
-          const url = `/api/v1${memoryPath}/${name}`;
-          return name.endsWith('.svg') || name.endsWith('.png')
-            ? <a key={name} href={url} target="_blank" rel="noreferrer">
-                <img src={url} alt={title} style={{ display: 'block', maxWidth: '100%' }} />
-              </a>
-            : <a key={name} href={url} download={name}>{title}</a>;
-        })}
-      </Space>
-    </Card>}
     <ExecutionTerminal taskId={taskId} onInspect={openTask} initiallyExpanded
       onFinished={() => setRunning(false)} />
     <Modal title="修改负载与时长" open={Boolean(draft)} okText="应用" cancelText="取消"
-      okButtonProps={{ disabled: !draft?.duration || !draft.workloads.length }}
+      okButtonProps={{ disabled: !draft?.duration || !draft.workloads.length
+        || Boolean(draft?.asanMode && !draft.asanBuild)
+        || Boolean((draft?.memoryProfile || draft?.asanMode) && draft.warmup && !draft.warmupSeconds) }}
       onCancel={() => setDraft(undefined)}
       onOk={() => { setSelection(draft); setDraft(undefined); }}>
       {catalog && draft && <Space direction="vertical" size="middle">
@@ -156,9 +144,16 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
         </label>
         <Button size="small" onClick={() => setDraft(defaults(catalog))}>恢复默认</Button>
         <Checkbox checked={draft.memoryProfile} disabled={Boolean(catalog.memory_issue)}
-          onChange={(event) => setDraft({ ...draft, memoryProfile: event.target.checked })}>
+          onChange={(event) => setDraft({ ...draft, memoryProfile: event.target.checked, asanMode: false })}>
           jemalloc 内存排查
         </Checkbox>
+        <Checkbox checked={draft.asanMode} onChange={(event) => setDraft({
+          ...draft, asanMode: event.target.checked, memoryProfile: false,
+        })}>ASan 踩内存排查</Checkbox>
+        {draft.asanMode && <Select aria-label="ASan 被测构建" placeholder="选择 ASan 被测构建"
+          style={{ minWidth: 280 }} value={draft.asanBuild}
+          options={builds.map((build) => ({ value: build.id, label: build.name, title: build.fbasecman_bin }))}
+          onChange={(asanBuild) => setDraft({ ...draft, asanBuild })} />}
         {catalog.memory_issue && <Typography.Text type="secondary">{catalog.memory_issue}</Typography.Text>}
         {draft.memoryProfile && <Space wrap>
           <Typography.Text>按累计分配量导出 heap</Typography.Text>
@@ -167,6 +162,18 @@ function StabilityRun({ environmentId, openTask }: { environmentId: string; open
               { label: '4 GiB · 长时', value: 32 }]}
             onChange={(profileInterval) => setDraft({ ...draft, profileInterval })} />
         </Space>}
+        {(draft.memoryProfile || draft.asanMode) && <Space wrap>
+          <Checkbox checked={draft.warmup} onChange={(event) => setDraft({ ...draft, warmup: event.target.checked })}>
+            启用预热
+          </Checkbox>
+          {draft.warmup && <label>预热时长（秒）{' '}
+            <InputNumber min={1} max={7200} precision={0} value={draft.warmupSeconds}
+              onChange={(warmupSeconds) => setDraft({ ...draft, warmupSeconds })} />
+          </label>}
+        </Space>}
+        {draft.memoryProfile && draft.warmup && <Typography.Text type="secondary">
+          预热使用同一批负载，结束后连续运行。默认用预热后的第一份 heap 快照做对比起点。
+        </Typography.Text>}
         <Checkbox.Group value={draft.workloads}
           onChange={(workloads) => setDraft({ ...draft, workloads })}>
           <Space direction="vertical">

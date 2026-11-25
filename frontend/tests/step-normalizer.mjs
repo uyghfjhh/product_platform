@@ -13,4 +13,10 @@ assert.equal(negative.expected, 'false');
 assert.equal(normalizeStep({ expected: 0 }, 0).expected, '0');
 assert.match(normalizeStep({ expected: [] }, 0).expected, /0 行/);
 assert.match(normalizeStep({ expected: [['ACTIVE', 'OK']] }, 0).expected, /ACTIVE/);
+for (const [actual, display] of [[0, '0'], [false, 'false'], [[], '0 行（空结果集）'], ['', '""']]) {
+  const step = normalizeStep({ intent: 'verify', actual, output: 'raw evidence' }, 0);
+  assert.equal(step.actualPayload?.raw, display);
+  assert.ok(step.evidenceItems.some((item) => item.value === 'raw evidence'));
+}
+assert.equal(normalizeStep({ output: 'fallback only' }, 0).actualPayload?.raw, 'fallback only');
 console.log('step normalizer regression checks passed');

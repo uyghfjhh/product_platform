@@ -22,6 +22,7 @@ const MonitoringPage = lazy(() => import('../views/MonitoringPage'));
 const DatabasePage = lazy(() => import('../views/DatabasePage'));
 const TestsPage = lazy(() => import('../views/TestsPage'));
 const StabilityPage = lazy(() => import('../views/StabilityPage'));
+const MemoryDiagnosticsPage = lazy(() => import('../views/MemoryDiagnosticsPage'));
 const LicenseKeysView = lazy(() => import('../views/license/LicenseKeysView'));
 const LicenseDefaultsView = lazy(() => import('../views/license/LicenseDefaultsView'));
 const LicenseGenerateView = lazy(() => import('../views/license/LicenseGenerateView'));
@@ -30,7 +31,7 @@ const { Sider, Content } = Layout;
 
 type Page = 'deployment' | 'database' | 'monitoring' | 'operations' | 'workloads'
   | 'license:keys' | 'license:generate' | 'license:defaults'
-  | `tests:${string}` | `stability:${string}`;
+  | `tests:${string}` | `stability:${string}` | 'memory:fbasecman';
 export type ThemeName = 'cman' | 'dark' | 'soft' | 'warm';
 
 const ACTIVE_STATUSES = ['QUEUED', 'RUNNING', 'CANCELLING'];
@@ -41,7 +42,7 @@ function selectedFromStorage(key: string, defaultValue: string) {
 
 function isPage(value: string): value is Page {
   return value === 'deployment' || value === 'database' || value === 'monitoring' || value === 'operations' || value === 'workloads' || value.startsWith('license:')
-    || value.startsWith('tests:') || value.startsWith('stability:');
+    || value.startsWith('tests:') || value.startsWith('stability:') || value === 'memory:fbasecman';
 }
 
 function profileEnvironment(environment: Environment, productId: string,
@@ -63,7 +64,9 @@ export default function PlatformShell({ themeName, onThemeChange }: {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [bindings, setBindings] = useState<RegressionBinding[]>([]);
   const [page, setPage] = useState<Page>(() => {
-    const saved = new URLSearchParams(window.location.search).get('page') || selectedFromStorage('platform-page', 'deployment');
+    const params = new URLSearchParams(window.location.search);
+    const saved = params.get('page') || selectedFromStorage('platform-page', 'deployment');
+    if (saved === 'stability:fbasecman' && params.has('memory_task')) return 'memory:fbasecman';
     return isPage(saved) ? saved as Page : 'deployment';
   });
   const [environmentId, setEnvironmentId] = useState(() => new URLSearchParams(window.location.search).get('env') || selectedFromStorage('platform-environment', ''));
@@ -80,6 +83,7 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     url.searchParams.set('page', page);
     if (environmentId) url.searchParams.set('env', environmentId); else url.searchParams.delete('env');
     if (taskId) url.searchParams.set('task', taskId); else url.searchParams.delete('task');
+    if (page !== 'memory:fbasecman') url.searchParams.delete('memory_task');
     if (page === 'database' && databaseTarget?.environmentId === environmentId) url.searchParams.set('node', databaseTarget.nodeId);
     else url.searchParams.delete('node');
     if (url.href !== window.location.href) window.history.pushState(null, '', url);
@@ -215,7 +219,16 @@ export default function PlatformShell({ themeName, onThemeChange }: {
               label: profile.title,
             })),
             ...(item.capabilities.includes('stability')
-              ? [{ key: `stability:${item.id}`, label: '稳定性测试' }]
+              ? item.id === 'fbasecman'
+                ? [{
+                  key: 'stability-menu:fbasecman',
+                  label: '稳定性测试',
+                  children: [
+                    { key: 'stability:fbasecman', label: '启动测试' },
+                    { key: 'memory:fbasecman', label: '内存诊断' },
+                  ],
+                }]
+                : [{ key: `stability:${item.id}`, label: '稳定性测试' }]
               : []),
           ],
         })),
@@ -248,6 +261,9 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     if (page === 'license:defaults') return <LicenseDefaultsView />;
     if (page === 'license:keys') return <LicenseKeysView />;
     if (page === 'license:generate') return <LicenseGenerateView />;
+    if (page === 'memory:fbasecman') {
+      return <MemoryDiagnosticsPage environments={environments} openTask={setTaskId} />;
+    }
     if (page.startsWith('stability:')) {
       return <StabilityPage key={page} {...common}
         product={stabilityProduct || product}
@@ -281,12 +297,12 @@ export default function PlatformShell({ themeName, onThemeChange }: {
     <Menu
       mode="inline"
       selectedKeys={[selectedMenuKey]}
-      defaultOpenKeys={['tests', 'license', ...products.map((item) => `product:${item.id}`)]}
+      defaultOpenKeys={['tests', 'license', 'product:fbasecman', 'stability-menu:fbasecman',
+        ...products.filter((item) => item.id !== 'fbasecman').map((item) => `product:${item.id}`)]}
       items={menuItems}
       onClick={({ key }) => {
-        if (key === 'deployment' || key === 'database' || key === 'monitoring' || key === 'operations' || key === 'workloads' || key.startsWith('license:')
-            || key.startsWith('tests:') || key.startsWith('stability:')) {
-          setPage(key as Page);
+        if (isPage(key)) {
+          setPage(key);
           // 测试页跳转到已绑定环境，保证页面上下文与执行上下文一致
           if (key.startsWith('tests:')) {
             const [, productId, profileId] = key.split(':');

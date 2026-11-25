@@ -345,7 +345,12 @@ class FbasecmanProvider:
                 if not deployment.is_file() or not override.is_file():
                     raise ValueError("请先准备所绑定的平台 fbasecman 部署环境")
                 duration, selected = selected_workloads(parameters)
-                build = regression_snapshot(settings, environment)["regress_extra_configs"][0]
+                asan_id = parameters.get("asan_build_id")
+                if asan_id is not None and (not isinstance(asan_id, str) or not asan_id or parameters.get("memory_profile")):
+                    raise ValueError("请选择有效的 ASan 构建，jemalloc 与 ASan 不能同时开启")
+                build_snapshot = regression_snapshot(settings, environment, build_id=asan_id, asan=bool(asan_id))
+                build = build_snapshot["regress_extra_configs"][0]
+                asan_args = ["--asan"] if asan_id else []
                 output = settings.artifact_dir("fbasecman", environment["id"])
                 regress_root = settings.product_regress_root("fbasecman")
                 import yaml
@@ -354,6 +359,11 @@ class FbasecmanProvider:
                 installation = topology["postgresql_installations"][first["installation"]]
                 license_source = (installation.get("license") or {}).get("source_file")
                 license_args = ["--database-license", license_source] if license_source else []
+                warmup = parameters.get("warmup_seconds", 0)
+                if not isinstance(warmup, int) or isinstance(warmup, bool) or not 0 <= warmup <= 7200:
+                    raise ValueError("预热时长须在 0 至 7200 秒之间")
+                if warmup and not (parameters.get("memory_profile") or asan_id):
+                    raise ValueError("请开启内存诊断后再设置预热")
                 profiling_args = []
                 if parameters.get("memory_profile"):
                     interval = parameters.get("profile_interval", 30)
@@ -363,7 +373,7 @@ class FbasecmanProvider:
                 return CommandSpec([
                     sys.executable, "-m", "products.fbasecman.longrun",
                     str(suite), str(regress_root), build, str(output),
-                    str(settings.runtime_dir / "fbasecman-longrun"), str(duration), *selected, *license_args, *profiling_args,
+                    str(settings.runtime_dir / "fbasecman-longrun"), str(duration), *selected, *license_args, *profiling_args, *asan_args, "--warmup-seconds", str(warmup),
                 ], settings.data_dir)
             script = product.cli_path("stable")
             from products.fbasecman.test_settings import regression_snapshot

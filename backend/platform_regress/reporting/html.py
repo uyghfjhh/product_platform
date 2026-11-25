@@ -507,6 +507,12 @@ def generate_html_report(
     }}).join('');
   }}
 
+  function formatStepValue(value) {{
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string' && value.length) return value;
+    return JSON.stringify(value);
+  }}
+
   function renderSteps(steps) {{
     if (!steps || !steps.length) return '';
     const rows = steps.map((step, i) => {{
@@ -514,8 +520,8 @@ def generate_html_report(
       const cls = result === 'PASS' ? 'step-pass' : (result ? 'step-fail' : '');
       const diff = (step.expected != null || step.actual != null)
         ? `<div class="step-diff">
-             <div class="step-col"><div class="step-col-title">预期</div><pre>${{escapeHtml(String(step.expected ?? ''))}}</pre></div>
-             <div class="step-col"><div class="step-col-title">实际</div><pre>${{escapeHtml(String(step.actual ?? ''))}}</pre></div>
+             <div class="step-col"><div class="step-col-title">预期</div><pre>${{escapeHtml(formatStepValue(step.expected))}}</pre></div>
+             <div class="step-col"><div class="step-col-title">实际</div><pre>${{escapeHtml(formatStepValue(step.actual))}}</pre></div>
            </div>` : '';
       return `<div class="step-row ${{cls}}">
         <div class="step-title">${{i + 1}}. ${{escapeHtml(step.title || '')}} <span class="step-result">${{escapeHtml(result)}}</span></div>

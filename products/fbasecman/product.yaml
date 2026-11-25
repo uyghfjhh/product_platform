@@ -46,9 +46,13 @@ actions:
           type: integer
         enabled_workloads:
           type: array
+        asan_build_id:
+          type: string
         memory_profile:
           type: boolean
         profile_interval:
+          type: integer
+        warmup_seconds:
           type: integer
   - id: diagnostics.analyze
     title: AI 分析当前测试结果

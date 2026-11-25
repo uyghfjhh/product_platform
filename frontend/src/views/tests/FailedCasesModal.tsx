@@ -9,9 +9,15 @@ export type FailedCaseItem = Case & { suiteTitle: string; duration: string };
 type FailedStep = {
   status: string;
   title?: string;
-  actual?: string;
-  expected?: string;
+  actual?: unknown;
+  expected?: unknown;
 };
+
+function stepValue(value: unknown): string {
+  if (value === null || value === undefined) return '（无）';
+  if (typeof value === 'string') return value.length ? value : '""';
+  return JSON.stringify(value);
+}
 
 type Props = {
   open: boolean;
@@ -56,7 +62,7 @@ export default function FailedCasesModal({
       fetchedTargetsRef.current.add(c.target);
       api<{
         reason?: string;
-        steps?: Array<{ result?: string; status: string; title?: string; actual?: string; expected?: string }>;
+        steps?: Array<{ result?: string; status: string; title?: string; actual?: unknown; expected?: unknown }>;
         summary?: { reason?: string };
         parsed?: { reason?: string; steps?: FailedStep[] };
       }>(adapter.artifactPath ? adapter.artifactPath(c.target, environment?.id)
@@ -71,7 +77,7 @@ export default function FailedCasesModal({
           if (!reason && data.parsed?.steps) {
             const failedStep = data.parsed.steps.find((s) => s.status === 'FAIL');
             if (failedStep) {
-              reason = failedStep.actual || failedStep.expected || '步骤执行失败';
+              reason = stepValue(failedStep.actual ?? failedStep.expected ?? '步骤执行失败');
             }
           }
           if (data.parsed?.steps?.length) {
@@ -170,11 +176,11 @@ export default function FailedCasesModal({
                         <div className="failed-step-diff-grid">
                           <div className="diff-col">
                             <div className="diff-col-label">预期</div>
-                            <pre>{step.expected || '（无）'}</pre>
+                            <pre>{stepValue(step.expected)}</pre>
                           </div>
                           <div className="diff-col actual">
                             <div className="diff-col-label">实际</div>
-                            <pre>{step.actual || '（无）'}</pre>
+                            <pre>{stepValue(step.actual)}</pre>
                           </div>
                         </div>
                       </div>

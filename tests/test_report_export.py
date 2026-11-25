@@ -51,6 +51,21 @@ class RowMappingTest(unittest.TestCase):
 
 
 class CaseReportTest(unittest.TestCase):
+    def test_actual_observations_keep_explicit_empty_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = [{"actual": value, "output": "raw evidence"} for value in (0, False, [], "", None)]
+            inputs.append({"output": "fallback"})
+            events = [{"kind": "step.finished", "payload": {"title": "比较", "status": "FAIL",
+                       "details": details}} for details in inputs]
+            (root / "events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+            steps = _event_steps(root)
+            payload = _steps_payload("smoke.values", steps)["steps"]
+            self.assertEqual(
+                [json.dumps(value) for value in (0, False, [], "", None, "fallback")],
+                [json.dumps(step["actual"]) for step in payload],
+            )
+
     def test_semantic_steps_replace_transport_noise_and_keep_verdict_basis(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

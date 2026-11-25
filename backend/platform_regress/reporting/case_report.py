@@ -87,6 +87,7 @@ def _event_steps(output_dir: Path) -> list[ReportStep]:
                 "analysis": "结果分析", "node": "执行节点", "example_code": "关键代码",
                 "action": "执行动作", "reason": "原因",
             }
+            actual = details.get("actual", details.get("output"))
             semantic.append(ReportStep(
                 title=payload.get("title") or payload.get("step_key") or "",
                 intent=details.get("intent"),
@@ -97,11 +98,11 @@ def _event_steps(output_dir: Path) -> list[ReportStep]:
                 # the complete client stdout in ``raw_output``/evidence so a
                 # three-phase JDBC case does not repeat the entire transcript
                 # under every business assertion.
-                actual=details.get("actual") or details.get("output"),
+                actual=actual,
                 result=payload.get("status"),
                 assertion=details.get("assertion"),
                 raw_output=details.get("output"),
-                actual_summary=details.get("actual") or details.get("output"),
+                actual_summary=actual,
                 execution=([{"label": "执行内容", "text": _displayable_command(details["command"])}]
                            if details.get("command") else []),
                 evidence=([{"label": "证据", "text": evidence}]

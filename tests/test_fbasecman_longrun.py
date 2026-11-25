@@ -152,3 +152,110 @@ def test_memory_report_uses_two_nonempty_snapshots_from_same_pid(tmp_path, monke
     result = json.loads((output / "summary.json").read_text())
     assert "二进制发生变更" in result["issue"]
     assert len(seen) == 1
+
+
+def test_heap_comparison_ranks_complete_stacks_and_merges_shared_prefix(tmp_path):
+    from products.fbasecman.longrun_heap import collapsed_stacks, compare, write_json
+
+    samples = [
+        collapsed_stacks("main;left;malloc 20\nmain;right;malloc 60\nmain;reduced;calloc 100"),
+        collapsed_stacks("main;left;malloc 80\nmain;right;malloc 65\nmain;reduced;calloc 30"),
+        collapsed_stacks("main;left;malloc 100\nmain;left;malloc 20\nmain;right;malloc 70"),
+    ]
+    write_json(tmp_path / "timeline.json", {"issue": None, "samples": [
+        {"id": str(index), "elapsed": 60 * index, "bytes": sum(row["bytes"] for row in sample.values())}
+        for index, sample in enumerate(samples)
+    ]})
+    for index, sample in enumerate(samples):
+        write_json(tmp_path / f"stacks-{index}.json", sample)
+    result = compare(tmp_path)
+    assert [row["delta"] for row in result["rows"]] == [100, 10]
+    assert result["selected"]["frames"] == ["main", "left", "malloc"]
+    assert result["selected"]["series"] == [(0, 20), (60, 80), (120, 120)]
+    assert result["tree"][0]["bytes"] == 110
+    assert [node["frame"] for node in result["tree"][0]["children"]] == ["left", "right"]
+    assert compare(tmp_path, "0", "1", query="right")["rows"][0]["delta"] == 5
+    assert compare(tmp_path, direction="reduction")["rows"][0]["delta"] == -100
+    assert compare(tmp_path, "1", "2")["rows"][0]["delta"] == 40
+    ignored = result["rows"][0]["id"]
+    filtered = compare(tmp_path, stack=ignored, excluded=[ignored])
+    assert [row["delta"] for row in filtered["rows"]] == [10]
+    assert filtered["selected"]["frames"] == ["main", "right", "malloc"]
+    assert filtered["tree"][0]["bytes"] == 10
+    assert compare(tmp_path)["rows"][0]["id"] == ignored
+    with pytest.raises(ValueError, match="时间排列"):
+        compare(tmp_path, "2", "1")
+
+
+def test_warmup_uses_the_first_post_warmup_snapshot_by_default(tmp_path):
+    from products.fbasecman.longrun_heap import collapsed_stacks, compare, write_json
+
+    samples = []
+    for index, (elapsed, amount) in enumerate(((0, 20), (30, 100), (60, 110))):
+        stacks = collapsed_stacks(f"main;allocate {amount}")
+        samples.append({"id": str(index), "elapsed": elapsed, "bytes": amount})
+        write_json(tmp_path / f"stacks-{index}.json", stacks)
+    write_json(tmp_path / "measurement.json", {"start": 25})
+    write_json(tmp_path / "timeline.json", {"issue": None, "samples": samples[:2]})
+    assert compare(tmp_path)["rows"] == []
+    assert compare(tmp_path, "0", "1")["rows"][0]["delta"] == 80
+    write_json(tmp_path / "timeline.json", {"issue": None, "samples": samples})
+    result = compare(tmp_path)
+    assert result["start"] == "1"
+    assert result["rows"][0]["delta"] == 10
+
+
+def test_warmup_extends_the_same_workload(suite, tmp_path):
+    from types import SimpleNamespace
+
+    binary = tmp_path / "pgbench"
+    binary.write_text('#!/bin/sh\necho "number of transactions actually processed: 5"\nprintf "%s\\n" "$@"\n')
+    binary.chmod(0o755)
+    boundaries = []
+    memory = SimpleNamespace(begin_warmup=boundaries.append, sample=lambda: None, next_analysis=42)
+    output = tmp_path / "output"
+    run(suite, output, 1, ["pgbench10"], 7000, 7001, "127.0.0.1", 5432, binary, memory, 1)
+    assert len(boundaries) == 1
+    assert memory.next_analysis == 0
+    assert (output / "pgbench10.log").read_text().splitlines()[-2:] == ["-T", "2"]
+
+
+def test_delete_memory_report_keeps_the_task_and_other_artifacts(tmp_path):
+    from fastapi.testclient import TestClient
+    from platform_app.api import create_app
+    from test_api import settings_for
+
+    settings = settings_for(tmp_path)
+    app = create_app(settings, enqueuer=lambda _task_id: None)
+    client = TestClient(app)
+    environment = {
+        "id": "memory-lab", "product_id": "fbasecman", "title": "Memory lab",
+        "host": "127.0.0.1", "port": 5432, "database_name": "postgres",
+        "database_user": "postgres",
+    }
+    assert client.post("/api/v1/environments", json=environment).status_code == 201
+    task = app.state.store.tasks.create_task(
+        "memory-lab", "stability.fbasecman", "upstream-7x24", {"memory_profile": True}, None,
+    )
+    task_id = task["id"]
+    run_dir = settings.artifact_dir("fbasecman", "memory-lab") / "runs" / task_id
+    memory = run_dir / "memory"
+    memory.mkdir(parents=True)
+    (memory / "rss.csv").write_text("elapsed_seconds,rss_kib\n0,10\n")
+    (run_dir / "load.log").write_text("preserve")
+    url = f"/api/v1/environments/memory-lab/fbasecman-longrun/{task_id}"
+    history = "/api/v1/fbasecman-memory-tasks"
+    assert client.get(history).json()["tasks"][0]["id"] == task_id
+    assert client.delete(url + "/memory").status_code == 409
+    assert (memory / "rss.csv").exists()
+
+    app.state.store.tasks.finish_task(task_id, ("QUEUED",), "CANCELLED", "done")
+    assert client.delete(url + "/memory").json() == {"deleted": True}
+    assert client.delete(url + "/memory").json() == {"deleted": True}
+    assert client.get(url + "/memory-live").status_code == 410
+    assert client.get(url + "/memory/rss.csv").status_code == 410
+    assert client.get(history).json() == {"tasks": [], "next": None}
+    assert client.get(f"/api/v1/operations/{task_id}").json()["status"] == "CANCELLED"
+    assert (run_dir / "load.log").read_text() == "preserve"
+    assert not memory.exists()
+    assert list((run_dir / "memory.deleted").iterdir()) == []

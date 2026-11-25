@@ -1,0 +1,24 @@
+.live-memory-card { margin-top: 16px; }
+.memory-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; }
+.memory-trend { margin: 0 0 10px; }
+.memory-trend svg { display: block; width: 100%; color: var(--text-secondary); }
+.memory-trend text { fill: currentColor; font-size: 12px; }
+.memory-gridline { stroke: var(--border-medium); }
+.memory-series-0 { --series-color: var(--border-active); }
+.memory-series-1 { --series-color: #d98b32; }
+.memory-trend polyline { stroke: var(--series-color); stroke-width: 2; }
+.memory-trend circle { fill: var(--series-color); }
+.memory-swatch { display: inline-block; width: 1em; height: 2px; margin-right: .35em; vertical-align: middle; background: var(--series-color); }
+.memory-controls { margin-block: 12px; }
+.memory-stack-button, .memory-tree-leaf { color: inherit; background: transparent; border: 0; cursor: pointer; text-align: left; }
+.memory-stack-button small { display: block; color: var(--text-secondary); overflow-wrap: anywhere; }
+.memory-stack-button[aria-pressed="true"] { color: var(--border-active); font-weight: 600; }
+.memory-detail { margin-block: 14px; }
+.memory-detail code, .memory-tree code { overflow-wrap: anywhere; }
+.memory-tree { list-style: none; padding-left: 1em; }
+.memory-tree li { margin-block: 4px; }
+.memory-tree summary { cursor: pointer; }
+.memory-flame-scroll { max-height: 420px; overflow: auto; }
+.memory-flame { position: relative; min-width: 0; }
+.memory-flame button { position: absolute; height: 24px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; cursor: pointer; border: 1px solid var(--border-medium); background: color-mix(in srgb, #d98b32 28%, var(--bg-surface)); color: var(--text-primary); }
+.memory-flame button[aria-pressed="true"] { outline: 2px solid var(--border-active); outline-offset: -2px; }

@@ -139,7 +139,7 @@ def stop_processes(processes):
         process.wait(timeout=2)
 
 
-def run(suite, output, duration, selected, main_port, write_port, db_host, db_port, pgbench_bin, memory=None):
+def run(suite, output, duration, selected, main_port, write_port, db_host, db_port, pgbench_bin, memory=None, warmup_seconds=0, asan=None):
     output.mkdir(mode=0o700, parents=True)
     launcher = (suite / "pgbench/call_testbench.sh.bak").read_text(encoding="utf-8")
     pgbench_password = next(
@@ -147,7 +147,7 @@ def run(suite, output, duration, selected, main_port, write_port, db_host, db_po
          if line.lstrip().startswith("PGPASSWORD=")), "",
     )
     pgbench = pgbench_commands(
-        suite, duration, [name for name in selected if name.startswith("pgbench")], main_port, write_port,
+        suite, duration + warmup_seconds, [name for name in selected if name.startswith("pgbench")], main_port, write_port,
     )
     pgbench_dir = output / "pgbench"
     pgbench_dir.mkdir()
@@ -189,11 +189,24 @@ def run(suite, output, duration, selected, main_port, write_port, db_host, db_po
                 print(f"[{index}/{len(selected)}] {name} {WORKLOADS[name]} 已启动", flush=True)
                 if name in pgbench and index < len(selected):
                     time.sleep(1)
-            deadline = time.monotonic() + duration
+            measurement_start = time.monotonic() + warmup_seconds
+            deadline = measurement_start + duration
+            warming = bool(warmup_seconds)
+            if warming:
+                if memory:
+                    memory.begin_warmup(measurement_start)
+                print(f"开始预热 {warmup_seconds} 秒，正式负载仍运行 {duration} 秒", flush=True)
             while True:
+                if asan:
+                    asan.check()
                 if memory:
                     memory.sample()
                 now = time.monotonic()
+                if warming and now >= measurement_start:
+                    warming = False
+                    if memory:
+                        memory.next_analysis = 0
+                    print("预热结束，开始正式测量", flush=True)
                 for name, process in processes.items():
                     code = process.poll()
                     if name == "jdbc":
@@ -277,7 +290,7 @@ def render_upstream_proxy(suite, run_dir, ports, main_port, write_port, prom_por
     return path
 
 
-def run_platform(suite, regress_root, build, output, work_root, database_license, duration, selected, profile_interval=None):
+def run_platform(suite, regress_root, build, output, work_root, database_license, duration, selected, profile_interval=None, warmup_seconds=0, asan_enabled=False):
     import yaml
     from platform_regress.execution.command import run_logged_command
 
@@ -300,6 +313,21 @@ def run_platform(suite, regress_root, build, output, work_root, database_license
     memory = None
     if profile_interval is not None:
         memory = MemoryProfile(work_root.parent, run_dir / "memory", config["fbasecman_bin"], profile_interval)
+    asan = None
+    if asan_enabled:
+        import json
+
+        from products.fbasecman.longrun_asan import AsanRun, require_instrumented
+        from products.fbasecman.longrun_memory import binary_digest
+
+        tested_build = json.loads(build.with_name("build.json").read_text(encoding="utf-8"))
+        binary = tested_build["resolved_path"]
+        require_instrumented(binary)
+        if binary_digest(binary) != tested_build["sha256"]:
+            raise ValueError("ASan 二进制已变化，请重新提交任务")
+        config["fbasecman_bin"] = binary
+        asan = AsanRun(run_dir / "memory" / "asan")
+        (asan.directory / "build.json").write_text(json.dumps(tested_build, ensure_ascii=False), encoding="utf-8")
     print("正在准备上游长稳同款六节点 MMR、PostgreSQL 参数和 pg_cron", flush=True)
     with isolated_environment(suite, work_root / task, database_license) as (home, ports):
         main_port, write_port, prom_port = choose_ports()
@@ -314,17 +342,22 @@ def run_platform(suite, regress_root, build, output, work_root, database_license
         )
         conf = render_upstream_proxy(suite, proxy_dir, ports, main_port, write_port, prom_port, config["license_dir"])
         try:
-            proxy.start(conf, ready_timeout=40, env=memory.env if memory else None)
+            proxy.start(conf, ready_timeout=40, env=asan.env if asan else memory.env if memory else None)
             if memory:
                 memory.attach(proxy_dir / "fbasecman.pid")
             run(suite, run_dir / "longrun", duration, selected, main_port, write_port,
-                HOST, ports["mmr1"], home / "bin/pgbench", memory)
+                HOST, ports["mmr1"], home / "bin/pgbench", memory, warmup_seconds, asan)
         finally:
             try:
                 if memory:
                     memory.sample(force=True)
             finally:
-                proxy.stop(best_effort=False, conf=conf, record=False)
+                try:
+                    proxy.stop(best_effort=False, conf=conf, record=False)
+                finally:
+                    if asan:
+                        asan.capture_startup(proxy_dir / "fbasecman.start.log")
+                        asan.check()
             if memory:
                 memory.finish()
 
@@ -345,6 +378,8 @@ def main():
     parser.add_argument("workloads", nargs="+")
     parser.add_argument("--database-license", type=Path)
     parser.add_argument("--profile-interval", type=int, choices=range(20, 37))
+    parser.add_argument("--warmup-seconds", type=int, default=0)
+    parser.add_argument("--asan", action="store_true")
     args = parser.parse_args()
 
     def interrupted(_signum, _frame):
@@ -355,9 +390,13 @@ def main():
         duration, selected = selected_workloads({
             "duration_seconds": args.duration, "enabled_workloads": args.workloads,
         })
+        if not 0 <= args.warmup_seconds <= 7200 or (args.warmup_seconds and args.profile_interval is None and not args.asan):
+            raise ValueError("预热须开启内存诊断，时长范围为 0 至 7200 秒")
+        if args.asan and args.profile_interval is not None:
+            raise ValueError("jemalloc 与 ASan 不能同时开启")
         with ExclusiveFileLock(args.lock_dir / "isolated.lock", "平台常稳环境"):
             run_platform(args.suite, args.regress_root, args.build, args.output,
-                         args.lock_dir, args.database_license, duration, selected, args.profile_interval)
+                         args.lock_dir, args.database_license, duration, selected, args.profile_interval, args.warmup_seconds, args.asan)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"7×24 常稳执行失败：{exc}", file=sys.stderr)
         return 1

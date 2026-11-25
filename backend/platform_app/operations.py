@@ -100,6 +100,21 @@ class OperationService:
         )
         if not target or not TARGET.fullmatch(target):
             raise OperationError(422, message="目标名称无效")
+        if "asan_build_id" in item.parameters:
+            import subprocess
+
+            from products.fbasecman.longrun_asan import require_instrumented
+            from products.fbasecman.test_settings import resolve
+
+            build_id = item.parameters["asan_build_id"]
+            if (item.action != "stability.fbasecman" or target != "upstream-7x24"
+                    or not isinstance(build_id, str) or not build_id or item.parameters.get("memory_profile")):
+                raise OperationError(422, "请选择有效的 ASan 构建，jemalloc 与 ASan 不能同时开启")
+            try:
+                build = resolve(settings, environment, build_id=build_id)
+                require_instrumented(build["fbasecman_bin"])
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                raise OperationError(422, str(exc)) from exc
         if item.action.startswith("deployment."):
             try:
                 topology = configured_topology(settings, environment)

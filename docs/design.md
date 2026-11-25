@@ -290,7 +290,7 @@ runtime，`fbasecman_ops` 转发门面已删除；runtime 构造注入 resolver
 
 ### 5.2 Test SDK
 
-当前实现为 SDK v2，公开契约与迁移规则见 [SDK 指南](../backend/platform_regress/SDK.md) 和 [v2 设计](sdk-v2-design.md)。下方接口示意属于目标能力说明，具体签名以 SDK 指南为准。
+当前实现为 SDK v2，公开契约与迁移规则见 [SDK 指南](../backend/platform_regress/SDK.md)。下方接口示意属于目标能力说明，具体签名以 SDK 指南为准。
 
 ```python
 class TestProvider(Protocol):

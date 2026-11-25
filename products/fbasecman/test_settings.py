@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 
-def resolve(settings, environment, *, inspect=False):
+def resolve(settings, environment, *, inspect=False, build_id=None):
     source = settings.product_regress_root('fbasecman') / 'regress.yaml'
     config = yaml.safe_load(source.read_text())
     for override in (source.with_name('regress.local.yaml'),
@@ -18,10 +18,12 @@ def resolve(settings, environment, *, inspect=False):
     selection = environment.get('product_test_settings') or {}
     builds = selection.get('builds')
     if builds is not None:
-        selected = next((item for item in builds if item['id'] == selection.get('active_build_id')), None)
+        selected = next((item for item in builds if item['id'] == (build_id or selection.get('active_build_id'))), None)
         if selected is None:
             raise ValueError('请选择一个有效的当前被测版本')
     else:
+        if build_id not in (None, "legacy"):
+            raise ValueError("所选构建不存在")
         selected = selection
     binary = selected.get('fbasecman_bin') or os.environ.get('PRODUCT_PLATFORM_FBASECMAN_BIN') or config['fbasecman']['fbasecman_bin']
     license_dir = selected.get('license_dir') or os.environ.get('PRODUCT_PLATFORM_FBASECMAN_LICENSE_DIR') or config['fbasecman']['license_dir']
@@ -52,9 +54,12 @@ def resolve(settings, environment, *, inspect=False):
     return result
 
 
-def regression_snapshot(settings, environment):
+def regression_snapshot(settings, environment, *, build_id=None, asan=False):
     from uuid import uuid4
-    value = resolve(settings, environment, inspect=True)
+    value = resolve(settings, environment, inspect=True, build_id=build_id)
+    if asan:
+        from products.fbasecman.longrun_asan import require_instrumented
+        require_instrumented(value["resolved_path"])
     output = settings.artifact_dir('fbasecman', environment['id']) / 'tested-builds' / uuid4().hex
     output.mkdir(parents=True)
     import json

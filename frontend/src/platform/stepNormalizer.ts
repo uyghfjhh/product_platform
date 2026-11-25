@@ -150,7 +150,7 @@ export function normalizeStep(rawStep: any, fallbackIndex: number): NormalizedSt
       : rawStatus === 'ERROR' ? 'FAIL' : 'UNKNOWN';
   const valueText = (value: unknown): string => {
     if (value === undefined || value === null) return '';
-    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'string') return value === '' ? '""' : value.trim();
     if (Array.isArray(value) && value.length === 0) return '0 行（空结果集）';
     return JSON.stringify(value, null, 2);
   };
@@ -303,10 +303,14 @@ export function normalizeStep(rawStep: any, fallbackIndex: number): NormalizedSt
     kind = 'action';
   }
 
-  // 5. 组装 actualPayload：原始输出即实际结果，摘要文本仅用于判定展示
+  if (rawActual && rawOutput && rawOutput !== rawActual) {
+    evidenceItems.push({ type: 'log', label: '原始输出', value: rawOutput });
+  }
+
+  // 5. 组装实际结果，独立保留辅助原始输出
   let actualPayload: NormalizedStep['actualPayload'] = undefined;
   let actualSummary = rawActual;
-  const actualText = rawOutput || rawActual;
+  const actualText = rawActual || rawOutput;
 
   if (kind === 'diff') {
     const fullDiffText = [rawActual, stateTable].filter(Boolean).join('\n\n');
